@@ -67,7 +67,10 @@
       "if": {"properties": {"mode": {"const": "spectate"}}},
       "then": {
         "required": ["target"],
-        "properties": {"view": {"const": "public"}},
+        "properties": {
+          "view": {"const": "public"},
+          "target": {"type": "object", "required": ["type"], "properties": {"type": {"const": "game"}}}
+        },
         "not": {"required": ["resume"]}
       }
     },
@@ -76,6 +79,7 @@
       "then": {
         "required": ["target"],
         "properties": {
+          "target": {"type": "object", "required": ["type"], "properties": {"type": {"const": "recording"}}},
           "view": {
             "anyOf": [
               {"type": "string", "enum": ["public", "full"]},

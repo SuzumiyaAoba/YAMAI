@@ -3,7 +3,7 @@
   "protocol_version": "1.0-draft.5",
   "profile": "riichi-4p",
   "profile_revision": "1.0-draft.3",
-  "profile_hash": "sha256:140a9b6d4d962799bb2bf2bc5dcdc2fa9ee88cc64374c930d0c3fe84ea749fb8",
+  "profile_hash": "sha256:f51daf9b497bae12f87c01b3760a720f34dea0438ae15c593793baa28e9a4bf4",
   "registry": [
     "registry/yrc-0003/1.0-draft.5/registry.json",
     "registry/yrc-0005/1.0-draft.3/registry.json"
@@ -50,6 +50,11 @@
     {"id": "V26_penalty_terminal", "area": "penalty-terminal", "expect_positive": "valid", "expect_negative": "invalid_message"},
     {"id": "V27_noten_payments", "area": "noten-payments", "expect_positive": "valid", "expect_negative": "invalid_message"},
     {"id": "V28_replay_view", "area": "replay-view", "expect_positive": "valid", "expect_negative": "invalid_message"},
-    {"id": "V29_deadline_duplicate_request", "area": "deadline-duplicate-request", "expect_positive": "valid", "expect_negative": "invalid_message"}
+    {"id": "V29_deadline_duplicate_request", "area": "deadline-duplicate-request", "expect_positive": "valid", "expect_negative": "invalid_message"},
+    {"id": "V30_conditional_mode", "area": "conditional-constraints", "expect_positive": "valid", "expect_negative": "invalid_message"},
+    {"id": "V31_group_grace_zero", "area": "group-grace-zero", "expect_positive": "valid", "expect_negative": "invalid_message"},
+    {"id": "V32_group_grace_variable", "area": "group-grace-variable", "expect_positive": "valid", "expect_negative": "invalid_message"},
+    {"id": "V33_group_grace_deadline", "area": "group-grace-deadline", "expect_positive": "valid", "expect_negative": "invalid_message"},
+    {"id": "V34_game_event_before_start", "area": "state-machine-start-order", "expect_positive": "valid", "expect_negative": "invalid_message"}
   ]
 }

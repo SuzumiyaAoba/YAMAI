@@ -16,7 +16,34 @@
     "safeInteger": {"type": "integer", "minimum": -9007199254740991, "maximum": 9007199254740991},
     "scoreArray": {
       "type": "array", "minItems": 4, "maxItems": 4,
-      "items": {"$ref": "#/$defs/safeInteger"}
+      "items": {"$ref": "#/$defs/scoreInteger"}
+    },
+    "scoreInteger": {
+      "type": "integer",
+      "minimum": -9007199254740991,
+      "maximum": 9007199254740991,
+      "multipleOf": 100
+    },
+    "unique_win_actors": {
+      "allOf": [
+        {"not": {"contains": {"type": "object", "required": ["actor"], "properties": {"actor": {"const": 0}}}, "minContains": 2}},
+        {"not": {"contains": {"type": "object", "required": ["actor"], "properties": {"actor": {"const": 1}}}, "minContains": 2}},
+        {"not": {"contains": {"type": "object", "required": ["actor"], "properties": {"actor": {"const": 2}}}, "minContains": 2}},
+        {"not": {"contains": {"type": "object", "required": ["actor"], "properties": {"actor": {"const": 3}}}, "minContains": 2}}
+      ]
+    },
+    "unique_pao_yaku_ids": {
+      "allOf": [
+        {"not": {"contains": {"type": "object", "required": ["yaku_id"], "properties": {"yaku_id": {"const": "daisangen"}}}, "minContains": 2}},
+        {"not": {"contains": {"type": "object", "required": ["yaku_id"], "properties": {"yaku_id": {"const": "daisuushii"}}}, "minContains": 2}}
+      ]
+    },
+    "unique_bonus_ids": {
+      "allOf": [
+        {"not": {"contains": {"type": "object", "required": ["id"], "properties": {"id": {"const": "dora"}}}, "minContains": 2}},
+        {"not": {"contains": {"type": "object", "required": ["id"], "properties": {"id": {"const": "uradora"}}}, "minContains": 2}},
+        {"not": {"contains": {"type": "object", "required": ["id"], "properties": {"id": {"const": "akadora"}}}, "minContains": 2}}
+      ]
     },
     "normal_yaku": {
       "oneOf": [
@@ -114,10 +141,11 @@
         },
         "bonuses": {
           "type": "array", "uniqueItems": true,
+          "allOf": [{"$ref": "#/$defs/unique_bonus_ids"}],
           "description": "uniqueItems compares complete objects only; semantic validation MUST also reject duplicate bonus IDs",
           "items": {"$ref": "#/$defs/bonus"}
         },
-        "hand_points": {"type": "integer", "minimum": 0, "maximum": 9007199254740900},
+        "hand_points": {"type": "integer", "minimum": 0, "maximum": 9007199254740900, "multipleOf": 100},
         "deltas": {"$ref": "#/$defs/scoreArray"},
         "ura_dora_markers": {
           "type": "array", "maxItems": 5,
@@ -125,6 +153,7 @@
         },
         "pao": {
           "type": "array", "uniqueItems": true,
+          "allOf": [{"$ref": "#/$defs/unique_pao_yaku_ids"}],
           "description": "uniqueItems compares complete objects only; semantic validation MUST also reject duplicate yaku_id values",
           "items": {"$ref": "#/$defs/paoEntry"}
         }
@@ -136,7 +165,13 @@
       "required": ["type", "wins"],
       "properties": {
         "type": {"const": "hora"},
-        "wins": {"type": "array", "minItems": 1, "maxItems": 3, "items": {"$ref": "#/$defs/win"}}
+        "wins": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 3,
+          "allOf": [{"$ref": "#/$defs/unique_win_actors"}],
+          "items": {"$ref": "#/$defs/win"}
+        }
       },
       "additionalProperties": false
     },
@@ -161,7 +196,7 @@
       "properties": {
         "from": {"$ref": "#/$defs/seat"},
         "to": {"$ref": "#/$defs/seat"},
-        "points": {"type": "integer", "minimum": 0, "maximum": 9007199254740900}
+        "points": {"type": "integer", "minimum": 0, "maximum": 9007199254740900, "multipleOf": 100}
       },
       "additionalProperties": false
     },

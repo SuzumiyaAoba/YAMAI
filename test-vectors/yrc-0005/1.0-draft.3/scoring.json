@@ -143,6 +143,57 @@
         "uradora",
         "akadora"
       ]
+    },
+    {
+      "id": "kiriage_3han_60fu",
+      "dealer": true,
+      "tsumo": false,
+      "fu": 60,
+      "han": 3,
+      "basic_points": 2000,
+      "hand_points": 12000
+    },
+    {
+      "id": "kiriage_3han_60fu_noop",
+      "dealer": true,
+      "tsumo": false,
+      "fu": 60,
+      "han": 3,
+      "basic_points": 1920,
+      "hand_points": 11600
+    },
+    {
+      "id": "kazoe_sanbaiman_12han",
+      "dealer": false,
+      "tsumo": false,
+      "fu": 40,
+      "han": 12,
+      "basic_points": 6000,
+      "hand_points": 24000
+    },
+    {
+      "id": "kazoe_yakuman_13han",
+      "dealer": false,
+      "tsumo": false,
+      "fu": 40,
+      "han": 13,
+      "basic_points": 8000,
+      "hand_points": 32000
+    },
+    {
+      "id": "dealer_tsumo_30fu_1han",
+      "dealer": true,
+      "tsumo": true,
+      "fu": 30,
+      "han": 1,
+      "basic_points": 240,
+      "hand_points": 1500
+    },
+    {
+      "id": "chombo_remainder_lowest_seat",
+      "total_points": 8000,
+      "ceil_unit": 100,
+      "conserves_points": true
     }
   ],
   "fixtures": [
@@ -2125,7 +2176,7 @@
             "bonuses": [],
             "pao": [],
             "ura_dora_markers": [],
-            "fu": 50,
+            "fu": 60,
             "han": 6,
             "basic_points": 3000,
             "hand_points": 12000,
@@ -2364,7 +2415,7 @@
                 "P",
                 "P"
               ],
-              "open": false
+              "open": true
             },
             {
               "kind": "pon",
@@ -2373,7 +2424,7 @@
                 "F",
                 "F"
               ],
-              "open": false
+              "open": true
             }
           ]
         },
@@ -2419,7 +2470,7 @@
             "bonuses": [],
             "pao": [],
             "ura_dora_markers": [],
-            "fu": 50,
+            "fu": 40,
             "han": 4,
             "basic_points": 2000,
             "hand_points": 8000,
@@ -2505,7 +2556,7 @@
             "bonuses": [],
             "pao": [],
             "ura_dora_markers": [],
-            "fu": 40,
+            "fu": 50,
             "han": 5,
             "basic_points": 2000,
             "hand_points": 8000,
@@ -2961,7 +3012,7 @@
                 "P",
                 "P"
               ],
-              "open": false
+              "open": true
             },
             {
               "kind": "pon",
@@ -2970,7 +3021,7 @@
                 "F",
                 "F"
               ],
-              "open": false
+              "open": true
             },
             {
               "kind": "pon",
@@ -2979,7 +3030,7 @@
                 "C",
                 "C"
               ],
-              "open": false
+              "open": true
             }
           ]
         },
@@ -3061,7 +3112,7 @@
                 "E",
                 "E"
               ],
-              "open": false
+              "open": true
             },
             {
               "kind": "pon",
@@ -3070,7 +3121,7 @@
                 "S",
                 "S"
               ],
-              "open": false
+              "open": true
             },
             {
               "kind": "pon",
@@ -3079,7 +3130,7 @@
                 "W",
                 "W"
               ],
-              "open": false
+              "open": true
             }
           ]
         },
@@ -3158,7 +3209,8 @@
                 "E",
                 "E"
               ],
-              "open": false
+              "open": true,
+              "source": 2
             },
             {
               "kind": "pon",
@@ -3167,7 +3219,8 @@
                 "S",
                 "S"
               ],
-              "open": false
+              "open": true,
+              "source": 2
             },
             {
               "kind": "pon",
@@ -3176,7 +3229,8 @@
                 "W",
                 "W"
               ],
-              "open": false
+              "open": true,
+              "source": 2
             },
             {
               "kind": "pon",
@@ -3185,7 +3239,8 @@
                 "N",
                 "N"
               ],
-              "open": false
+              "open": true,
+              "source": 2
             }
           ]
         },
@@ -3201,7 +3256,13 @@
         "wall_remaining": 40,
         "rinshan": false,
         "reach_accepted": false,
-        "events": []
+        "events": [
+          {"type": "pon", "actor": 1, "target": 2, "pai": "E"},
+          {"type": "pon", "actor": 1, "target": 2, "pai": "S"},
+          {"type": "pon", "actor": 1, "target": 2, "pai": "W"},
+          {"type": "pon", "actor": 1, "target": 2, "pai": "N"},
+          {"type": "pao", "actor": 1, "yaku_id": "daisuushii", "liable_seat": 2}
+        ]
       },
       "rule_overrides": {},
       "expected": {
@@ -3219,7 +3280,9 @@
               }
             ],
             "bonuses": [],
-            "pao": [],
+            "pao": [
+              {"yaku_id": "daisuushii", "liable_seat": 2}
+            ],
             "ura_dora_markers": [],
             "fu": 0,
             "han": 0,
@@ -3227,23 +3290,28 @@
             "hand_points": 64000,
             "payments": [
               {
+                "from": 2,
+                "to": 1,
+                "points": 32000
+              },
+              {
                 "from": 0,
                 "to": 1,
-                "points": 64000
+                "points": 32000
               }
             ],
             "deltas": [
-              -64000,
+              -32000,
               64000,
-              0,
+              -32000,
               0
             ]
           }
         ],
         "deltas": [
-          -64000,
+          -32000,
           64000,
-          0,
+          -32000,
           0
         ]
       }
@@ -3264,7 +3332,7 @@
                 "E",
                 "E"
               ],
-              "open": false
+              "open": true
             },
             {
               "kind": "pon",
@@ -3273,7 +3341,7 @@
                 "S",
                 "S"
               ],
-              "open": false
+              "open": true
             },
             {
               "kind": "pon",
@@ -3282,7 +3350,7 @@
                 "W",
                 "W"
               ],
-              "open": false
+              "open": true
             },
             {
               "kind": "pon",
@@ -3291,7 +3359,7 @@
                 "N",
                 "N"
               ],
-              "open": false
+              "open": true
             }
           ]
         },
@@ -4249,6 +4317,8 @@
               "bakaze": "E",
               "kyoku": 1,
               "oya": 0,
+              "honba": 2,
+              "kyotaku": 1,
               "wall_remaining": 40,
               "rinshan": false,
               "reach_accepted": false,
@@ -4274,21 +4344,21 @@
               "bonuses": [],
               "pao": [],
               "ura_dora_markers": [],
-              "fu": 30,
+              "fu": 40,
               "han": 1,
-              "basic_points": 240,
-              "hand_points": 1000,
+              "basic_points": 320,
+              "hand_points": 1300,
               "payments": [
                 {
                   "from": 0,
                   "to": 2,
-                  "points": 1000
+                  "points": 1900
                 }
               ],
               "deltas": [
-                -1000,
+                -1900,
                 0,
-                1000,
+                1900,
                 0
               ]
             }
@@ -4299,6 +4369,8 @@
         "bakaze": "E",
         "kyoku": 1,
         "oya": 0,
+        "honba": 2,
+        "kyotaku": 1,
         "wall_remaining": 40,
         "rinshan": false,
         "reach_accepted": false,
@@ -4328,20 +4400,20 @@
             "bonuses": [],
             "pao": [],
             "ura_dora_markers": [],
-            "fu": 30,
+            "fu": 40,
             "han": 1,
-            "basic_points": 240,
-            "hand_points": 1000,
+            "basic_points": 320,
+            "hand_points": 1300,
             "payments": [
               {
                 "from": 0,
                 "to": 1,
-                "points": 1000
+                "points": 2900
               }
             ],
             "deltas": [
-              -1000,
-              1000,
+              -2900,
+              2900,
               0,
               0
             ]
@@ -4360,29 +4432,29 @@
             "bonuses": [],
             "pao": [],
             "ura_dora_markers": [],
-            "fu": 30,
+            "fu": 40,
             "han": 1,
-            "basic_points": 240,
-            "hand_points": 1000,
+            "basic_points": 320,
+            "hand_points": 1300,
             "payments": [
               {
                 "from": 0,
                 "to": 2,
-                "points": 1000
+                "points": 1900
               }
             ],
             "deltas": [
-              -1000,
+              -1900,
               0,
-              1000,
+              1900,
               0
             ]
           }
         ],
         "deltas": [
-          -2000,
-          1000,
-          1000,
+          -4800,
+          2900,
+          1900,
           0
         ]
       }
@@ -5078,6 +5150,286 @@
           0,
           0
         ]
+      }
+    },
+    {
+      "id": "settlement_parent_tsumo",
+      "category": "settlement",
+      "input": {
+        "hand": {
+          "concealed_tiles": ["1m", "2m", "3m", "4m", "5m", "6m", "7p", "8p", "9p", "2s", "3s", "4s", "5m"],
+          "melds": []
+        },
+        "winning_tile": "5m",
+        "win_method": "tsumo",
+        "actor": 0,
+        "target": 0
+      },
+      "state": {
+        "bakaze": "E",
+        "kyoku": 1,
+        "oya": 0,
+        "wall_remaining": 40,
+        "rinshan": false,
+        "reach_accepted": false,
+        "events": [{"type": "tsumo", "actor": 0, "pai": "5m"}]
+      },
+      "rule_overrides": {},
+      "expected": {
+        "result_type": "hora",
+        "wins": [{
+          "actor": 0,
+          "target": 0,
+          "winning_tile": "5m",
+          "yakus": [{"id": "menzen_tsumo", "value": 1, "unit": "han"}],
+          "bonuses": [],
+          "pao": [],
+          "ura_dora_markers": [],
+          "fu": 30,
+          "han": 1,
+          "basic_points": 240,
+          "hand_points": 1500,
+          "payments": [
+            {"from": 1, "to": 0, "points": 500},
+            {"from": 2, "to": 0, "points": 500},
+            {"from": 3, "to": 0, "points": 500}
+          ],
+          "deltas": [1500, -500, -500, -500]
+        }],
+        "deltas": [1500, -500, -500, -500]
+      }
+    },
+    {
+      "id": "boundary_kiriage_3han_60fu",
+      "category": "fu",
+      "input": {
+        "hand": {
+          "concealed_tiles": ["1m", "2m", "3m", "7m", "8m", "9m", "1p", "1p", "1p", "9s", "9s", "9s", "E"],
+          "melds": []
+        },
+        "winning_tile": "E",
+        "win_method": "ron",
+        "actor": 0,
+        "target": 1
+      },
+      "state": {
+        "bakaze": "E",
+        "kyoku": 1,
+        "oya": 0,
+        "wall_remaining": 40,
+        "rinshan": false,
+        "reach_accepted": true,
+        "events": [{"type": "reach", "actor": 0}, {"type": "reach_accepted", "actor": 0}]
+      },
+      "rule_overrides": {"kiriage_mangan": true},
+      "expected": {
+        "result_type": "hora",
+        "wins": [{
+          "actor": 0,
+          "target": 1,
+          "winning_tile": "E",
+          "yakus": [
+            {"id": "riichi", "value": 1, "unit": "han"},
+            {"id": "chanta", "value": 2, "unit": "han"}
+          ],
+          "bonuses": [],
+          "pao": [],
+          "ura_dora_markers": [],
+          "fu": 60,
+          "han": 3,
+          "basic_points": 2000,
+          "hand_points": 12000,
+          "payments": [{"from": 1, "to": 0, "points": 12000}],
+          "deltas": [12000, -12000, 0, 0]
+        }],
+        "deltas": [12000, -12000, 0, 0]
+      }
+    },
+    {
+      "id": "boundary_kiriage_3han_60fu_noop",
+      "category": "fu",
+      "input": {
+        "hand": {
+          "concealed_tiles": ["1m", "2m", "3m", "7m", "8m", "9m", "1p", "1p", "1p", "9s", "9s", "9s", "E"],
+          "melds": []
+        },
+        "winning_tile": "E",
+        "win_method": "ron",
+        "actor": 0,
+        "target": 1
+      },
+      "state": {
+        "bakaze": "E",
+        "kyoku": 1,
+        "oya": 0,
+        "wall_remaining": 40,
+        "rinshan": false,
+        "reach_accepted": true,
+        "events": [{"type": "reach", "actor": 0}, {"type": "reach_accepted", "actor": 0}]
+      },
+      "rule_overrides": {"kiriage_mangan": false},
+      "expected": {
+        "result_type": "hora",
+        "wins": [{
+          "actor": 0,
+          "target": 1,
+          "winning_tile": "E",
+          "yakus": [
+            {"id": "riichi", "value": 1, "unit": "han"},
+            {"id": "chanta", "value": 2, "unit": "han"}
+          ],
+          "bonuses": [],
+          "pao": [],
+          "ura_dora_markers": [],
+          "fu": 60,
+          "han": 3,
+          "basic_points": 1920,
+          "hand_points": 11600,
+          "payments": [{"from": 1, "to": 0, "points": 11600}],
+          "deltas": [11600, -11600, 0, 0]
+        }],
+        "deltas": [11600, -11600, 0, 0]
+      }
+    },
+    {
+      "id": "boundary_kazoe_sanbaiman_12han",
+      "category": "yaku",
+      "input": {
+        "hand": {
+          "concealed_tiles": ["1m", "2m", "3m", "4m", "5m", "6m", "7m", "8m", "9m", "1m", "1m", "1m", "2m"],
+          "melds": []
+        },
+        "winning_tile": "2m",
+        "win_method": "ron",
+        "actor": 1,
+        "target": 0,
+        "dora_markers": ["9m", "2m", "3m", "4m"]
+      },
+      "state": {
+        "bakaze": "E",
+        "kyoku": 1,
+        "oya": 0,
+        "wall_remaining": 40,
+        "rinshan": false,
+        "reach_accepted": false,
+        "events": [
+          {"type": "dora", "dora_marker": "9m"},
+          {"type": "dora", "dora_marker": "2m"},
+          {"type": "dora", "dora_marker": "3m"},
+          {"type": "dora", "dora_marker": "4m"}
+        ]
+      },
+      "rule_overrides": {},
+      "expected": {
+        "result_type": "hora",
+        "wins": [{
+          "actor": 1,
+          "target": 0,
+          "winning_tile": "2m",
+          "yakus": [
+            {"id": "chinitsu", "value": 6, "unit": "han"},
+            {"id": "ikkitsuukan", "value": 2, "unit": "han"}
+          ],
+          "bonuses": [{"id": "dora", "han": 4}],
+          "pao": [],
+          "ura_dora_markers": [],
+          "fu": 40,
+          "han": 12,
+          "basic_points": 6000,
+          "hand_points": 24000,
+          "payments": [{"from": 0, "to": 1, "points": 24000}],
+          "deltas": [-24000, 24000, 0, 0]
+        }],
+        "deltas": [-24000, 24000, 0, 0]
+      }
+    },
+    {
+      "id": "boundary_kazoe_yakuman_13han",
+      "category": "yaku",
+      "input": {
+        "hand": {
+          "concealed_tiles": ["1m", "2m", "3m", "4m", "5mr", "6m", "7m", "8m", "9m", "1m", "1m", "1m", "2m"],
+          "melds": []
+        },
+        "winning_tile": "2m",
+        "win_method": "ron",
+        "actor": 1,
+        "target": 0,
+        "dora_markers": ["9m", "2m", "3m", "4m"]
+      },
+      "state": {
+        "bakaze": "E",
+        "kyoku": 1,
+        "oya": 0,
+        "wall_remaining": 40,
+        "rinshan": false,
+        "reach_accepted": false,
+        "events": [
+          {"type": "dora", "dora_marker": "9m"},
+          {"type": "dora", "dora_marker": "2m"},
+          {"type": "dora", "dora_marker": "3m"},
+          {"type": "dora", "dora_marker": "4m"}
+        ]
+      },
+      "rule_overrides": {},
+      "expected": {
+        "result_type": "hora",
+        "wins": [{
+          "actor": 1,
+          "target": 0,
+          "winning_tile": "2m",
+          "yakus": [
+            {"id": "chinitsu", "value": 6, "unit": "han"},
+            {"id": "ikkitsuukan", "value": 2, "unit": "han"}
+          ],
+          "bonuses": [
+            {"id": "dora", "han": 4},
+            {"id": "akadora", "han": 1}
+          ],
+          "pao": [],
+          "ura_dora_markers": [],
+          "fu": 40,
+          "han": 13,
+          "basic_points": 8000,
+          "hand_points": 32000,
+          "payments": [{"from": 0, "to": 1, "points": 32000}],
+          "deltas": [-32000, 32000, 0, 0]
+        }],
+        "deltas": [-32000, 32000, 0, 0]
+      }
+    },
+    {
+      "id": "settlement_chombo",
+      "category": "settlement",
+      "input": {
+        "hand": {
+          "concealed_tiles": ["1m", "2m", "3m", "4m", "5m", "6m", "7p", "8p", "9p", "2s", "3s", "4s", "5m"],
+          "melds": []
+        },
+        "winning_tile": "5m",
+        "win_method": "ron",
+        "actor": 0,
+        "target": 1
+      },
+      "state": {
+        "bakaze": "E",
+        "kyoku": 1,
+        "oya": 0,
+        "wall_remaining": 40,
+        "rinshan": false,
+        "reach_accepted": false,
+        "events": []
+      },
+      "rule_overrides": {},
+      "expected": {
+        "result_type": "penalty",
+        "offender": 0,
+        "payments": [
+          {"from": 0, "to": 1, "points": 2800},
+          {"from": 0, "to": 2, "points": 2600},
+          {"from": 0, "to": 3, "points": 2600}
+        ],
+        "deltas": [-8000, 2800, 2600, 2600]
       }
     }
   ]

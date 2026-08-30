@@ -7,7 +7,7 @@
   "rules_schema": "urn:yamai:schema:yrc-0005:1.0-draft.3:riichi-4p-rules",
   "scoring_vectors_schema": "urn:yamai:schema:yrc-0005:1.0-draft.3:scoring-vectors",
   "scoring_vectors": "test-vectors/yrc-0005/1.0-draft.3/scoring.json",
-  "scoring_fixture_count": 53,
+  "scoring_fixture_count": 59,
   "schema_files": [
     "schemas/yrc-0005/1.0-draft.3/riichi-4p-rules.schema.json",
     "schemas/yrc-0005/1.0-draft.3/scoring-result.schema.json",
@@ -64,12 +64,16 @@
     "uncapped_basic_points": "fu * 2^(han+2)",
     "mangan_thresholds": {"5": 2000, "4_40": 2000, "3_70": 2000},
     "payments_rounded": "each payer ceil100 before summing",
-    "yakuman_basic_points": "8000 * yakuman_value_sum"
+    "yakuman_basic_points": "8000 * yakuman_value_sum",
+    "kazoe_boundaries": {"12_han": 6000, "13_han_kazoe_yakuman": 8000},
+    "chombo_remainder": "floor(P/(3*100))*100 to each other seat; remainder to lowest seat"
   },
   "required_test_vectors": [
     "child_30fu_3han_ron", "dealer_40fu_3han_ron", "child_30fu_2han_tsumo",
     "multiple_ron_settlement", "pao_split_rounding", "noten_by_tenpai_count",
-    "double_yakuman", "red_dora_and_ura_dora"
+    "double_yakuman", "red_dora_and_ura_dora", "kiriage_3han_60fu",
+    "kiriage_3han_60fu_noop", "kazoe_sanbaiman_12han", "kazoe_yakuman_13han",
+    "dealer_tsumo_30fu_1han", "chombo_remainder_lowest_seat"
   ],
   "fixture_coverage": {
     "normal_yaku_ids": [
@@ -83,8 +87,8 @@
       "kokushi_musou", "suuankou", "daisangen", "shousuushii", "daisuushii", "tsuuiisou",
       "chinroutou", "ryuuiisou", "chuuren_poutou", "suukantsu", "tenhou", "chiihou"
     ],
-    "boundaries": ["yaku_pinfu", "yaku_chiitoitsu", "boundary_open_ron_20_to_30", "boundary_kiriage_4han_30fu"],
-    "settlement": ["settlement_multiple_ron", "settlement_pao_split", "noten_0", "noten_1", "noten_2", "noten_3", "noten_4"],
+    "boundaries": ["yaku_pinfu", "yaku_chiitoitsu", "boundary_open_ron_20_to_30", "boundary_kiriage_4han_30fu", "boundary_kiriage_3han_60fu", "boundary_kiriage_3han_60fu_noop", "boundary_kazoe_sanbaiman_12han", "boundary_kazoe_yakuman_13han"],
+    "settlement": ["settlement_multiple_ron", "settlement_pao_split", "settlement_pao_liable_all", "yakuman_daisuushii", "settlement_parent_tsumo", "settlement_chombo", "noten_0", "noten_1", "noten_2", "noten_3", "noten_4"],
     "bonus": ["bonus_red_ura_dora"]
   }
 }

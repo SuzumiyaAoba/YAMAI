@@ -8,8 +8,13 @@
 
 - YRC 0003 の Protocol Version を `1.0-draft.5`、`riichi-4p` profile の revision を `1.0-draft.3` へ更新。
 - YRC 0003/YRC 0005 の規範本文、Schema、registry および test vector に非互換修正があるため、旧 draft と混在しないよう Protocol Version/profile revision を bump。
-- 現行成果物に基づき、`riichi-4p` の profile hash を `sha256:140a9b6d4d962799bb2bf2bc5dcdc2fa9ee88cc64374c930d0c3fe84ea749fb8` へ更新。
+- 現行成果物に基づき、`riichi-4p` の profile hash を `sha256:f51daf9b497bae12f87c01b3760a720f34dea0438ae15c593793baa28e9a4bf4` へ更新。
 - Schema、registry、vector の参照先を `1.0-draft.5` / `1.0-draft.3` のディレクトリへ移行。
+- YRC 0003 の規範本文を、JSON Lines の frame 境界、mode 別の resume、`start_game`/`end_game` の順序、decision group の `group_start` と deadline、未解決 request の terminal 化、再接続時の時計進行および liveness の前提に合わせて明確化。
+- YRC 0005 の規範本文を、meld の `open`、本場・供託を含む精算入力、切り上げ満貫・数え役満境界、親ツモ、責任払いおよびチョンボ精算に合わせて明確化。
+- YRC 0003/YRC 0005 の Schema、registry、公式 vector を上記の規範変更へ同期し、spectate/replay target、重複 winner/bonus/pao、score の倍数制約、group deadline および scoring fixture の境界を検査対象へ追加。
+- `scripts/validate_artifacts.py` に、Draft 2020-12 Schema の対応範囲を明示した検査、registry/Schema の discriminator 整合、release manifest と profile hash の整合、公式 vector の構文・意味検査を追加した。Quint/TLC の補助モデルは、request/group、再送・resume、timeout、terminal 化および score conservation の有限状態性質を検査するが、実装適合性や完全な scoring を保証しない。
+- これらは未公開の現行 `yamai-1.0-draft.5` / Protocol `1.0-draft.5` / `riichi-4p` profile revision `1.0-draft.3` に対する同一 release 内の整合修正である。既存の draft5/draft3 bump が旧 draft4/draft2 との非互換境界を表しており、release manifest の `published` は `false` のため、今回さらに release ID、Protocol Version または profile revision を bump しない。公開 tag 後に同等の規範変更を行う場合は、仕様策定プロセスに従い新しい release ID と版を作成する。
 
 ### Added
 
@@ -19,6 +24,7 @@
 ### Compatibility
 
 - `1.0-draft.5` / `1.0-draft.3` は旧 `1.0-draft.4` / `1.0-draft.2` と互換とみなさない。Protocol Version、profile revision、profile hash および release tag の組を一致させること。
+- 現行 release は、mode/target、seq・再送・request/ACK lifecycle、group deadline、scoring の境界および Schema の追加制約を含む。これらを実装していない旧実装は、hash が同じでない限り適合・互換と表明してはならず、現行 release の全公式 vector と validator を通過させる必要がある。
 
 ### Status
 

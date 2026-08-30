@@ -25,9 +25,12 @@ SCHEMA_ROOT = ROOT / "schemas"
 PROTOCOL = "1.0-draft.5"
 PROFILE = "riichi-4p"
 PROFILE_REVISION = "1.0-draft.3"
+YRC0003_SCHEMA_DIR = SCHEMA_ROOT / "yrc-0003" / PROTOCOL
+RELEASE_MANIFEST_PATH = ROOT / "release-manifest.json"
 MAX_INT = 9007199254740991
 ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,64}$")
 EXTENSION_FIELD_RE = re.compile(r"^x_[A-Za-z0-9][A-Za-z0-9_]{0,63}$")
+ERROR_CODE_RE = re.compile(r"^[a-z][a-z0-9_]{1,63}$")
 PROFILE_HASH_INPUTS = [
     "schemas/yrc-0003/1.0-draft.5/profile/riichi-4p.schema.json",
     "schemas/yrc-0005/1.0-draft.3/riichi-4p-rules.schema.json",
@@ -37,6 +40,25 @@ PROFILE_HASH_INPUTS = [
     "test-vectors/yrc-0003/1.0-draft.5/vectors.json",
     "test-vectors/yrc-0005/1.0-draft.3/scoring.json",
 ]
+
+# The release checker intentionally implements the assertion keywords used by
+# the YAMAI artifact set, rather than claiming to be a general-purpose
+# Draft-2020-12 implementation.  Keep this list explicit: if a future schema
+# introduces one of these unsupported keywords, CI must fail instead of
+# silently accepting an instance that was never checked.
+UNSUPPORTED_DRAFT202012_KEYWORDS = {
+    "$anchor",
+    "$dynamicAnchor",
+    "$dynamicRef",
+    "dependentRequired",
+    "dependentSchemas",
+    "exclusiveMaximum",
+    "exclusiveMinimum",
+    "prefixItems",
+    "propertyNames",
+    "unevaluatedItems",
+    "unevaluatedProperties",
+}
 
 
 class ArtifactError(Exception):
@@ -172,6 +194,30 @@ class SchemaSet:
         for sid, schema in self.schemas.items():
             self._check_refs(schema, sid)
 
+    def check_keyword_support(self) -> None:
+        """Reject core keywords that this dependency-free checker cannot enforce.
+
+        Unknown annotation keywords are permitted by JSON Schema, but known
+        Draft 2020-12 applicators/assertions must not be silently ignored.
+        This guard keeps the declared ``full_conformance: false`` boundary
+        explicit when the artifact schemas evolve.
+        """
+        for sid, schema in self.schemas.items():
+            self._check_keyword_support(schema, sid, "$")
+
+    def _check_keyword_support(self, value: Any, owner: str, path: str) -> None:
+        if isinstance(value, dict):
+            for key, item in value.items():
+                if key in UNSUPPORTED_DRAFT202012_KEYWORDS:
+                    raise ArtifactError(
+                        "schema_error",
+                        f"unsupported Draft 2020-12 keyword {key} in {owner}{path}",
+                    )
+                self._check_keyword_support(item, owner, f"{path}.{key}")
+        elif isinstance(value, list):
+            for index, item in enumerate(value):
+                self._check_keyword_support(item, owner, f"{path}[{index}]")
+
     def _check_refs(self, value: Any, owner: str) -> None:
         if isinstance(value, dict):
             if "$ref" in value:
@@ -194,7 +240,6 @@ class SchemaSet:
         if "$ref" in schema:
             target, target_base = self.resolve(schema["$ref"], base)
             self._validate(value, target, path, target_base)
-            return
         if "allOf" in schema:
             for sub in schema["allOf"]:
                 self._validate(value, sub, path, base)
@@ -264,6 +309,18 @@ class SchemaSet:
             if schema.get("uniqueItems"):
                 if len({json.dumps(x, sort_keys=True, ensure_ascii=False) for x in value}) != len(value):
                     raise ArtifactError("invalid_message", f"uniqueItems mismatch at {path}")
+            if "contains" in schema:
+                matches = 0
+                for index, item in enumerate(value):
+                    try:
+                        self._validate(item, schema["contains"], f"{path}[{index}]", base)
+                    except ArtifactError:
+                        continue
+                    matches += 1
+                minimum = schema.get("minContains", 1)
+                maximum = schema.get("maxContains", len(value))
+                if matches < minimum or matches > maximum:
+                    raise ArtifactError("invalid_message", f"contains mismatch at {path}")
             if "items" in schema:
                 for i, item in enumerate(value):
                     self._validate(item, schema["items"], f"{path}[{i}]", base)
@@ -298,10 +355,59 @@ def schema_by_id(schemas: SchemaSet, sid: str) -> Any:
     return schemas.schemas[sid]
 
 
+def _schema_property_values(schema: Mapping[str, Any], property_name: str) -> List[str]:
+    properties = schema.get("properties", {})
+    if not isinstance(properties, Mapping):
+        return []
+    definition = properties.get(property_name)
+    if not isinstance(definition, Mapping):
+        return []
+    values: List[str] = []
+    if isinstance(definition.get("const"), str):
+        values.append(definition["const"])
+    if isinstance(definition.get("enum"), list):
+        values.extend(value for value in definition["enum"] if isinstance(value, str))
+    return values
+
+
+def _collect_union_property_values(
+    schemas: SchemaSet,
+    node: Any,
+    root: Mapping[str, Any],
+    property_name: str,
+    seen: set[int] | None = None,
+) -> List[str]:
+    """Collect discriminator values from a schema union, following local refs."""
+    if seen is None:
+        seen = set()
+    if isinstance(node, Mapping):
+        identity = id(node)
+        if identity in seen:
+            return []
+        seen.add(identity)
+        values = _schema_property_values(node, property_name)
+        if "$ref" in node and isinstance(node["$ref"], str):
+            target, target_root = schemas.resolve(node["$ref"], root)
+            values.extend(_collect_union_property_values(schemas, target, target_root, property_name, seen))
+        for key in ("oneOf", "anyOf", "allOf"):
+            branches = node.get(key, [])
+            if isinstance(branches, list):
+                for branch in branches:
+                    values.extend(_collect_union_property_values(schemas, branch, root, property_name, seen))
+        return values
+    if isinstance(node, list):
+        values: List[str] = []
+        for branch in node:
+            values.extend(_collect_union_property_values(schemas, branch, root, property_name, seen))
+        return values
+    return []
+
+
 def load_all_json() -> None:
     for base in (ROOT / "registry", ROOT / "test-vectors"):
         for path in sorted(base.rglob("*.json")):
             strict_load(path)
+    strict_load(RELEASE_MANIFEST_PATH)
 
 
 def check_registry(schemas: SchemaSet) -> Tuple[Dict[str, Any], Dict[str, Any]]:
@@ -309,6 +415,8 @@ def check_registry(schemas: SchemaSet) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     r = strict_load(ROOT / "registry/yrc-0005/1.0-draft.3/registry.json")
     if p["protocol_version"] != PROTOCOL or r["protocol_version"] != PROTOCOL:
         raise ArtifactError("registry_error", "registry protocol version mismatch")
+    if not isinstance(p.get("profiles"), list) or len(p["profiles"]) != 1:
+        raise ArtifactError("registry_error", "protocol registry must contain exactly one profile")
     if p["profiles"][0]["id"] != PROFILE or p["profiles"][0]["revision"] != PROFILE_REVISION:
         raise ArtifactError("registry_error", "profile registry mismatch")
     for field in ("message_kinds", "event_types", "action_types", "ack_statuses", "error_codes", "rule_keys", "result_types", "result_reasons"):
@@ -316,13 +424,72 @@ def check_registry(schemas: SchemaSet) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         ids = [x if isinstance(x, str) else x["id"] for x in values]
         if len(ids) != len(set(ids)):
             raise ArtifactError("registry_error", f"duplicate registry id in {field}")
+        if any(not isinstance(item, str) or ERROR_CODE_RE.fullmatch(item) is None for item in ids):
+            raise ArtifactError("registry_error", f"invalid registry id in {field}")
+
+    expected_message_kinds = {"hello", "join", "welcome", "event", "request", "action", "ack", "error", "snapshot"}
+    message_kinds = {entry.get("id") for entry in p.get("message_kinds", []) if isinstance(entry, Mapping)}
+    if message_kinds != expected_message_kinds:
+        raise ArtifactError("registry_error", "message kind registry does not match the protocol union")
+    for entry in p["message_kinds"]:
+        sid = entry.get("schema")
+        if not isinstance(sid, str):
+            raise ArtifactError("registry_error", "message kind schema reference is missing")
+        schema = schema_by_id(schemas, sid)
+        if set(_collect_union_property_values(schemas, schema, schema, "kind")) != {entry["id"]}:
+            raise ArtifactError("registry_error", f"message kind/schema discriminator mismatch: {entry['id']}")
+
+    event_schema = schema_by_id(schemas, "urn:yamai:schema:yrc-0003:1.0-draft.5:event")
+    event_union = event_schema.get("properties", {}).get("event", {}).get("oneOf", [])
+    event_values = set()
+    for branch in event_union:
+        event_values.update(_schema_property_values(branch, "type"))
+    if set(p["event_types"]) != event_values:
+        raise ArtifactError("registry_error", "event type registry does not match event schema")
+
+    action_schema = schema_by_id(schemas, "urn:yamai:schema:yrc-0003:1.0-draft.5:action")
+    action_root = action_schema
+    action_values = set(
+        _collect_union_property_values(
+            schemas,
+            action_schema.get("$defs", {}).get("actionObject", {}),
+            action_root,
+            "type",
+        )
+    )
+    if set(p["action_types"]) != action_values:
+        raise ArtifactError("registry_error", "action type registry does not match action schema")
+
+    ack_schema = schema_by_id(schemas, "urn:yamai:schema:yrc-0003:1.0-draft.5:ack")
+    ack_statuses = set(_schema_property_values(ack_schema, "status"))
+    if set(p["ack_statuses"]) != ack_statuses:
+        raise ArtifactError("registry_error", "ack status registry does not match ack schema")
+
+    expected_schema_files = {
+        str(path.relative_to(ROOT))
+        for path in YRC0003_SCHEMA_DIR.rglob("*.json")
+        if path.name != "vector-manifest.schema.json"
+    }
+    schema_files = p.get("schema_files")
+    if not isinstance(schema_files, list) or len(schema_files) != len(set(schema_files)) or set(schema_files) != expected_schema_files:
+        raise ArtifactError("registry_error", "protocol registry schema file set mismatch")
+    for relative in schema_files:
+        path = ROOT / relative
+        if not path.is_file():
+            raise ArtifactError("registry_error", f"registry schema file is missing: {relative}")
+        schema_by_id(schemas, strict_load(path)["$id"])
+
+    expected_scoring_schema_files = {
+        str(path.relative_to(ROOT))
+        for path in (SCHEMA_ROOT / "yrc-0005" / "1.0-draft.3").glob("*.json")
+    }
+    if set(r.get("schema_files", [])) != expected_scoring_schema_files:
+        raise ArtifactError("registry_error", "scoring registry schema file set mismatch")
     yaku_ids = [x["id"] for x in r["yaku_ids"]]
     if len(yaku_ids) != len(set(yaku_ids)):
         raise ArtifactError("registry_error", "duplicate yaku id")
     if set(r["bonus_ids"]) != {"dora", "uradora", "akadora"}:
         raise ArtifactError("registry_error", "bonus registry mismatch")
-    for entry in p["message_kinds"]:
-        schema_by_id(schemas, entry["schema"])
     if "scoring_vectors_schema" in r:
         schema_by_id(schemas, r["scoring_vectors_schema"])
     for field in ("schema_files",):
@@ -378,23 +545,127 @@ def profile_hash(protocol_registry: Dict[str, Any], rules_registry: Dict[str, An
     return "sha256:" + hashlib.sha256(canonical_bytes).hexdigest()
 
 
+def _repo_file(value: Any, field: str) -> Path:
+    if not isinstance(value, str) or not value or Path(value).is_absolute() or ".." in Path(value).parts:
+        raise ArtifactError("manifest_error", f"{field} is not a safe repository-relative path")
+    path = ROOT / value
+    if not path.is_file():
+        raise ArtifactError("manifest_error", f"{field} points to a missing file: {value}")
+    return path
+
+
+def _repo_file_list(values: Any, field: str) -> None:
+    if not isinstance(values, list):
+        raise ArtifactError("manifest_error", f"{field} must be an array")
+    for index, value in enumerate(values):
+        _repo_file(value, f"{field}[{index}]")
+
+
 def check_manifest(schemas: SchemaSet, p: Dict[str, Any], r: Dict[str, Any]) -> Dict[str, Any]:
     path = ROOT / "test-vectors/yrc-0003/1.0-draft.5/manifest.json"
     manifest = strict_load(path)
     schema = schema_by_id(schemas, "urn:yamai:schema:yrc-0003:1.0-draft.5:vector-manifest")
     schemas.validate(manifest, schema)
+    expected_registries = [
+        "registry/yrc-0003/1.0-draft.5/registry.json",
+        "registry/yrc-0005/1.0-draft.3/registry.json",
+    ]
+    if manifest["registry"] != expected_registries:
+        raise ArtifactError("manifest_error", "vector manifest registry set mismatch")
+    if manifest["schema_root"] != "schemas/yrc-0003/1.0-draft.5/message.schema.json":
+        raise ArtifactError("manifest_error", "vector manifest schema root mismatch")
+    _repo_file_list(manifest["registry"], "registry")
+    _repo_file(manifest["schema_root"], "schema_root")
+    _repo_file(manifest["vectors"], "vectors")
+    _repo_file(manifest["scoring_vectors"], "scoring_vectors")
     if manifest.get("profile_hash_canonicalization") != "RFC8785-JCS":
         raise ArtifactError("manifest_error", "profile hash canonicalization must be RFC8785-JCS")
     if manifest.get("profile_hash_inputs") != PROFILE_HASH_INPUTS:
         raise ArtifactError("manifest_error", "profile hash input manifest is not the release set")
+    _repo_file_list(manifest["profile_hash_inputs"], "profile_hash_inputs")
     actual = profile_hash(p, r)
     if manifest["profile_hash"] != actual:
         raise ArtifactError("manifest_error", f"profile_hash mismatch: expected {manifest['profile_hash']}, actual {actual}")
     vectors = strict_load(ROOT / manifest["vectors"])
     expected = {item["id"] for item in manifest["cases"]}
+    case_ids = [item["id"] for item in manifest["cases"]]
+    if len(case_ids) != len(set(case_ids)):
+        raise ArtifactError("manifest_error", "duplicate vector case id")
     if set(vectors) != expected:
         raise ArtifactError("manifest_error", "manifest/vector case set mismatch")
     return manifest
+
+
+def check_release_manifest(manifest: Dict[str, Any], p: Dict[str, Any], r: Dict[str, Any]) -> None:
+    release = strict_load(RELEASE_MANIFEST_PATH)
+    if release.get("release_id") != f"yamai-{PROTOCOL}":
+        raise ArtifactError("release_error", "release id does not match protocol version")
+    if release.get("required_git_tag") != release.get("release_id"):
+        raise ArtifactError("release_error", "required git tag does not match release id")
+
+    protocol = release.get("protocol")
+    if not isinstance(protocol, Mapping) or protocol.get("name") != "yamai" or protocol.get("version") != PROTOCOL:
+        raise ArtifactError("release_error", "release protocol metadata mismatch")
+    if protocol.get("message_schema_root") != manifest["schema_root"]:
+        raise ArtifactError("release_error", "release message schema root mismatch")
+    _repo_file(protocol.get("document"), "protocol.document")
+    _repo_file(protocol.get("message_schema_root"), "protocol.message_schema_root")
+
+    profiles = release.get("profiles")
+    if not isinstance(profiles, list) or len(profiles) != 1:
+        raise ArtifactError("release_error", "release must contain exactly one profile")
+    profile = profiles[0]
+    if not isinstance(profile, Mapping) or profile.get("name") != PROFILE:
+        raise ArtifactError("release_error", "release profile name mismatch")
+    if profile.get("revision") != manifest["profile_revision"] or profile.get("profile_hash") != manifest["profile_hash"]:
+        raise ArtifactError("release_error", "release profile revision/hash mismatch")
+    _repo_file(profile.get("document"), "profiles[0].document")
+
+    expected_registries = [
+        "registry/yrc-0003/1.0-draft.5/registry.json",
+        "registry/yrc-0005/1.0-draft.3/registry.json",
+    ]
+    if release.get("registries") != expected_registries or manifest["registry"] != expected_registries:
+        raise ArtifactError("release_error", "release registry set mismatch")
+    _repo_file_list(release.get("registries"), "registries")
+
+    expected_vectors = [
+        "test-vectors/yrc-0003/1.0-draft.5/manifest.json",
+        manifest["vectors"],
+        manifest["scoring_vectors"],
+    ]
+    if release.get("test_vectors") != expected_vectors:
+        raise ArtifactError("release_error", "release test vector set mismatch")
+    _repo_file_list(release.get("test_vectors"), "test_vectors")
+
+    expected_schemas = {
+        *p["schema_files"],
+        "schemas/yrc-0003/1.0-draft.5/vector-manifest.schema.json",
+        *r["schema_files"],
+    }
+    release_schemas = release.get("schemas")
+    if not isinstance(release_schemas, list) or len(release_schemas) != len(set(release_schemas)) or set(release_schemas) != expected_schemas:
+        raise ArtifactError("release_error", "release schema file set mismatch")
+    _repo_file_list(release_schemas, "schemas")
+
+    scope = release.get("profile_hash_scope")
+    if not isinstance(scope, Mapping) or scope.get("canonicalization") != manifest["profile_hash_canonicalization"] or scope.get("inputs") != manifest["profile_hash_inputs"]:
+        raise ArtifactError("release_error", "release profile hash scope mismatch")
+    if scope.get("protocol_version_pins") != [manifest["schema_root"]]:
+        raise ArtifactError("release_error", "release protocol version pin mismatch")
+
+    validator = release.get("validator")
+    if not isinstance(validator, Mapping) or validator.get("path") != "scripts/validate_artifacts.py" or validator.get("command") != "rtk python3 scripts/validate_artifacts.py":
+        raise ArtifactError("release_error", "release validator metadata mismatch")
+    _repo_file(validator.get("path"), "validator.path")
+
+    change_control = release.get("change_control")
+    if not isinstance(change_control, Mapping):
+        raise ArtifactError("release_error", "release change control metadata is missing")
+    _repo_file(change_control.get("changelog"), "change_control.changelog")
+    _repo_file(change_control.get("process"), "change_control.process")
+    _repo_file_list(release.get("normative_documents"), "normative_documents")
+    _repo_file_list(release.get("informational_documents"), "informational_documents")
 
 
 TERMINAL_ACK_STATUSES = {"accepted", "passed", "superseded", "defaulted", "stale"}
@@ -432,9 +703,9 @@ def _check_mode_view(mode: Any, view: Any, seat: Any, *, context: str) -> None:
         _require(valid_view and seat is None, "invalid_message", f"{context}: invalid replay view/seat")
 
 
-def _check_target(target: Any) -> None:
+def _check_target(target: Any, *, allowed_types: set[str] = TARGET_TYPES) -> None:
     _require(isinstance(target, dict), "invalid_message", "target must be a tagged object")
-    _require(target.get("type") in TARGET_TYPES, "invalid_message", "target.type is unknown")
+    _require(target.get("type") in allowed_types, "invalid_message", "target.type is not allowed for this mode")
     _require(isinstance(target.get("id"), str) and ID_RE.fullmatch(target["id"]), "invalid_message", "target.id is invalid")
 
 
@@ -498,7 +769,7 @@ def _check_action_object(action: Any, *, expected_actor: int | None = None) -> N
     _require(kind in {"hora", "ryukyoku"}, "invalid_message", "unknown action type")
 
 
-def _check_request(message: Mapping[str, Any]) -> None:
+def _check_request(message: Mapping[str, Any], *, grace_ms: int | None = None) -> None:
     request_id = message.get("request_id")
     seat = message.get("seat")
     _require(isinstance(request_id, str) and ID_RE.fullmatch(request_id), "invalid_message", "request_id is invalid")
@@ -519,6 +790,15 @@ def _check_request(message: Mapping[str, Any]) -> None:
     _require(not grouped or isinstance(group, str), "invalid_message", "decision group fields require an id")
     if group is not None:
         _require(all(x in message for x in GROUP_FIELDS), "invalid_message", "decision group is incomplete")
+        timeout_ms = message.get("timeout_ms")
+        time_bank_ms = message.get("time_bank_ms")
+        group_deadline_ms = message.get("decision_group_deadline_ms")
+        _require(isinstance(timeout_ms, int) and isinstance(time_bank_ms, int) and isinstance(group_deadline_ms, int), "invalid_message", "decision group deadline fields are invalid")
+        deadline_floor = timeout_ms + time_bank_ms
+        if grace_ms is not None:
+            _require(isinstance(grace_ms, int) and not isinstance(grace_ms, bool) and grace_ms >= 0, "invalid_message", "trace grace_ms is invalid")
+            deadline_floor += grace_ms
+        _require(group_deadline_ms >= deadline_floor, "invalid_message", "decision group deadline is shorter than the available request time")
         members = message["decision_group_members"]
         _require(isinstance(members, list) and 2 <= len(members) <= 4, "invalid_message", "decision group members are invalid")
         member_ids = []
@@ -577,6 +857,12 @@ def semantic_message(message: Mapping[str, Any], case_id: str, expected_profile_
         if event.get("type") == "end_game":
             rankings = event.get("rankings")
             _require(isinstance(rankings, list) and set(rankings) == {1, 2, 3, 4}, "invalid_message", "rankings must contain each rank exactly once")
+            scores = event.get("scores")
+            _require(isinstance(scores, list) and len(scores) == 4 and all(isinstance(score, int) and not isinstance(score, bool) for score in scores), "invalid_message", "end_game scores are invalid")
+            for left in range(4):
+                for right in range(4):
+                    if scores[left] > scores[right]:
+                        _require(rankings[left] < rankings[right], "invalid_message", "rankings do not follow descending scores")
         if event.get("type") == "end_kyoku":
             result = event.get("result", {})
             if result.get("type") == "hora":
@@ -616,11 +902,11 @@ def semantic_message(message: Mapping[str, Any], case_id: str, expected_profile_
             _require(view == "seat" and "target" not in message, "invalid_message", "play join requires seat and forbids target")
         elif mode == "spectate":
             _require(view == "public" and "target" in message and "resume" not in message, "invalid_message", "spectate join shape is invalid")
-            _check_target(message.get("target"))
+            _check_target(message.get("target"), allowed_types={"game"})
         else:
             _require("target" in message and "resume" not in message, "invalid_message", "replay join shape is invalid")
             _require(view in {"public", "full"} or (isinstance(view, dict) and "seat" in view and all(key == "seat" or EXTENSION_FIELD_RE.fullmatch(key) for key in view) and isinstance(view.get("seat"), int) and 0 <= view["seat"] <= 3), "invalid_message", "replay view is invalid")
-            _check_target(message.get("target"))
+            _check_target(message.get("target"), allowed_types={"recording"})
         limits = message.get("receive_limits", {})
         if message.get("profile") == PROFILE and (
             limits.get("max_message_bytes") != 1048576
@@ -792,20 +1078,59 @@ def _check_scoring_hand(hand: Any, fixture_id: str) -> None:
     melds = hand.get("melds", [])
     _require(isinstance(concealed, list) and isinstance(melds, list), "scoring_error", f"{fixture_id}: hand arrays are invalid")
     kan_kinds = {"kantsu", "ankan", "daiminkan", "kakan"}
+    called_open = {"chi": True, "pon": True, "daiminkan": True, "kakan": True, "ankan": False}
     logical_count = len(concealed)
     kan_count = 0
     for meld in melds:
         _require(isinstance(meld, dict) and isinstance(meld.get("tiles"), list), "scoring_error", f"{fixture_id}: meld tiles are invalid")
+        kind = meld.get("kind")
+        if kind in called_open:
+            _require(meld.get("open") is called_open[kind], "scoring_error", f"{fixture_id}: {kind} open flag is inconsistent")
         logical_count += len(meld["tiles"])
-        if meld.get("kind") in kan_kinds:
+        if kind in kan_kinds:
             kan_count += 1
     # The fixture format represents a 13-tile hand plus one extra physical
     # tile per kan (the winning tile is part of the 13-tile input shape).
     _require(logical_count == 13 + kan_count, "scoring_error", f"{fixture_id}: hand/meld logical tile count is inconsistent")
 
 
+def _scoring_state_values(state: Any, fixture_id: str) -> Tuple[int, int]:
+    _require(isinstance(state, Mapping), "scoring_error", f"{fixture_id}: state is not an object")
+    values = []
+    for field in ("honba", "kyotaku"):
+        value = state.get(field, 0)
+        _require(isinstance(value, int) and not isinstance(value, bool) and value >= 0, "scoring_error", f"{fixture_id}: {field} is invalid")
+        values.append(value)
+    return values[0], values[1]
+
+
+def _payment_deltas(payments: Any, fixture_id: str, context: str) -> List[int]:
+    _require(isinstance(payments, list), "scoring_error", f"{fixture_id}.{context}: payments are not an array")
+    deltas = [0, 0, 0, 0]
+    for payment in payments:
+        _require(isinstance(payment, Mapping), "scoring_error", f"{fixture_id}.{context}: payment is not an object")
+        source = payment.get("from")
+        target = payment.get("to")
+        points = payment.get("points")
+        _require(isinstance(source, int) and not isinstance(source, bool) and 0 <= source <= 3, "scoring_error", f"{fixture_id}.{context}: payment source is invalid")
+        _require(isinstance(target, int) and not isinstance(target, bool) and 0 <= target <= 3, "scoring_error", f"{fixture_id}.{context}: payment target is invalid")
+        _require(source != target, "scoring_error", f"{fixture_id}.{context}: payment endpoints are identical")
+        _require(isinstance(points, int) and not isinstance(points, bool) and points >= 0, "scoring_error", f"{fixture_id}.{context}: payment points are invalid")
+        deltas[source] -= points
+        deltas[target] += points
+    return deltas
+
+
+def _check_delta_conservation(deltas: Any, fixture_id: str, context: str) -> None:
+    _require(isinstance(deltas, list) and len(deltas) == 4, "scoring_error", f"{fixture_id}.{context}: deltas are invalid")
+    _require(all(isinstance(value, int) and not isinstance(value, bool) for value in deltas), "scoring_error", f"{fixture_id}.{context}: deltas contain a non-integer")
+    _require(sum(deltas) == 0, "scoring_error", f"{fixture_id}.{context}: deltas do not conserve points")
+
+
 def _check_expected_win(input_data: Mapping[str, Any], win: Mapping[str, Any], fixture_id: str) -> None:
     method = input_data.get("win_method")
+    _require(input_data.get("actor") == win.get("actor"), "scoring_error", f"{fixture_id}: expected actor does not match input")
+    _require(input_data.get("target") == win.get("target"), "scoring_error", f"{fixture_id}: expected target does not match input")
     _require(input_data.get("winning_tile") == win.get("winning_tile"), "scoring_error", f"{fixture_id}: winning_tile does not match expected win")
     if method == "tsumo":
         _require(win.get("target") == win.get("actor"), "scoring_error", f"{fixture_id}: tsumo target must equal actor")
@@ -817,21 +1142,117 @@ def _check_expected_win(input_data: Mapping[str, Any], win: Mapping[str, Any], f
         values = [entry.get(id_key) for entry in win.get(key, []) if isinstance(entry, dict)]
         _require(len(values) == len(set(values)), "scoring_error", f"{fixture_id}: duplicate {key} id")
     payments = win.get("payments", [])
-    _require(isinstance(payments, list), "scoring_error", f"{fixture_id}: payments are not an array")
-    for payment in payments:
-        _require(payment.get("from") != payment.get("to"), "scoring_error", f"{fixture_id}: payment endpoints are identical")
+    derived_deltas = _payment_deltas(payments, fixture_id, "win")
+    _require(derived_deltas == win.get("deltas"), "scoring_error", f"{fixture_id}: win deltas do not match payments")
+    _check_delta_conservation(win.get("deltas"), fixture_id, "win")
 
 
-def _check_scoring_fixture_semantics(fixture: Mapping[str, Any]) -> None:
+def _effective_scoring_rules(base_rules: Mapping[str, Any], fixture: Mapping[str, Any]) -> Dict[str, Any]:
+    effective = dict(base_rules)
+    overrides = fixture.get("rule_overrides", {})
+    if isinstance(overrides, Mapping):
+        for key, value in overrides.items():
+            if isinstance(value, Mapping) and isinstance(effective.get(key), Mapping):
+                nested = dict(effective[key])
+                nested.update(value)
+                effective[key] = nested
+            else:
+                effective[key] = value
+    return effective
+
+
+def _expected_settlement_extras(
+    fixture_id: str,
+    input_data: Mapping[str, Any],
+    wins: Sequence[Mapping[str, Any]],
+    state: Mapping[str, Any],
+    rules: Mapping[str, Any],
+) -> List[int]:
+    """Return per-win additions to hand_points from honba and kyotaku."""
+    honba, kyotaku = _scoring_state_values(state, fixture_id)
+    stick_value = rules.get("riichi_stick_value", 0)
+    ron_honba = rules.get("honba_ron_value", 0)
+    tsumo_honba = rules.get("honba_tsumo_value_per_payer", 0)
+    _require(isinstance(stick_value, int) and not isinstance(stick_value, bool) and stick_value >= 0 and stick_value % 100 == 0, "scoring_error", f"{fixture_id}: riichi_stick_value is invalid")
+    _require(isinstance(ron_honba, int) and not isinstance(ron_honba, bool) and ron_honba >= 0, "scoring_error", f"{fixture_id}: honba_ron_value is invalid")
+    _require(isinstance(tsumo_honba, int) and not isinstance(tsumo_honba, bool) and tsumo_honba >= 0, "scoring_error", f"{fixture_id}: honba_tsumo_value_per_payer is invalid")
+
+    count = len(wins)
+    _require(count > 0, "scoring_error", f"{fixture_id}: no wins to settle")
+    extras = [0] * count
+    methods = [entry.get("win_method") for entry in [input_data] + list(input_data.get("other_winners", []))]
+    if count == 1:
+        method = methods[0]
+        if method == "ron":
+            extras[0] += honba * ron_honba
+        elif method == "tsumo":
+            # A tsumo has three payer shares. Pao may collapse those shares
+            # into one payment entry, but the honba amount remains per payer.
+            extras[0] += honba * tsumo_honba * 3
+        else:
+            raise ArtifactError("scoring_error", f"{fixture_id}: unknown settlement method")
+        extras[0] += kyotaku * stick_value
+        return extras
+
+    _require(all(method == "ron" for method in methods), "scoring_error", f"{fixture_id}: multiple wins must all be ron")
+    settlement = rules.get("multiple_ron_settlement", {})
+    _require(isinstance(settlement, Mapping), "scoring_error", f"{fixture_id}: multiple_ron_settlement is invalid")
+    honba_policy = settlement.get("honba")
+    kyotaku_policy = settlement.get("kyotaku")
+    _require(honba_policy in {"each_winner", "first_winner"}, "scoring_error", f"{fixture_id}: multiple-ron honba policy is invalid")
+    _require(kyotaku_policy in {"first_winner", "equal_split"}, "scoring_error", f"{fixture_id}: multiple-ron kyotaku policy is invalid")
+    first_index = min(
+        range(count),
+        key=lambda index: (wins[index].get("actor", 0) - wins[index].get("target", 0) + 4) % 4,
+    )
+    if honba_policy == "each_winner":
+        extras = [honba * ron_honba] * count
+    else:
+        extras[first_index] += honba * ron_honba
+
+    total_kyotaku = kyotaku * stick_value
+    if kyotaku_policy == "first_winner":
+        extras[first_index] += total_kyotaku
+    else:
+        # Equal split is in 100-point units; any remainder goes to the first
+        # winner, as required by the profile settlement rule.
+        equal_share = (total_kyotaku // count // 100) * 100
+        extras = [extra + equal_share for extra in extras]
+        extras[first_index] += total_kyotaku - equal_share * count
+    return extras
+
+
+def _check_scoring_fixture_semantics(fixture: Mapping[str, Any], base_rules: Mapping[str, Any]) -> None:
     fixture_id = fixture.get("id", "<unknown>")
     input_data = fixture.get("input", {})
     _check_scoring_hand(input_data.get("hand"), fixture_id)
+    state = fixture.get("state", {})
+    state_honba, state_kyotaku = _scoring_state_values(state, fixture_id)
     expected = fixture.get("expected", {})
-    if expected.get("result_type") != "hora":
+    result_type = expected.get("result_type")
+    if result_type == "penalty":
+        payments = expected.get("payments", [])
+        derived_deltas = _payment_deltas(payments, fixture_id, "penalty")
+        _require(derived_deltas == expected.get("deltas"), "scoring_error", f"{fixture_id}: penalty deltas do not match payments")
+        _check_delta_conservation(expected.get("deltas"), fixture_id, "penalty")
+        offender = expected.get("offender")
+        _require(isinstance(offender, int) and not isinstance(offender, bool) and 0 <= offender <= 3, "scoring_error", f"{fixture_id}: penalty offender is invalid")
+        for payment in payments:
+            _require(payment.get("from") == offender and payment.get("to") != offender, "scoring_error", f"{fixture_id}: penalty payment does not originate at offender")
         return
+    if result_type == "ryukyoku":
+        _check_delta_conservation(expected.get("deltas"), fixture_id, "ryukyoku")
+        return
+    if result_type != "hora":
+        raise ArtifactError("scoring_error", f"{fixture_id}: unknown result type")
     wins = expected.get("wins", [])
     winner_inputs = [input_data] + list(input_data.get("other_winners", []))
     _require(len(wins) == len(winner_inputs), "scoring_error", f"{fixture_id}: winner/input count mismatch")
+    _require(len({win.get("actor") for win in wins}) == len(wins), "scoring_error", f"{fixture_id}: winner actors are not unique")
+    for index, winner_input in enumerate(winner_inputs):
+        winner_state = state if index == 0 else winner_input.get("state")
+        winner_honba, winner_kyotaku = _scoring_state_values(winner_state, f"{fixture_id}.winner{index}")
+        _require((winner_honba, winner_kyotaku) == (state_honba, state_kyotaku), "scoring_error", f"{fixture_id}: winner state settlement counters differ")
     for index, (winner_input, win) in enumerate(zip(winner_inputs, wins)):
         _check_scoring_hand(winner_input.get("hand"), f"{fixture_id}.winner{index}")
         _check_expected_win(winner_input, win, f"{fixture_id}.winner{index}")
@@ -842,16 +1263,90 @@ def _check_scoring_fixture_semantics(fixture: Mapping[str, Any]) -> None:
     expected_deltas = expected.get("deltas")
     combined = [sum(win.get("deltas", [0, 0, 0, 0])[i] for win in wins) for i in range(4)]
     _require(expected_deltas == combined, "scoring_error", f"{fixture_id}: combined deltas do not match wins")
+    _check_delta_conservation(expected_deltas, fixture_id, "combined")
+
+    if len(wins) > 1:
+        targets = {win.get("target") for win in wins}
+        _require(len(targets) == 1, "scoring_error", f"{fixture_id}: multiple wins do not share a target")
+        _require(all(winner_input.get("win_method") == "ron" for winner_input in winner_inputs), "scoring_error", f"{fixture_id}: multiple wins contain a non-ron input")
+    extras = _expected_settlement_extras(fixture_id, input_data, wins, state, _effective_scoring_rules(base_rules, fixture))
+    for index, win in enumerate(wins):
+        incoming = sum(payment.get("points", 0) for payment in win.get("payments", []) if payment.get("to") == win.get("actor"))
+        _require(all(payment.get("from") != win.get("actor") for payment in win.get("payments", [])), "scoring_error", f"{fixture_id}.winner{index}: winner cannot be a payer")
+        expected_incoming = win.get("hand_points", 0) + extras[index]
+        _require(incoming == expected_incoming, "scoring_error", f"{fixture_id}.winner{index}: settlement allocation does not match hand_points/state")
+
+
+def _trace_grace_ms(trace: Mapping[str, Any]) -> int | None:
+    """Read the profile's actual grace_ms from a trace, if it is provided.
+
+    A standalone request has no negotiated profile context, so callers leave
+    this unset and only check timeout + bank.  State/request traces may carry
+    a welcome, profile, rules object, or a welcome event; all of those are
+    accepted as context rather than assuming the current profile default.
+    """
+
+    def read(source: Any, depth: int = 0) -> int | None:
+        if source is None:
+            return None
+        _require(isinstance(source, Mapping), "invalid_message", "trace profile/rules context is invalid")
+        if depth > 4:
+            raise ArtifactError("invalid_message", "trace profile/rules context is too deep")
+        if "grace_ms" in source:
+            grace = source["grace_ms"]
+            _require(isinstance(grace, int) and not isinstance(grace, bool) and 0 <= grace <= 600000, "invalid_message", "trace grace_ms is invalid")
+            return grace
+        for key in ("time_control", "rules", "profile"):
+            if key in source:
+                value = read(source[key], depth + 1)
+                if value is not None:
+                    return value
+        return None
+
+    values: List[int] = []
+    for key in ("welcome", "profile", "rules"):
+        if key in trace:
+            value = read(trace[key])
+            if value is not None:
+                values.append(value)
+    for event in trace.get("events", []):
+        if isinstance(event, Mapping) and (event.get("type") == "welcome" or any(key in event for key in ("time_control", "rules", "profile"))):
+            value = read(event)
+            if value is not None:
+                values.append(value)
+    _require(len(set(values)) <= 1, "invalid_message", "trace grace_ms context differs")
+    return values[0] if values else None
 
 
 def semantic_request_trace(trace: Mapping[str, Any]) -> None:
     requests = trace.get("requests")
     _require(isinstance(requests, list), "invalid_message", "request trace is invalid")
     seats = []
+    groups: Dict[str, Mapping[str, Any]] = {}
+    grace_ms = _trace_grace_ms(trace)
     for request in requests:
-        _check_request(request)
+        _check_request(request, grace_ms=grace_ms)
         seats.append(request["seat"])
+        group_id = request.get("decision_group_id")
+        if group_id is not None:
+            _require(isinstance(group_id, str), "invalid_message", "decision group id is invalid")
+            reference = groups.setdefault(group_id, request)
+            _require(request.get("decision_group_members") == reference.get("decision_group_members"), "invalid_message", "group members differ across requests")
+            _require(request.get("decision_group_deadline_ms") == reference.get("decision_group_deadline_ms"), "invalid_message", "group deadline differs across requests")
+            _require(request.get("decision_group_close") == reference.get("decision_group_close"), "invalid_message", "group close policy differs across requests")
     _require(len(seats) == len(set(seats)), "invalid_message", "a seat has duplicate pending requests")
+    for group_id, reference in groups.items():
+        declared = {(member["request_id"], member["seat"]) for member in reference["decision_group_members"]}
+        observed = {(request["request_id"], request["seat"]) for request in requests if request.get("decision_group_id") == group_id}
+        _require(declared == observed, "invalid_message", f"group {group_id} does not contain all member requests")
+        if grace_ms is not None:
+            for request in requests:
+                if request.get("decision_group_id") == group_id:
+                    _require(
+                        reference["decision_group_deadline_ms"] >= grace_ms + request["timeout_ms"] + request["time_bank_ms"],
+                        "invalid_message",
+                        f"group {group_id} deadline does not cover every member",
+                    )
     if "snapshot_remaining_ms" in trace:
         for request in requests:
             _require(trace["snapshot_remaining_ms"] <= request.get("timeout_ms", 0), "invalid_message", "snapshot restarted a request deadline")
@@ -864,6 +1359,9 @@ def semantic_welcome_trace(trace: Mapping[str, Any]) -> None:
 
 
 def semantic_state_trace(trace: Mapping[str, Any]) -> None:
+    _trace_grace_ms(trace)
+    if "requests" in trace:
+        semantic_request_trace(trace)
     events = trace.get("events", [])
     _require(isinstance(events, list) and events, "invalid_message", "state trace is empty")
     for event in events:
@@ -884,6 +1382,12 @@ def semantic_state_trace(trace: Mapping[str, Any]) -> None:
         kan_counts = list(state.get("kan_counts", [0, 0, 0, 0]))
         for event_index, event in enumerate(events):
             event_type = event["type"]
+            if not game_started and event_type in {
+                "start_kyoku", "tsumo", "dahai", "chi", "pon", "daiminkan",
+                "ankan_declared", "ankan", "kakan_declared", "kakan", "dora",
+                "reach", "reach_accepted", "pao", "end_kyoku", "end_game",
+            }:
+                raise ArtifactError("invalid_message", "game event precedes start_game")
             if event_type == "start_game":
                 _require(not game_started, "invalid_message", "duplicate start_game")
                 game_started = True
@@ -923,13 +1427,33 @@ def check_vectors(schemas: SchemaSet, manifest: Dict[str, Any]) -> int:
     for entry in manifest["cases"]:
         case_id = entry["id"]
         case = vectors[case_id]
+        if case.get("negative_expect") != entry["expect_negative"]:
+            raise ArtifactError("vector_error", f"{case_id}: manifest negative expectation mismatch")
+        if case.get("negative_expect") not in {
+            "invalid_frame",
+            "invalid_json",
+            "invalid_message",
+            "profile_mismatch",
+            "request_conflict",
+            "resource_limit",
+            "resume_unavailable",
+        }:
+            raise ArtifactError("vector_error", f"{case_id}: unsupported negative expectation")
+        if "negative_profile_hash" in case and case.get("negative", {}).get("profile_hash") != case["negative_profile_hash"]:
+            raise ArtifactError("vector_error", f"{case_id}: negative profile hash metadata mismatch")
+        if "negative_capability" in case and case.get("negative", {}).get("capabilities") != case["negative_capability"]:
+            raise ArtifactError("vector_error", f"{case_id}: negative capability metadata mismatch")
+
+        positive_checked = False
         positive = case.get("positive")
         if isinstance(positive, dict) and "kind" in positive:
+            positive_checked = True
             schemas.validate(positive, root_schema, case_id + ".positive")
             if positive.get("kind") == "join" and positive.get("profile_hash") != manifest["profile_hash"]:
                 raise ArtifactError("vector_error", f"{case_id}: positive join profile_hash mismatch")
             semantic_message(positive, case_id, manifest["profile_hash"])
         elif isinstance(positive, dict) and "trace" in positive:
+            positive_checked = True
             trace = positive["trace"]
             trace_type = trace.get("trace_type")
             if trace_type == "event_order":
@@ -956,8 +1480,8 @@ def check_vectors(schemas: SchemaSet, manifest: Dict[str, Any]) -> int:
                 semantic_composite_trace(trace)
             else:
                 semantic_score_trace(trace)
-        elif entry["expect_positive"] not in {"valid", "bounded", "authorized"}:
-            raise ArtifactError("vector_error", f"unknown positive expectation in {case_id}")
+        if not positive_checked:
+            raise ArtifactError("vector_error", f"{case_id}: missing positive payload")
         for index, message in enumerate(case.get("positive_messages", [])):
             schemas.validate(message, root_schema, f"{case_id}.positive_messages[{index}]")
             semantic_message(message, case_id, manifest["profile_hash"])
@@ -1116,8 +1640,10 @@ def check_scoring(schemas: SchemaSet, rules_registry: Mapping[str, Any]) -> Tupl
         raise ArtifactError("scoring_error", "scoring fixture id is missing")
     if len(fixture_ids) != len(set(fixture_ids)):
         raise ArtifactError("scoring_error", "duplicate scoring fixture id")
+    base_rules = data.get("rules", {})
+    _require(isinstance(base_rules, Mapping), "scoring_error", "scoring rules are not an object")
     for fixture in fixtures:
-        _check_scoring_fixture_semantics(fixture)
+        _check_scoring_fixture_semantics(fixture, base_rules)
     expected_fixture_count = rules_registry.get("scoring_fixture_count")
     if isinstance(expected_fixture_count, int) and len(fixtures) != expected_fixture_count:
         raise ArtifactError("scoring_error", "scoring fixture count does not match registry")
@@ -1156,6 +1682,7 @@ def main() -> int:
         load_all_json()
         schemas = SchemaSet()
         schemas.check_refs()
+        schemas.check_keyword_support()
         root = schema_by_id(schemas, "urn:yamai:schema:yrc-0003:1.0-draft.5:message")
         union_refs = root.get("oneOf", [])
         expected_kinds = {"hello", "join", "welcome", "event", "request", "action", "ack", "error", "snapshot"}
@@ -1167,6 +1694,7 @@ def main() -> int:
             raise ArtifactError("schema_error", "message union branches mismatch")
         p, r = check_registry(schemas)
         manifest = check_manifest(schemas, p, r)
+        check_release_manifest(manifest, p, r)
         vector_count = check_vectors(schemas, manifest)
         scoring_count, scoring_fixture_count = check_scoring(schemas, r)
         print(f"OK: schemas={len(schemas.schemas)} vectors={vector_count} scoring_vectors={scoring_count} scoring_fixtures={scoring_fixture_count} profile_hash={manifest['profile_hash']}")

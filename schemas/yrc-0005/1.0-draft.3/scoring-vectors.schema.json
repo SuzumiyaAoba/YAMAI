@@ -34,7 +34,36 @@
     },
     "score_array": {
       "type": "array", "minItems": 4, "maxItems": 4,
-      "items": {"type": "integer", "minimum": -9007199254740991, "maximum": 9007199254740991}
+      "items": {"type": "integer", "minimum": -9007199254740991, "maximum": 9007199254740991, "multipleOf": 100}
+    },
+    "unique_other_winner_actors": {
+      "allOf": [
+        {"not": {"contains": {"type": "object", "required": ["actor"], "properties": {"actor": {"const": 0}}}, "minContains": 2}},
+        {"not": {"contains": {"type": "object", "required": ["actor"], "properties": {"actor": {"const": 1}}}, "minContains": 2}},
+        {"not": {"contains": {"type": "object", "required": ["actor"], "properties": {"actor": {"const": 2}}}, "minContains": 2}},
+        {"not": {"contains": {"type": "object", "required": ["actor"], "properties": {"actor": {"const": 3}}}, "minContains": 2}}
+      ]
+    },
+    "unique_win_actors": {
+      "allOf": [
+        {"not": {"contains": {"type": "object", "required": ["actor"], "properties": {"actor": {"const": 0}}}, "minContains": 2}},
+        {"not": {"contains": {"type": "object", "required": ["actor"], "properties": {"actor": {"const": 1}}}, "minContains": 2}},
+        {"not": {"contains": {"type": "object", "required": ["actor"], "properties": {"actor": {"const": 2}}}, "minContains": 2}},
+        {"not": {"contains": {"type": "object", "required": ["actor"], "properties": {"actor": {"const": 3}}}, "minContains": 2}}
+      ]
+    },
+    "unique_pao_yaku_ids": {
+      "allOf": [
+        {"not": {"contains": {"type": "object", "required": ["yaku_id"], "properties": {"yaku_id": {"const": "daisangen"}}}, "minContains": 2}},
+        {"not": {"contains": {"type": "object", "required": ["yaku_id"], "properties": {"yaku_id": {"const": "daisuushii"}}}, "minContains": 2}}
+      ]
+    },
+    "unique_bonus_ids": {
+      "allOf": [
+        {"not": {"contains": {"type": "object", "required": ["id"], "properties": {"id": {"const": "dora"}}}, "minContains": 2}},
+        {"not": {"contains": {"type": "object", "required": ["id"], "properties": {"id": {"const": "uradora"}}}, "minContains": 2}},
+        {"not": {"contains": {"type": "object", "required": ["id"], "properties": {"id": {"const": "akadora"}}}, "minContains": 2}}
+      ]
     },
     "meld": {
       "type": "object",
@@ -45,7 +74,29 @@
         "open": {"type": "boolean"},
         "source": {"$ref": "#/$defs/seat"}
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {"properties": {"kind": {"enum": ["chi", "pon", "daiminkan", "kakan"]}}},
+          "then": {"properties": {"open": {"const": true}}}
+        },
+        {
+          "if": {"properties": {"kind": {"const": "ankan"}}},
+          "then": {"properties": {"open": {"const": false}}}
+        },
+        {
+          "if": {"properties": {"kind": {"enum": ["shuntsu", "chi"]}}},
+          "then": {"properties": {"tiles": {"minItems": 3, "maxItems": 3}}}
+        },
+        {
+          "if": {"properties": {"kind": {"enum": ["koutsu", "pon"]}}},
+          "then": {"properties": {"tiles": {"minItems": 3, "maxItems": 3}}}
+        },
+        {
+          "if": {"properties": {"kind": {"enum": ["kantsu", "daiminkan", "ankan", "kakan"]}}},
+          "then": {"properties": {"tiles": {"minItems": 4, "maxItems": 4}}}
+        }
+      ]
     },
     "hand": {
       "type": "object",
@@ -80,6 +131,8 @@
         "bakaze": {"enum": ["E", "S", "W", "N"]},
         "kyoku": {"type": "integer", "minimum": 1, "maximum": 4},
         "oya": {"$ref": "#/$defs/seat"},
+        "honba": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
+        "kyotaku": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
         "wall_remaining": {"type": "integer", "minimum": 0, "maximum": 136, "description": "wall count after the listed state.events; use pre_state for the immediate predecessor"},
         "rinshan": {"type": "boolean"},
         "reach_accepted": {"type": "boolean"},
@@ -124,6 +177,7 @@
         "ura_dora_markers": {"type": "array", "maxItems": 5, "items": {"$ref": "#/$defs/tile"}},
         "other_winners": {
           "type": "array", "maxItems": 2,
+          "allOf": [{"$ref": "#/$defs/unique_other_winner_actors"}],
           "items": {
             "type": "object",
             "required": ["actor", "target", "hand", "winning_tile", "win_method", "state", "expected"],
@@ -213,7 +267,7 @@
         "fu": {"type": "integer", "minimum": 0},
         "han": {"type": "integer", "minimum": 0},
         "basic_points": {"type": "integer", "minimum": 0},
-        "hand_points": {"type": "integer", "minimum": 0},
+        "hand_points": {"type": "integer", "minimum": 0, "multipleOf": 100},
         "honba": {"type": "string"},
         "kyotaku": {"type": "string"},
         "total_points": {"type": "integer", "minimum": 0},
@@ -232,6 +286,7 @@
         "result_type": {"const": "hora"},
         "wins": {
           "type": "array", "minItems": 1, "maxItems": 3,
+          "allOf": [{"$ref": "#/$defs/unique_win_actors"}],
           "items": {"$ref": "#/$defs/expected_win_entry"}
         },
         "deltas": {"$ref": "#/$defs/score_array"}
@@ -246,8 +301,18 @@
         "target": {"$ref": "#/$defs/seat"},
         "winning_tile": {"$ref": "#/$defs/tile"},
         "yakus": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "urn:yamai:schema:yrc-0005:1.0-draft.3:scoring-result#/$defs/yaku"}},
-        "bonuses": {"type": "array", "uniqueItems": true, "items": {"$ref": "urn:yamai:schema:yrc-0005:1.0-draft.3:scoring-result#/$defs/bonus"}},
-        "pao": {"type": "array", "uniqueItems": true, "items": {"$ref": "urn:yamai:schema:yrc-0005:1.0-draft.3:scoring-result#/$defs/paoEntry"}},
+        "bonuses": {
+          "type": "array",
+          "uniqueItems": true,
+          "allOf": [{"$ref": "#/$defs/unique_bonus_ids"}],
+          "items": {"$ref": "urn:yamai:schema:yrc-0005:1.0-draft.3:scoring-result#/$defs/bonus"}
+        },
+        "pao": {
+          "type": "array",
+          "uniqueItems": true,
+          "allOf": [{"$ref": "#/$defs/unique_pao_yaku_ids"}],
+          "items": {"$ref": "urn:yamai:schema:yrc-0005:1.0-draft.3:scoring-result#/$defs/paoEntry"}
+        },
         "ura_dora_markers": {"type": "array", "maxItems": 5, "items": {"$ref": "#/$defs/tile"}},
         "fu": {"type": "integer", "minimum": 0},
         "han": {"type": "integer", "minimum": 0},
@@ -275,7 +340,7 @@
       "properties": {
         "from": {"$ref": "#/$defs/seat"},
         "to": {"$ref": "#/$defs/seat"},
-        "points": {"type": "integer", "minimum": 0}
+        "points": {"type": "integer", "minimum": 0, "multipleOf": 100}
       },
       "additionalProperties": false
     },

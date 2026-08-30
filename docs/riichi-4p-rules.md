@@ -68,7 +68,7 @@ Appendix A. 計算例
 
 ### 2.2 門前
 
-チー、ポンまたは大明槓を含む手は副露手である。暗槓だけを含む手は門前を維持する。加槓は元のポンが副露であるため門前ではない。
+チー、ポンまたは大明槓を含む手は副露手である。暗槓だけを含む手は門前を維持する。加槓は元のポンが副露であるため門前ではない。実行可能fixtureの `meld.kind` が `chi`、`pon`、`daiminkan` または `kakan` の場合は `open` をtrue、`ankan` の場合はfalseとしなければならない（MUST）。
 
 ### 2.3 牌分類
 
@@ -277,7 +277,7 @@ wireへ出力する通常役IDは重複してはならず、各IDの `value` は
 
 ホストは各winについて、本書で計算した `fu`、`han`、`yakus`、`bonuses`、`hand_points` を [YRC 0003] の `end_kyoku.result.wins[]` へ格納しなければならない（MUST）。
 
-`deltas` は基本支払いへ本場、供託、複数ロン配分および責任払いを適用した結果である。`scores` は直前点数との加算で検証可能でなければならない（MUST）。
+`deltas` は基本支払いへ本場、供託、複数ロン配分および責任払いを適用した結果である。`scores` は直前点数との加算で検証可能でなければならない（MUST）。`hand_points` は本場・供託を含まないため、fixtureでこれらの局精算を検証する場合は `state.honba` および `state.kyotaku` を入力し、`payments` と `deltas` には適用後の点数を記録する。省略時はどちらも0とする。
 
 ### 8.1 通常流局のノーテン精算
 
@@ -292,6 +292,10 @@ wireへ出力する通常役IDは重複してはならず、各IDの `value` は
 
 `tenpai == null` の途中流局およびチョンボでは、このノーテン精算を適用してはならない（MUST）。`end_kyoku.deltas` は表の純差額と一致しなければならず、0人または4人聴牌では点数を移動しない。個別seat間の支払明細を要求してはならない（MUST）。
 
+### 8.2 チョンボ精算
+
+`result.type == "penalty"` かつ `result.reason == "illegal_action"` で `rules.chombo.distribution == "equal_other_players"` の場合、違反seatを除く3 seatへ `rules.chombo.penalty_points` を配分する。`q = floor(P / (3 × 100)) × 100`、`r = P - 3 × q`（`P = penalty_points`）とし、各seatへ `q` を支払い、`remainder == "lowest_seat"` なら違反seat以外で最小のabsolute seatへ `r` を加算する（MUST）。従って `P=8,000`、違反seatが0の場合は seat 1へ2,800、seat 2と3へ2,600を支払う。`payments` の合計および `deltas` は `P` と一致しなければならない（MUST）。
+
 ## 9. 非対応ルール
 
 初期 `riichi-4p` profileは、流し満貫、人和、オープンリーチ、切り上げ以外のローカル満貫、花牌および焼き鳥を定義しない。これらを使用する場合、[YRC 0003] のcapability、namespaced rule key、Yaku/Result registry登録を全て満たさなければならない（MUST）。
@@ -303,9 +307,9 @@ wireへ出力する通常役IDは重複してはならず、各IDの `value` は
 ## 11. Registry Considerations
 
 Yaku ID、Bonus ID、Double Yakuman Conditionの登録は [YRC 0003] 第19節に従う。新しい役は門前・副露飜数、成立条件、既存役との重複、符・役満との関係および最低2個のtest vectorを指定しなければならない（MUST）。本版の実行可能な点数fixtureは `test-vectors/yrc-0005/1.0-draft.3/scoring.json` に収録し、その形式は `schemas/yrc-0005/1.0-draft.3/scoring-vectors.schema.json` に従う。各fixtureは正規化手牌、和了方法、局面state、適用ruleおよび期待する役、bonus、符、飜、基本点、支払明細、seat別 `deltas` の全てを持たなければならない（MUST）。
-fixtureファイルの `rules` がbase ruleであり、各fixtureの `rule_overrides` はbase ruleをmember単位で置換して適用する。fixtureの `state` は列挙した `state.events` 適用後の状態であり、直前状態が境界判定に必要な場合は `state.pre_state` に記録する。`haitei` と `houtei` のfixtureでは `pre_state.wall_remaining=1`、自摸event適用後の `state.wall_remaining=0` を必須とする。
+fixtureファイルの `rules` がbase ruleであり、各fixtureの `rule_overrides` はbase ruleをmember単位で置換して適用する。fixtureの `state` は列挙した `state.events` 適用後の状態であり、`honba` と `kyotaku` は精算入力時点の本場数と供託本数を表す（省略時は0）。直前状態が境界判定に必要な場合は `state.pre_state` に記録する。`haitei` と `houtei` のfixtureでは `pre_state.wall_remaining=1`、自摸event適用後の `state.wall_remaining=0` を必須とする。
 
-本版のfixture集合は、registryに登録された全通常役・全役満、通常形・七対子・国士無双、符の20/25/30符境界、赤五・表ドラ・裏ドラ、役満value、複数ロン、責任払いおよび通常流局の聴牌者数0～4を少なくとも1件ずつ含む。fixtureの `state.events` はYRC 0003のevent typeと同じ意味で解釈し、fixtureの期待値は単なる表示ラベルではなく、入力から再計算できる規範値である（MUST）。
+本版のfixture集合は、registryに登録された全通常役・全役満、通常形・七対子・国士無双、符の20/25/30符境界、3飜60符の切り上げ満貫境界、12飜三倍満・13飜数え役満境界、赤五・表ドラ・裏ドラ、役満value、親ツモ、複数ロン、本場・供託、責任払い、チョンボおよび通常流局の聴牌者数0～4を少なくとも1件ずつ含む。fixtureの `state.events` はYRC 0003のevent typeと同じ意味で解釈し、fixtureの期待値は単なる表示ラベルではなく、入力から再計算できる規範値である（MUST）。
 
 ## 12. References
 
