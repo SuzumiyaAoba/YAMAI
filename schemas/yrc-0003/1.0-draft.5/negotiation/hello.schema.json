@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:yamai:schema:yrc-0003:1.0-draft.5:hello",
+  "type": "object",
+  "required": ["kind", "protocol", "versions", "profiles", "capabilities", "receive_limits"],
+  "properties": {
+    "kind": {"const": "hello"},
+    "protocol": {"const": "yamai"},
+    "versions": {"type": "array", "minItems": 1, "maxItems": 16, "uniqueItems": true, "items": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.5:common#/$defs/version"}},
+    "profiles": {"type": "array", "minItems": 0, "maxItems": 16, "uniqueItems": true, "items": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.5:common#/$defs/profileAdvertisement"}},
+    "capabilities": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.5:common#/$defs/capabilities"},
+    "receive_limits": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.5:common#/$defs/receiveLimits"}
+  },
+  "additionalProperties": false,
+  "patternProperties": {"^x_[A-Za-z0-9][A-Za-z0-9_]{0,63}$": {}}
+}

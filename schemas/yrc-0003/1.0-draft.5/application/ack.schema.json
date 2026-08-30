@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:yamai:schema:yrc-0003:1.0-draft.5:ack",
+  "type": "object",
+  "required": ["yamai", "kind", "session_id", "game_id", "seq", "request_id", "status", "action_id", "elapsed_ms", "time_bank_ms"],
+  "properties": {
+    "yamai": {"const": "1.0-draft.5"},
+    "kind": {"const": "ack"},
+    "session_id": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.5:common#/$defs/id"},
+    "game_id": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.5:common#/$defs/id"},
+    "seq": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.5:common#/$defs/positiveInteger"},
+    "request_id": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.5:common#/$defs/id"},
+    "action_id": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.5:common#/$defs/id"},
+    "status": {"type": "string", "enum": ["accepted", "passed", "superseded", "defaulted", "stale", "rejected"]},
+    "elapsed_ms": {"type": "integer", "minimum": 0, "maximum": 1800000},
+    "time_bank_ms": {"type": "integer", "minimum": 0, "maximum": 600000}
+  },
+  "additionalProperties": false,
+  "patternProperties": {"^x_[A-Za-z0-9][A-Za-z0-9_]{0,63}$": {}}
+}

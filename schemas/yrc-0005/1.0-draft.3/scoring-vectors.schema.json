@@ -1,0 +1,313 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:yamai:schema:yrc-0005:1.0-draft.3:scoring-vectors",
+  "title": "YAMAI riichi-4p executable scoring fixtures",
+  "type": "object",
+  "required": ["$schema", "protocol_version", "profile_revision", "rules", "vectors", "fixtures"],
+  "properties": {
+    "$schema": {"const": "urn:yamai:schema:yrc-0005:1.0-draft.3:scoring-vectors"},
+    "protocol_version": {"const": "1.0-draft.5"},
+    "profile_revision": {"const": "1.0-draft.3"},
+    "rules": {"$ref": "urn:yamai:schema:yrc-0005:1.0-draft.3:riichi-4p-rules"},
+    "vectors": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/summary_vector"}
+    },
+    "fixtures": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/fixture"}
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "seat": {"type": "integer", "minimum": 0, "maximum": 3},
+    "tile": {
+      "type": "string",
+      "enum": [
+        "1m", "2m", "3m", "4m", "5m", "5mr", "6m", "7m", "8m", "9m",
+        "1p", "2p", "3p", "4p", "5p", "5pr", "6p", "7p", "8p", "9p",
+        "1s", "2s", "3s", "4s", "5s", "5sr", "6s", "7s", "8s", "9s",
+        "E", "S", "W", "N", "P", "F", "C"
+      ]
+    },
+    "score_array": {
+      "type": "array", "minItems": 4, "maxItems": 4,
+      "items": {"type": "integer", "minimum": -9007199254740991, "maximum": 9007199254740991}
+    },
+    "meld": {
+      "type": "object",
+      "required": ["kind", "tiles", "open"],
+      "properties": {
+        "kind": {"enum": ["shuntsu", "koutsu", "kantsu", "chi", "pon", "daiminkan", "ankan", "kakan"]},
+        "tiles": {"type": "array", "minItems": 3, "maxItems": 4, "items": {"$ref": "#/$defs/tile"}},
+        "open": {"type": "boolean"},
+        "source": {"$ref": "#/$defs/seat"}
+      },
+      "additionalProperties": false
+    },
+    "hand": {
+      "type": "object",
+      "required": ["concealed_tiles", "melds"],
+      "properties": {
+        "concealed_tiles": {"type": "array", "maxItems": 14, "items": {"$ref": "#/$defs/tile"}},
+        "melds": {"type": "array", "maxItems": 4, "items": {"$ref": "#/$defs/meld"}}
+      },
+      "additionalProperties": false
+    },
+    "state_event": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": {"enum": ["start_kyoku", "tsumo", "dahai", "chi", "pon", "daiminkan", "ankan_declared", "ankan", "kakan_declared", "kakan", "dora", "reach", "reach_accepted", "pao", "end_kyoku"]},
+        "actor": {"$ref": "#/$defs/seat"},
+        "target": {"$ref": "#/$defs/seat"},
+        "pai": {"$ref": "#/$defs/tile"},
+        "dora_marker": {"$ref": "#/$defs/tile"},
+        "yaku_id": {"type": "string"},
+        "liable_seat": {"$ref": "#/$defs/seat"},
+        "tsumogiri": {"type": "boolean"},
+        "wall_remaining": {"type": "integer", "minimum": 0, "maximum": 136},
+        "rinshan": {"type": "boolean"}
+      },
+      "additionalProperties": false
+    },
+    "state": {
+      "type": "object",
+      "required": ["bakaze", "kyoku", "oya", "wall_remaining", "rinshan", "reach_accepted", "events"],
+      "properties": {
+        "bakaze": {"enum": ["E", "S", "W", "N"]},
+        "kyoku": {"type": "integer", "minimum": 1, "maximum": 4},
+        "oya": {"$ref": "#/$defs/seat"},
+        "wall_remaining": {"type": "integer", "minimum": 0, "maximum": 136, "description": "wall count after the listed state.events; use pre_state for the immediate predecessor"},
+        "rinshan": {"type": "boolean"},
+        "reach_accepted": {"type": "boolean"},
+        "pre_state": {
+          "type": "object",
+          "required": ["wall_remaining"],
+          "properties": {
+            "wall_remaining": {"type": "integer", "minimum": 0, "maximum": 136},
+            "rinshan": {"type": "boolean"}
+          },
+          "additionalProperties": false
+        },
+        "pending_kan": {
+          "anyOf": [
+            {"type": "null"},
+            {
+              "type": "object",
+              "required": ["kind", "actor", "pai"],
+              "properties": {
+                "kind": {"enum": ["ankan", "kakan"]},
+                "actor": {"$ref": "#/$defs/seat"},
+                "pai": {"$ref": "#/$defs/tile"}
+              },
+              "additionalProperties": false
+            }
+          ]
+        },
+        "events": {"type": "array", "items": {"$ref": "#/$defs/state_event"}}
+      },
+      "additionalProperties": false
+    },
+    "input": {
+      "type": "object",
+      "required": ["hand", "winning_tile", "win_method", "actor", "target"],
+      "properties": {
+        "hand": {"$ref": "#/$defs/hand"},
+        "winning_tile": {"$ref": "#/$defs/tile"},
+        "win_method": {"enum": ["tsumo", "ron"]},
+        "actor": {"$ref": "#/$defs/seat"},
+        "target": {"$ref": "#/$defs/seat"},
+        "dora_markers": {"type": "array", "maxItems": 5, "items": {"$ref": "#/$defs/tile"}},
+        "ura_dora_markers": {"type": "array", "maxItems": 5, "items": {"$ref": "#/$defs/tile"}},
+        "other_winners": {
+          "type": "array", "maxItems": 2,
+          "items": {
+            "type": "object",
+            "required": ["actor", "target", "hand", "winning_tile", "win_method", "state", "expected"],
+            "properties": {
+              "actor": {"$ref": "#/$defs/seat"},
+              "target": {"$ref": "#/$defs/seat"},
+              "hand": {"$ref": "#/$defs/hand"},
+              "winning_tile": {"$ref": "#/$defs/tile"},
+              "win_method": {"const": "ron"},
+              "state": {"$ref": "#/$defs/state"},
+              "expected": {"$ref": "#/$defs/expected_win_entry"}
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "rule_overrides": {
+      "type": "object",
+      "properties": {
+        "kuitan": {"type": "boolean"},
+        "ron_policy": {"enum": ["multiple", "head_bump", "double_only"]},
+        "multiple_ron_settlement": {
+          "type": "object",
+          "required": ["honba", "kyotaku"],
+          "properties": {
+            "honba": {"enum": ["each_winner", "first_winner"]},
+            "kyotaku": {"enum": ["first_winner", "equal_split"]}
+          },
+          "additionalProperties": false
+        },
+        "red_fives": {
+          "type": "object",
+          "required": ["m", "p", "s"],
+          "properties": {
+            "m": {"type": "integer", "minimum": 0, "maximum": 4},
+            "p": {"type": "integer", "minimum": 0, "maximum": 4},
+            "s": {"type": "integer", "minimum": 0, "maximum": 4}
+          },
+          "additionalProperties": false
+        },
+        "kiriage_mangan": {"type": "boolean"},
+        "kazoe_yakuman": {"enum": ["yakuman", "sanbaiman"]},
+        "double_yakuman": {"type": "array", "uniqueItems": true, "items": {"enum": ["kokushi_13_wait", "suuankou_tanki", "junsei_chuuren", "daisuushii"]}},
+        "pao": {
+          "type": "object",
+          "required": ["yakus", "ron", "tsumo"],
+          "properties": {
+            "yakus": {"type": "array", "uniqueItems": true, "items": {"enum": ["daisangen", "daisuushii"]}},
+            "ron": {"enum": ["split", "liable_all"]},
+            "tsumo": {"enum": ["normal", "liable_all"]}
+          },
+          "additionalProperties": false
+        },
+        "ankan_chankan": {"enum": ["never", "kokushi_only"]},
+        "kan_dora_timing": {
+          "type": "object",
+          "required": ["ankan", "daiminkan", "kakan"],
+          "properties": {
+            "ankan": {"enum": ["before_rinshan", "after_rinshan_discard"]},
+            "daiminkan": {"enum": ["before_rinshan", "after_rinshan_discard"]},
+            "kakan": {"enum": ["before_rinshan", "after_rinshan_discard"]}
+          },
+          "additionalProperties": false
+        },
+        "noten_payment": {
+          "type": "object",
+          "required": ["total_points", "unit", "remainder"],
+          "properties": {
+            "total_points": {"type": "integer", "minimum": 0, "multipleOf": 600},
+            "unit": {"const": 100},
+            "remainder": {"const": "lowest_seat"}
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "summary_vector": {
+      "type": "object",
+      "required": ["id"],
+      "properties": {
+        "id": {"type": "string"},
+        "dealer": {"type": "boolean"},
+        "tsumo": {"type": "boolean"},
+        "fu": {"type": "integer", "minimum": 0},
+        "han": {"type": "integer", "minimum": 0},
+        "basic_points": {"type": "integer", "minimum": 0},
+        "hand_points": {"type": "integer", "minimum": 0},
+        "honba": {"type": "string"},
+        "kyotaku": {"type": "string"},
+        "total_points": {"type": "integer", "minimum": 0},
+        "conserves_points": {"type": "boolean"},
+        "ceil_unit": {"type": "integer", "const": 100},
+        "yakuman_value": {"type": "integer", "minimum": 1, "maximum": 2},
+        "bonus_ids": {"type": "array", "items": {"type": "string"}},
+        "cases": {"type": "array", "items": {"type": "integer", "minimum": 0, "maximum": 4}}
+      },
+      "additionalProperties": false
+    },
+    "expected_win": {
+      "type": "object",
+      "required": ["result_type", "wins", "deltas"],
+      "properties": {
+        "result_type": {"const": "hora"},
+        "wins": {
+          "type": "array", "minItems": 1, "maxItems": 3,
+          "items": {"$ref": "#/$defs/expected_win_entry"}
+        },
+        "deltas": {"$ref": "#/$defs/score_array"}
+      },
+      "additionalProperties": false
+    },
+    "expected_win_entry": {
+      "type": "object",
+      "required": ["actor", "target", "winning_tile", "yakus", "bonuses", "pao", "ura_dora_markers", "fu", "han", "basic_points", "hand_points", "payments", "deltas"],
+      "properties": {
+        "actor": {"$ref": "#/$defs/seat"},
+        "target": {"$ref": "#/$defs/seat"},
+        "winning_tile": {"$ref": "#/$defs/tile"},
+        "yakus": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "urn:yamai:schema:yrc-0005:1.0-draft.3:scoring-result#/$defs/yaku"}},
+        "bonuses": {"type": "array", "uniqueItems": true, "items": {"$ref": "urn:yamai:schema:yrc-0005:1.0-draft.3:scoring-result#/$defs/bonus"}},
+        "pao": {"type": "array", "uniqueItems": true, "items": {"$ref": "urn:yamai:schema:yrc-0005:1.0-draft.3:scoring-result#/$defs/paoEntry"}},
+        "ura_dora_markers": {"type": "array", "maxItems": 5, "items": {"$ref": "#/$defs/tile"}},
+        "fu": {"type": "integer", "minimum": 0},
+        "han": {"type": "integer", "minimum": 0},
+        "basic_points": {"type": "integer", "minimum": 0},
+        "hand_points": {"type": "integer", "minimum": 0},
+        "payments": {"type": "array", "items": {"$ref": "#/$defs/payment"}},
+        "deltas": {"$ref": "#/$defs/score_array"}
+      },
+      "additionalProperties": false
+    },
+    "expected_ryukyoku": {
+      "type": "object",
+      "required": ["result_type", "reason", "tenpai", "deltas"],
+      "properties": {
+        "result_type": {"const": "ryukyoku"},
+        "reason": {"enum": ["fanpai", "kyushukyuhai", "suufon_renda", "suucha_riichi", "suukan_sanra", "sanchaho"]},
+        "tenpai": {"type": "array", "minItems": 4, "maxItems": 4, "items": {"type": "boolean"}},
+        "deltas": {"$ref": "#/$defs/score_array"}
+      },
+      "additionalProperties": false
+    },
+    "payment": {
+      "type": "object",
+      "required": ["from", "to", "points"],
+      "properties": {
+        "from": {"$ref": "#/$defs/seat"},
+        "to": {"$ref": "#/$defs/seat"},
+        "points": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": false
+    },
+    "expected_penalty": {
+      "type": "object",
+      "required": ["result_type", "offender", "payments", "deltas"],
+      "properties": {
+        "result_type": {"const": "penalty"},
+        "offender": {"$ref": "#/$defs/seat"},
+        "payments": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/payment"}},
+        "deltas": {"$ref": "#/$defs/score_array"}
+      },
+      "additionalProperties": false
+    },
+    "fixture": {
+      "type": "object",
+      "required": ["id", "category", "input", "state", "rule_overrides", "expected"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "category": {"enum": ["yaku", "yakuman", "fu", "bonus", "settlement", "noten", "timing", "decomposition"]},
+        "input": {"$ref": "#/$defs/input"},
+        "state": {"$ref": "#/$defs/state"},
+        "rule_overrides": {"$ref": "#/$defs/rule_overrides"},
+        "expected": {
+          "oneOf": [
+            {"$ref": "#/$defs/expected_win"},
+            {"$ref": "#/$defs/expected_ryukyoku"},
+            {"$ref": "#/$defs/expected_penalty"}
+          ]
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

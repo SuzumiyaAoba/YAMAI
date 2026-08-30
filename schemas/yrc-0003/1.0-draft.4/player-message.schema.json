@@ -1,9 +1,0 @@
-{
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:yamai:schema:yrc-0003:1.0-draft.4:player-message",
-  "oneOf": [
-    {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.4:join"},
-    {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.4:action"},
-    {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.4:error"}
-  ]
-}

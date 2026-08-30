@@ -1,0 +1,99 @@
+{
+  "release_id": "yamai-1.0-draft.5",
+  "release_status": "draft",
+  "release_date": "2026-08-30",
+  "published": false,
+  "required_git_tag": "yamai-1.0-draft.5",
+  "protocol": {
+    "name": "yamai",
+    "version": "1.0-draft.5",
+    "document": "docs/yamai-protocol.md",
+    "message_schema_root": "schemas/yrc-0003/1.0-draft.5/message.schema.json"
+  },
+  "profiles": [
+    {
+      "name": "riichi-4p",
+      "revision": "1.0-draft.3",
+      "document": "docs/riichi-4p-rules.md",
+      "profile_hash": "sha256:140a9b6d4d962799bb2bf2bc5dcdc2fa9ee88cc64374c930d0c3fe84ea749fb8"
+    }
+  ],
+  "normative_documents": [
+    "docs/yamai-protocol.md",
+    "docs/riichi-4p-rules.md"
+  ],
+  "informational_documents": [
+    "docs/mjai-protocol.md",
+    "docs/mjai-problems.md",
+    "docs/mjai-implementations.md"
+  ],
+  "schemas": [
+    "schemas/yrc-0003/1.0-draft.5/application/ack.schema.json",
+    "schemas/yrc-0003/1.0-draft.5/application/action.schema.json",
+    "schemas/yrc-0003/1.0-draft.5/application/error.schema.json",
+    "schemas/yrc-0003/1.0-draft.5/application/event.schema.json",
+    "schemas/yrc-0003/1.0-draft.5/application/request.schema.json",
+    "schemas/yrc-0003/1.0-draft.5/application/snapshot.schema.json",
+    "schemas/yrc-0003/1.0-draft.5/common.schema.json",
+    "schemas/yrc-0003/1.0-draft.5/host-message.schema.json",
+    "schemas/yrc-0003/1.0-draft.5/message.schema.json",
+    "schemas/yrc-0003/1.0-draft.5/negotiation/hello.schema.json",
+    "schemas/yrc-0003/1.0-draft.5/negotiation/join.schema.json",
+    "schemas/yrc-0003/1.0-draft.5/negotiation/welcome.schema.json",
+    "schemas/yrc-0003/1.0-draft.5/player-message.schema.json",
+    "schemas/yrc-0003/1.0-draft.5/profile/riichi-4p.schema.json",
+    "schemas/yrc-0003/1.0-draft.5/profile/snapshot-state.schema.json",
+    "schemas/yrc-0003/1.0-draft.5/vector-manifest.schema.json",
+    "schemas/yrc-0005/1.0-draft.3/riichi-4p-rules.schema.json",
+    "schemas/yrc-0005/1.0-draft.3/scoring-result.schema.json",
+    "schemas/yrc-0005/1.0-draft.3/scoring-vectors.schema.json"
+  ],
+  "registries": [
+    "registry/yrc-0003/1.0-draft.5/registry.json",
+    "registry/yrc-0005/1.0-draft.3/registry.json"
+  ],
+  "test_vectors": [
+    "test-vectors/yrc-0003/1.0-draft.5/manifest.json",
+    "test-vectors/yrc-0003/1.0-draft.5/vectors.json",
+    "test-vectors/yrc-0005/1.0-draft.3/scoring.json"
+  ],
+  "validator": {
+    "path": "scripts/validate_artifacts.py",
+    "command": "rtk python3 scripts/validate_artifacts.py",
+    "full_conformance": false
+  },
+  "profile_hash_scope": {
+    "canonicalization": "RFC8785-JCS",
+    "inputs": [
+      "schemas/yrc-0003/1.0-draft.5/profile/riichi-4p.schema.json",
+      "schemas/yrc-0005/1.0-draft.3/riichi-4p-rules.schema.json",
+      "schemas/yrc-0005/1.0-draft.3/scoring-vectors.schema.json",
+      "registry/yrc-0003/1.0-draft.5/registry.json",
+      "registry/yrc-0005/1.0-draft.3/registry.json",
+      "test-vectors/yrc-0003/1.0-draft.5/vectors.json",
+      "test-vectors/yrc-0005/1.0-draft.3/scoring.json"
+    ],
+    "normalization": {
+      "yrc0003_registry": "remove profiles[].hash",
+      "official_vectors": "replace every profile_hash value with sha256: followed by 64 zeroes"
+    },
+    "protocol_version_pins": [
+      "schemas/yrc-0003/1.0-draft.5/message.schema.json"
+    ],
+    "protocol_schema_ref_closure": true,
+    "excluded_from_profile_hash": [
+      "normative document prose",
+      "release-manifest.json",
+      "protocol message schemas"
+    ]
+  },
+  "change_control": {
+    "same_git_commit_and_tag_required": true,
+    "changelog": "CHANGELOG.md",
+    "process": "docs/specification-process.md"
+  },
+  "security_scope": {
+    "authentication_defined": false,
+    "public_spectate_replay_requires_separate_authorization_profile": true
+  }
+}

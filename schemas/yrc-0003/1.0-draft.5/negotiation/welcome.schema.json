@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:yamai:schema:yrc-0003:1.0-draft.5:welcome",
+  "type": "object",
+  "required": ["yamai", "kind", "session_id", "game_id", "resumed", "seat", "mode", "view", "profile", "profile_revision", "profile_hash", "players", "scores", "rules"],
+  "properties": {
+    "yamai": {"const": "1.0-draft.5"},
+    "kind": {"const": "welcome"},
+    "session_id": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.5:common#/$defs/id"},
+    "game_id": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.5:common#/$defs/id"},
+    "resumed": {"type": "boolean"},
+    "replay_from_seq": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.5:common#/$defs/positiveInteger"},
+    "resume": {
+      "type": "object",
+      "required": ["token", "expires_in_ms"],
+      "properties": {
+        "token": {"type": "string", "pattern": "^[A-Za-z0-9._~-]{22,256}$"},
+        "expires_in_ms": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.5:common#/$defs/nonNegativeInteger"}
+      },
+      "additionalProperties": false,
+      "patternProperties": {"^x_[A-Za-z0-9][A-Za-z0-9_]{0,63}$": {}}
+    },
+    "seat": {"anyOf": [{"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.5:common#/$defs/seat"}, {"type": "null"}]},
+    "mode": {"type": "string", "enum": ["play", "spectate", "replay"]},
+    "view": {
+      "anyOf": [
+        {"type": "string", "enum": ["seat", "public", "full"]},
+        {"type": "object", "required": ["seat"], "properties": {"seat": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.5:common#/$defs/seat"}}, "additionalProperties": false}
+      ]
+    },
+    "profile": {"const": "riichi-4p"},
+    "profile_revision": {"const": "1.0-draft.3"},
+    "profile_hash": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.5:common#/$defs/profileHash"},
+    "players": {
+      "type": "array", "minItems": 4, "maxItems": 4,
+      "items": {
+        "type": "object", "required": ["seat", "name"],
+        "properties": {"seat": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.5:common#/$defs/seat"}, "name": {"type": "string", "minLength": 1, "maxLength": 128}},
+        "additionalProperties": false,
+        "patternProperties": {"^x_[A-Za-z0-9][A-Za-z0-9_]{0,63}$": {}}
+      }
+    },
+    "scores": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.5:common#/$defs/scoreArray"},
+    "rules": {"$ref": "urn:yamai:schema:yrc-0005:1.0-draft.3:riichi-4p-rules"}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"mode": {"const": "play"}}},
+      "then": {
+        "properties": {
+          "seat": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.5:common#/$defs/seat"},
+          "view": {"const": "seat"}
+        }
+      }
+    },
+    {
+      "if": {"properties": {"mode": {"const": "spectate"}}},
+      "then": {
+        "properties": {"seat": {"type": "null"}, "view": {"const": "public"}}
+      }
+    },
+    {
+      "if": {"properties": {"mode": {"const": "replay"}}},
+      "then": {
+        "properties": {
+          "seat": {"type": "null"},
+          "view": {
+            "anyOf": [
+              {"type": "string", "enum": ["public", "full"]},
+              {"type": "object", "required": ["seat"], "properties": {"seat": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.5:common#/$defs/seat"}}, "additionalProperties": false, "patternProperties": {"^x_[A-Za-z0-9][A-Za-z0-9_]{0,63}$": {}}}
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {"properties": {"resumed": {"const": true}}},
+      "then": {"required": ["replay_from_seq", "resume"]}
+    },
+    {
+      "if": {"properties": {"resumed": {"const": false}}},
+      "then": {"not": {"required": ["replay_from_seq"]}}
+    }
+  ],
+  "additionalProperties": false,
+  "patternProperties": {"^x_[A-Za-z0-9][A-Za-z0-9_]{0,63}$": {}}
+}

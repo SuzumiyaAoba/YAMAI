@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:yamai:schema:yrc-0003:1.0-draft.5:request",
+  "type": "object",
+  "required": ["yamai", "kind", "session_id", "game_id", "seq", "request_id", "seat", "caused_by_seq", "timeout_ms", "time_bank_ms", "legal_actions", "default_action_id"],
+  "properties": {
+    "yamai": {"const": "1.0-draft.5"},
+    "kind": {"const": "request"},
+    "session_id": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.5:common#/$defs/id"},
+    "game_id": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.5:common#/$defs/id"},
+    "seq": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.5:common#/$defs/positiveInteger"},
+    "request_id": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.5:common#/$defs/id"},
+    "decision_group_id": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.5:common#/$defs/id"},
+    "decision_group_members": {
+      "type": "array", "minItems": 2, "maxItems": 4,
+      "items": {
+        "type": "object", "required": ["request_id", "seat"],
+        "properties": {"request_id": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.5:common#/$defs/id"}, "seat": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.5:common#/$defs/seat"}},
+        "additionalProperties": false,
+        "patternProperties": {"^x_[A-Za-z0-9][A-Za-z0-9_]{0,63}$": {}}
+      }
+    },
+    "decision_group_deadline_ms": {"type": "integer", "minimum": 0, "maximum": 1200000},
+    "decision_group_close": {"const": "all_resolved_or_deadline"},
+    "seat": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.5:common#/$defs/seat"},
+    "caused_by_seq": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.5:common#/$defs/positiveInteger"},
+    "timeout_ms": {"type": "integer", "minimum": 0, "maximum": 600000},
+    "time_bank_ms": {"type": "integer", "minimum": 0, "maximum": 600000},
+    "legal_actions": {
+      "type": "array", "minItems": 1, "maxItems": 512,
+      "uniqueItems": true,
+      "items": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.5:action#/$defs/actionCandidate"}
+    },
+    "default_action_id": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.5:common#/$defs/id"}
+  },
+  "allOf": [
+    {
+      "if": {"required": ["decision_group_id"]},
+      "then": {"required": ["decision_group_members", "decision_group_deadline_ms", "decision_group_close"]}
+    },
+    {
+      "if": {"anyOf": [{"required": ["decision_group_members"]}, {"required": ["decision_group_deadline_ms"]}, {"required": ["decision_group_close"]}]},
+      "then": {"required": ["decision_group_id", "decision_group_members", "decision_group_deadline_ms", "decision_group_close"]}
+    }
+  ],
+  "additionalProperties": false,
+  "patternProperties": {"^x_[A-Za-z0-9][A-Za-z0-9_]{0,63}$": {}}
+}

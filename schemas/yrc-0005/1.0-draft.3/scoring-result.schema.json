@@ -1,0 +1,192 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:yamai:schema:yrc-0005:1.0-draft.3:scoring-result",
+  "title": "YAMAI riichi-4p result variants",
+  "$defs": {
+    "seat": {"type": "integer", "minimum": 0, "maximum": 3},
+    "tile": {
+      "type": "string",
+      "enum": [
+        "1m", "2m", "3m", "4m", "5m", "5mr", "6m", "7m", "8m", "9m",
+        "1p", "2p", "3p", "4p", "5p", "5pr", "6p", "7p", "8p", "9p",
+        "1s", "2s", "3s", "4s", "5s", "5sr", "6s", "7s", "8s", "9s",
+        "E", "S", "W", "N", "P", "F", "C"
+      ]
+    },
+    "safeInteger": {"type": "integer", "minimum": -9007199254740991, "maximum": 9007199254740991},
+    "scoreArray": {
+      "type": "array", "minItems": 4, "maxItems": 4,
+      "items": {"$ref": "#/$defs/safeInteger"}
+    },
+    "normal_yaku": {
+      "oneOf": [
+        {"type":"object","required":["id","value","unit"],"properties":{"id":{"const":"riichi"},"value":{"const":1},"unit":{"const":"han"}},"additionalProperties":false},
+        {"type":"object","required":["id","value","unit"],"properties":{"id":{"const":"double_riichi"},"value":{"const":2},"unit":{"const":"han"}},"additionalProperties":false},
+        {"type":"object","required":["id","value","unit"],"properties":{"id":{"const":"ippatsu"},"value":{"const":1},"unit":{"const":"han"}},"additionalProperties":false},
+        {"type":"object","required":["id","value","unit"],"properties":{"id":{"const":"menzen_tsumo"},"value":{"const":1},"unit":{"const":"han"}},"additionalProperties":false},
+        {"type":"object","required":["id","value","unit"],"properties":{"id":{"const":"tanyao"},"value":{"const":1},"unit":{"const":"han"}},"additionalProperties":false},
+        {"type":"object","required":["id","value","unit"],"properties":{"id":{"const":"pinfu"},"value":{"const":1},"unit":{"const":"han"}},"additionalProperties":false},
+        {"type":"object","required":["id","value","unit"],"properties":{"id":{"const":"iipeikou"},"value":{"const":1},"unit":{"const":"han"}},"additionalProperties":false},
+        {"type":"object","required":["id","value","unit"],"properties":{"id":{"const":"yakuhai_haku"},"value":{"const":1},"unit":{"const":"han"}},"additionalProperties":false},
+        {"type":"object","required":["id","value","unit"],"properties":{"id":{"const":"yakuhai_hatsu"},"value":{"const":1},"unit":{"const":"han"}},"additionalProperties":false},
+        {"type":"object","required":["id","value","unit"],"properties":{"id":{"const":"yakuhai_chun"},"value":{"const":1},"unit":{"const":"han"}},"additionalProperties":false},
+        {"type":"object","required":["id","value","unit"],"properties":{"id":{"const":"seat_wind"},"value":{"const":1},"unit":{"const":"han"}},"additionalProperties":false},
+        {"type":"object","required":["id","value","unit"],"properties":{"id":{"const":"round_wind"},"value":{"const":1},"unit":{"const":"han"}},"additionalProperties":false},
+        {"type":"object","required":["id","value","unit"],"properties":{"id":{"const":"rinshan_kaihou"},"value":{"const":1},"unit":{"const":"han"}},"additionalProperties":false},
+        {"type":"object","required":["id","value","unit"],"properties":{"id":{"const":"chankan"},"value":{"const":1},"unit":{"const":"han"}},"additionalProperties":false},
+        {"type":"object","required":["id","value","unit"],"properties":{"id":{"const":"haitei"},"value":{"const":1},"unit":{"const":"han"}},"additionalProperties":false},
+        {"type":"object","required":["id","value","unit"],"properties":{"id":{"const":"houtei"},"value":{"const":1},"unit":{"const":"han"}},"additionalProperties":false},
+        {"type":"object","required":["id","value","unit"],"properties":{"id":{"const":"sanshoku_doujun"},"value":{"const":2},"unit":{"const":"han"}},"additionalProperties":false},
+        {"type":"object","required":["id","value","unit"],"properties":{"id":{"const":"ikkitsuukan"},"value":{"const":2},"unit":{"const":"han"}},"additionalProperties":false},
+        {"type":"object","required":["id","value","unit"],"properties":{"id":{"const":"chanta"},"value":{"const":2},"unit":{"const":"han"}},"additionalProperties":false},
+        {"type":"object","required":["id","value","unit"],"properties":{"id":{"const":"chiitoitsu"},"value":{"const":2},"unit":{"const":"han"}},"additionalProperties":false},
+        {"type":"object","required":["id","value","unit"],"properties":{"id":{"const":"toitoi"},"value":{"const":2},"unit":{"const":"han"}},"additionalProperties":false},
+        {"type":"object","required":["id","value","unit"],"properties":{"id":{"const":"sanankou"},"value":{"const":2},"unit":{"const":"han"}},"additionalProperties":false},
+        {"type":"object","required":["id","value","unit"],"properties":{"id":{"const":"honroutou"},"value":{"const":2},"unit":{"const":"han"}},"additionalProperties":false},
+        {"type":"object","required":["id","value","unit"],"properties":{"id":{"const":"sanshoku_doukou"},"value":{"const":2},"unit":{"const":"han"}},"additionalProperties":false},
+        {"type":"object","required":["id","value","unit"],"properties":{"id":{"const":"sankantsu"},"value":{"const":2},"unit":{"const":"han"}},"additionalProperties":false},
+        {"type":"object","required":["id","value","unit"],"properties":{"id":{"const":"shousangen"},"value":{"const":2},"unit":{"const":"han"}},"additionalProperties":false},
+        {"type":"object","required":["id","value","unit"],"properties":{"id":{"const":"honitsu"},"value":{"const":3},"unit":{"const":"han"}},"additionalProperties":false},
+        {"type":"object","required":["id","value","unit"],"properties":{"id":{"const":"junchan"},"value":{"const":3},"unit":{"const":"han"}},"additionalProperties":false},
+        {"type":"object","required":["id","value","unit"],"properties":{"id":{"const":"ryanpeikou"},"value":{"const":3},"unit":{"const":"han"}},"additionalProperties":false},
+        {"type":"object","required":["id","value","unit"],"properties":{"id":{"const":"chinitsu"},"value":{"const":6},"unit":{"const":"han"}},"additionalProperties":false}
+      ]
+    },
+    "yakuman_yaku": {
+      "type": "object",
+      "required": ["id", "value", "unit"],
+      "properties": {
+        "id": {"enum": ["kokushi_musou", "suuankou", "daisangen", "shousuushii", "daisuushii", "tsuuiisou", "chinroutou", "ryuuiisou", "chuuren_poutou", "suukantsu", "tenhou", "chiihou"]},
+        "value": {"type": "integer", "minimum": 1, "maximum": 2},
+        "unit": {"const": "yakuman"}
+      },
+      "additionalProperties": false
+    },
+    "extension_yaku": {
+      "type": "object",
+      "required": ["id", "value", "unit"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^x_[A-Za-z0-9][A-Za-z0-9.-]*_[A-Za-z0-9][A-Za-z0-9_.-]*$"},
+        "value": {"type": "integer", "minimum": 1, "maximum": 99},
+        "unit": {"enum": ["han", "yakuman"]}
+      },
+      "additionalProperties": false
+    },
+    "yaku": {
+      "oneOf": [
+        {"$ref": "#/$defs/normal_yaku"},
+        {"$ref": "#/$defs/yakuman_yaku"},
+        {"$ref": "#/$defs/extension_yaku"}
+      ]
+    },
+    "bonus": {
+      "oneOf": [
+        {"type":"object","required":["id","han"],"properties":{"id":{"const":"dora"},"han":{"type":"integer","minimum":1,"maximum":99}},"additionalProperties":false},
+        {"type":"object","required":["id","han"],"properties":{"id":{"const":"uradora"},"han":{"type":"integer","minimum":1,"maximum":99}},"additionalProperties":false},
+        {"type":"object","required":["id","han"],"properties":{"id":{"const":"akadora"},"han":{"type":"integer","minimum":1,"maximum":99}},"additionalProperties":false}
+      ]
+    },
+    "paoEntry": {
+      "type": "object",
+      "required": ["yaku_id", "liable_seat"],
+      "properties": {
+        "yaku_id": {"enum": ["daisangen", "daisuushii"]},
+        "liable_seat": {"$ref": "#/$defs/seat"}
+      },
+      "additionalProperties": false
+    },
+    "win": {
+      "type": "object",
+      "required": [
+        "actor", "target", "pai", "fu", "han", "yakus", "bonuses", "hand_points",
+        "deltas", "ura_dora_markers", "pao"
+      ],
+      "properties": {
+        "actor": {"$ref": "#/$defs/seat"},
+        "target": {"$ref": "#/$defs/seat"},
+        "pai": {"$ref": "#/$defs/tile"},
+        "fu": {"type": "integer", "minimum": 0, "maximum": 2000},
+        "han": {"type": "integer", "minimum": 0, "maximum": 99},
+        "yakus": {
+          "type": "array", "minItems": 1, "uniqueItems": true,
+          "description": "uniqueItems compares complete objects only; semantic validation MUST also reject duplicate yaku IDs and enforce the registry/role exclusivity rules",
+          "items": {"$ref": "#/$defs/yaku"}
+        },
+        "bonuses": {
+          "type": "array", "uniqueItems": true,
+          "description": "uniqueItems compares complete objects only; semantic validation MUST also reject duplicate bonus IDs",
+          "items": {"$ref": "#/$defs/bonus"}
+        },
+        "hand_points": {"type": "integer", "minimum": 0, "maximum": 9007199254740900},
+        "deltas": {"$ref": "#/$defs/scoreArray"},
+        "ura_dora_markers": {
+          "type": "array", "maxItems": 5,
+          "items": {"$ref": "#/$defs/tile"}
+        },
+        "pao": {
+          "type": "array", "uniqueItems": true,
+          "description": "uniqueItems compares complete objects only; semantic validation MUST also reject duplicate yaku_id values",
+          "items": {"$ref": "#/$defs/paoEntry"}
+        }
+      },
+      "additionalProperties": false
+    },
+    "hora": {
+      "type": "object",
+      "required": ["type", "wins"],
+      "properties": {
+        "type": {"const": "hora"},
+        "wins": {"type": "array", "minItems": 1, "maxItems": 3, "items": {"$ref": "#/$defs/win"}}
+      },
+      "additionalProperties": false
+    },
+    "ryukyoku": {
+      "type": "object",
+      "required": ["type", "reason", "tenpai"],
+      "properties": {
+        "type": {"const": "ryukyoku"},
+        "reason": {"enum": ["fanpai", "kyushukyuhai", "suufon_renda", "suucha_riichi", "suukan_sanra", "sanchaho", "illegal_action"]},
+        "tenpai": {
+          "anyOf": [
+            {"type": "null"},
+            {"type": "array", "minItems": 4, "maxItems": 4, "items": {"type": "boolean"}}
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "payment": {
+      "type": "object",
+      "required": ["from", "to", "points"],
+      "properties": {
+        "from": {"$ref": "#/$defs/seat"},
+        "to": {"$ref": "#/$defs/seat"},
+        "points": {"type": "integer", "minimum": 0, "maximum": 9007199254740900}
+      },
+      "additionalProperties": false
+    },
+    "penalty": {
+      "type": "object",
+      "required": ["type", "offender", "reason", "penalty"],
+      "properties": {
+        "type": {"const": "penalty"},
+        "offender": {"$ref": "#/$defs/seat"},
+        "reason": {"const": "illegal_action"},
+        "penalty": {
+          "type": "object",
+          "required": ["payments"],
+          "properties": {
+            "payments": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/payment"}}
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "oneOf": [
+    {"$ref": "#/$defs/hora"},
+    {"$ref": "#/$defs/ryukyoku"},
+    {"$ref": "#/$defs/penalty"}
+  ]
+}

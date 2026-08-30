@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:yamai:schema:yrc-0003:1.0-draft.5:action",
+  "$defs": {
+    "seat": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.5:common#/$defs/seat"},
+    "tile": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.5:common#/$defs/tile"},
+    "dahai": {
+      "type": "object", "required": ["type", "actor", "pai", "tsumogiri"],
+      "properties": {"type": {"const": "dahai"}, "actor": {"$ref": "#/$defs/seat"}, "pai": {"$ref": "#/$defs/tile"}, "tsumogiri": {"type": "boolean"}},
+      "additionalProperties": false,
+      "patternProperties": {"^x_[A-Za-z0-9][A-Za-z0-9_]{0,63}$": {}}
+    },
+    "meld": {
+      "oneOf": [
+        {
+          "type": "object", "required": ["type", "actor", "target", "pai", "consumed", "dahai"],
+          "properties": {
+            "type": {"const": "chi"}, "actor": {"$ref": "#/$defs/seat"}, "target": {"$ref": "#/$defs/seat"}, "pai": {"$ref": "#/$defs/tile"},
+            "consumed": {"type": "array", "minItems": 2, "maxItems": 2, "items": {"$ref": "#/$defs/tile"}},
+            "dahai": {"$ref": "#/$defs/dahai"}
+          },
+          "additionalProperties": false,
+          "patternProperties": {"^x_[A-Za-z0-9][A-Za-z0-9_]{0,63}$": {}}
+        },
+        {
+          "type": "object", "required": ["type", "actor", "target", "pai", "consumed", "dahai"],
+          "properties": {
+            "type": {"const": "pon"}, "actor": {"$ref": "#/$defs/seat"}, "target": {"$ref": "#/$defs/seat"}, "pai": {"$ref": "#/$defs/tile"},
+            "consumed": {"type": "array", "minItems": 2, "maxItems": 2, "items": {"$ref": "#/$defs/tile"}},
+            "dahai": {"$ref": "#/$defs/dahai"}
+          },
+          "additionalProperties": false,
+          "patternProperties": {"^x_[A-Za-z0-9][A-Za-z0-9_]{0,63}$": {}}
+        },
+        {
+          "type": "object", "required": ["type", "actor", "target", "pai", "consumed"],
+          "properties": {
+            "type": {"const": "daiminkan"}, "actor": {"$ref": "#/$defs/seat"}, "target": {"$ref": "#/$defs/seat"}, "pai": {"$ref": "#/$defs/tile"},
+            "consumed": {"type": "array", "minItems": 3, "maxItems": 3, "items": {"$ref": "#/$defs/tile"}}
+          },
+          "additionalProperties": false,
+          "patternProperties": {"^x_[A-Za-z0-9][A-Za-z0-9_]{0,63}$": {}}
+        }
+      ]
+    },
+    "actionObject": {
+      "oneOf": [
+        {"type": "object", "required": ["type"], "properties": {"type": {"const": "none"}, "actor": {"$ref": "#/$defs/seat"}}, "additionalProperties": false, "patternProperties": {"^x_[A-Za-z0-9][A-Za-z0-9_]{0,63}$": {}}},
+        {"$ref": "#/$defs/dahai"},
+        {"type": "object", "required": ["type", "actor"], "properties": {"type": {"const": "hora"}, "actor": {"$ref": "#/$defs/seat"}}, "additionalProperties": false, "patternProperties": {"^x_[A-Za-z0-9][A-Za-z0-9_]{0,63}$": {}}},
+        {"type": "object", "required": ["type", "actor"], "properties": {"type": {"const": "ryukyoku"}, "actor": {"$ref": "#/$defs/seat"}}, "additionalProperties": false, "patternProperties": {"^x_[A-Za-z0-9][A-Za-z0-9_]{0,63}$": {}}},
+        {"$ref": "#/$defs/meld"},
+        {"type": "object", "required": ["type", "actor", "consumed"], "properties": {"type": {"const": "ankan"}, "actor": {"$ref": "#/$defs/seat"}, "consumed": {"type": "array", "minItems": 4, "maxItems": 4, "items": {"$ref": "#/$defs/tile"}}}, "additionalProperties": false, "patternProperties": {"^x_[A-Za-z0-9][A-Za-z0-9_]{0,63}$": {}}},
+        {"type": "object", "required": ["type", "actor", "pai", "consumed"], "properties": {"type": {"const": "kakan"}, "actor": {"$ref": "#/$defs/seat"}, "pai": {"$ref": "#/$defs/tile"}, "consumed": {"type": "array", "minItems": 3, "maxItems": 3, "items": {"$ref": "#/$defs/tile"}}}, "additionalProperties": false, "patternProperties": {"^x_[A-Za-z0-9][A-Za-z0-9_]{0,63}$": {}}},
+        {"type": "object", "required": ["type", "actor", "dahai"], "properties": {"type": {"const": "reach"}, "actor": {"$ref": "#/$defs/seat"}, "dahai": {"$ref": "#/$defs/dahai"}}, "additionalProperties": false, "patternProperties": {"^x_[A-Za-z0-9][A-Za-z0-9_]{0,63}$": {}}}
+      ]
+    },
+    "actionCandidate": {
+      "type": "object",
+      "required": ["action_id", "action"],
+      "properties": {
+        "action_id": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.5:common#/$defs/id"},
+        "action": {"$ref": "#/$defs/actionObject"}
+      },
+      "additionalProperties": false,
+      "patternProperties": {"^x_[A-Za-z0-9][A-Za-z0-9_]{0,63}$": {}}
+    }
+  },
+  "type": "object",
+  "required": ["yamai", "kind", "session_id", "game_id", "request_id", "action_id"],
+  "properties": {
+    "yamai": {"const": "1.0-draft.5"},
+    "kind": {"const": "action"},
+    "session_id": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.5:common#/$defs/id"},
+    "game_id": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.5:common#/$defs/id"},
+    "request_id": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.5:common#/$defs/id"},
+    "action_id": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.5:common#/$defs/id"}
+  },
+  "additionalProperties": false,
+  "patternProperties": {"^x_[A-Za-z0-9][A-Za-z0-9_]{0,63}$": {}}
+}

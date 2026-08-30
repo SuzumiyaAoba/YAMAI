@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:yamai:schema:yrc-0003:1.0-draft.5:join",
+  "type": "object",
+  "required": ["kind", "version", "mode", "view", "profile", "profile_revision", "profile_hash", "client", "capabilities", "receive_limits"],
+  "properties": {
+    "kind": {"const": "join"},
+    "version": {"const": "1.0-draft.5"},
+    "mode": {"type": "string", "enum": ["play", "spectate", "replay"]},
+    "view": {
+      "anyOf": [
+        {"type": "string", "enum": ["seat", "public", "full"]},
+        {"type": "object", "required": ["seat"], "properties": {"seat": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.5:common#/$defs/seat"}}, "additionalProperties": false}
+      ]
+    },
+    "profile": {"const": "riichi-4p"},
+    "profile_revision": {"const": "1.0-draft.3"},
+    "profile_hash": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.5:common#/$defs/profileHash"},
+    "client": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.5:common#/$defs/client"},
+    "capabilities": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.5:common#/$defs/capabilities"},
+    "receive_limits": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.5:common#/$defs/receiveLimits"},
+    "room": {"type": "string", "minLength": 1, "maxLength": 128},
+    "target": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["type", "id"],
+          "properties": {
+            "type": {"const": "game"},
+            "id": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.5:common#/$defs/id"}
+          },
+          "additionalProperties": false,
+          "patternProperties": {"^x_[A-Za-z0-9][A-Za-z0-9_]{0,63}$": {}}
+        },
+        {
+          "type": "object",
+          "required": ["type", "id"],
+          "properties": {
+            "type": {"const": "recording"},
+            "id": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.5:common#/$defs/id"}
+          },
+          "additionalProperties": false,
+          "patternProperties": {"^x_[A-Za-z0-9][A-Za-z0-9_]{0,63}$": {}}
+        }
+      ]
+    },
+    "resume": {
+      "type": "object",
+      "required": ["token", "last_seq"],
+      "properties": {
+        "token": {"type": "string", "pattern": "^[A-Za-z0-9._~-]{22,256}$"},
+        "last_seq": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.5:common#/$defs/nonNegativeInteger"}
+      },
+      "additionalProperties": false,
+      "patternProperties": {"^x_[A-Za-z0-9][A-Za-z0-9_]{0,63}$": {}}
+    }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"mode": {"const": "play"}}},
+      "then": {
+        "properties": {"view": {"const": "seat"}},
+        "not": {"required": ["target"]}
+      }
+    },
+    {
+      "if": {"properties": {"mode": {"const": "spectate"}}},
+      "then": {
+        "required": ["target"],
+        "properties": {"view": {"const": "public"}},
+        "not": {"required": ["resume"]}
+      }
+    },
+    {
+      "if": {"properties": {"mode": {"const": "replay"}}},
+      "then": {
+        "required": ["target"],
+        "properties": {
+          "view": {
+            "anyOf": [
+              {"type": "string", "enum": ["public", "full"]},
+              {"type": "object", "required": ["seat"], "properties": {"seat": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.5:common#/$defs/seat"}}, "additionalProperties": false, "patternProperties": {"^x_[A-Za-z0-9][A-Za-z0-9_]{0,63}$": {}}}
+            ]
+          }
+        },
+        "not": {"required": ["resume"]}
+      }
+    }
+  ],
+  "additionalProperties": false,
+  "patternProperties": {"^x_[A-Za-z0-9][A-Za-z0-9_]{0,63}$": {}}
+}

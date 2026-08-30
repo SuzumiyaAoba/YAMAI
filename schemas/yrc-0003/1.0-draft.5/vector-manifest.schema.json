@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:yamai:schema:yrc-0003:1.0-draft.5:vector-manifest",
+  "type": "object",
+  "required": ["protocol_version", "profile", "profile_revision", "profile_hash", "registry", "schema_root", "vectors", "scoring_vectors", "profile_hash_canonicalization", "profile_hash_inputs", "cases"],
+  "properties": {
+    "$schema": {"type": "string"},
+    "protocol_version": {"const": "1.0-draft.5"},
+    "profile": {"const": "riichi-4p"},
+    "profile_revision": {"const": "1.0-draft.3"},
+    "profile_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "registry": {"type": "array", "minItems": 2, "items": {"type": "string"}},
+    "schema_root": {"type": "string"},
+    "vectors": {"type": "string"},
+    "scoring_vectors": {"type": "string"},
+    "profile_hash_canonicalization": {"const": "RFC8785-JCS"},
+    "profile_hash_inputs": {
+      "type": "array",
+      "minItems": 7,
+      "maxItems": 7,
+      "uniqueItems": true,
+      "items": {"type": "string"}
+    },
+    "cases": {
+      "type": "array", "minItems": 29, "maxItems": 29,
+      "items": {
+        "type": "object", "required": ["id", "area", "expect_positive", "expect_negative"],
+        "properties": {"id": {"type": "string"}, "area": {"type": "string"}, "expect_positive": {"type": "string"}, "expect_negative": {"type": "string"}, "negative_profile_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}},
+        "additionalProperties": false,
+        "patternProperties": {"^x_[A-Za-z0-9][A-Za-z0-9_]{0,63}$": {}}
+      }
+    }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:yamai:schema:yrc-0003:1.0-draft.5:riichi-4p",
+  "title": "YAMAI riichi-4p profile descriptor",
+  "type": "object",
+  "required": ["name", "revision", "hash", "rules"],
+  "properties": {
+    "name": {"const": "riichi-4p"},
+    "revision": {"const": "1.0-draft.3"},
+    "hash": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.5:common#/$defs/profileHash"},
+    "rules": {"$ref": "urn:yamai:schema:yrc-0005:1.0-draft.3:riichi-4p-rules"}
+  },
+  "additionalProperties": false,
+  "patternProperties": {"^x_[A-Za-z0-9][A-Za-z0-9_]{0,63}$": {}}
+}

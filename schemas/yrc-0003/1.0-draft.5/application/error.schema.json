@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:yamai:schema:yrc-0003:1.0-draft.5:error",
+  "$defs": {
+    "base": {
+      "type": "object",
+      "required": ["kind", "code", "severity", "message"],
+      "properties": {
+        "yamai": {"const": "1.0-draft.5"},
+        "kind": {"const": "error"},
+        "session_id": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.5:common#/$defs/id"},
+        "game_id": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.5:common#/$defs/id"},
+        "seq": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.5:common#/$defs/positiveInteger"},
+        "code": {"type": "string", "pattern": "^[a-z][a-z0-9_]{1,63}$"},
+        "severity": {"type": "string", "enum": ["recoverable", "fatal"]},
+        "message": {"type": "string", "minLength": 1, "maxLength": 4096},
+        "caused_by_seq": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.5:common#/$defs/positiveInteger"},
+        "request_id": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.5:common#/$defs/id"},
+        "expected_seq": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.5:common#/$defs/positiveInteger"},
+        "received_seq": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.5:common#/$defs/positiveInteger"},
+        "action_id": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.5:common#/$defs/id"},
+        "original_status": {"type": "string", "enum": ["accepted", "passed", "superseded", "defaulted", "stale", "rejected"]}
+      },
+      "additionalProperties": false,
+      "patternProperties": {"^x_[A-Za-z0-9][A-Za-z0-9_]{0,63}$": {}}
+    },
+    "preNegotiation": {
+      "allOf": [
+        {"$ref": "#/$defs/base"},
+        {"not": {"anyOf": [{"required": ["yamai"]}, {"required": ["session_id"]}, {"required": ["game_id"]}, {"required": ["seq"]}]}}
+      ]
+    },
+    "hostApplication": {
+      "allOf": [
+        {"$ref": "#/$defs/base"},
+        {"required": ["yamai", "session_id", "game_id", "seq"]}
+      ]
+    },
+    "playerApplication": {
+      "allOf": [
+        {"$ref": "#/$defs/base"},
+        {"required": ["yamai", "session_id", "game_id"]},
+        {"not": {"required": ["seq"]}}
+      ]
+    }
+  },
+  "oneOf": [
+    {"$ref": "#/$defs/preNegotiation"},
+    {"$ref": "#/$defs/hostApplication"},
+    {"$ref": "#/$defs/playerApplication"}
+  ]
+}

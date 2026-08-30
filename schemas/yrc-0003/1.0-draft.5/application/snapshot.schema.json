@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:yamai:schema:yrc-0003:1.0-draft.5:snapshot",
+  "type": "object",
+  "required": ["yamai", "kind", "session_id", "game_id", "seq", "replaces_through_seq", "state"],
+  "properties": {
+    "yamai": {"const": "1.0-draft.5"},
+    "kind": {"const": "snapshot"},
+    "session_id": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.5:common#/$defs/id"},
+    "game_id": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.5:common#/$defs/id"},
+    "seq": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.5:common#/$defs/positiveInteger"},
+    "replaces_through_seq": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.5:common#/$defs/nonNegativeInteger"},
+    "state": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.5:snapshot-state"}
+  },
+  "additionalProperties": false,
+  "patternProperties": {"^x_[A-Za-z0-9][A-Za-z0-9_]{0,63}$": {}}
+}

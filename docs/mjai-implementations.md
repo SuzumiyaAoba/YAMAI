@@ -22,7 +22,7 @@ MJAI を採用するアプリケーションは、Gimite のイベント語彙�
 
 本書は YAMAI Project が管理する Informational 文書であり、IETF Internet Standard ではない。本書の配布に制限はない。
 
-実装の挙動は更新され得る。本書の記述は2026年8月30日時点の公開資料に基づく。相互運用を必要とするシステムは、実装名だけでなく commit、release または protocol revision を固定すべきである。
+実装の挙動は更新され得る。本書の記述は2026年8月30日時点の公開資料に基づく。相互運用を必要とするシステムは、実装名だけでなく、§2.1に示すcommit、releaseまたはprotocol revisionを固定することが望ましい。
 
 ## Table of Contents
 
@@ -60,7 +60,7 @@ Akochan、Mortalの学習データ形式、Mahjong Soul・天鳳の原生 wire p
 | 軸 | 定義 |
 |---|---|
 | transport | TCP、stdio、WebSocket、file等 |
-| input unit | 1回のreadで意味上処理する event 数 |
+| input unit | 1個のlogical frame／application messageで意味上処理するevent数（OSの`read`境界ではない） |
 | output unit | 1 input unit に対して要求される response |
 | action trigger | responseを返す時点 |
 | correlation | requestとresponseを対応付ける方法 |
@@ -81,6 +81,21 @@ Akochan、Mortalの学習データ形式、Mahjong Soul・天鳳の原生 wire p
 
 同じ JSON event 名を使用していても、input unit が object と array で異なる実装は直接接続できない。
 
+ここでいうframeは、実装がJSONを意味解釈する論理境界である。TCPまたはstdioのOS `read`は、1行を分割して返すことも複数行をまとめて返すこともあるため、read回数・byte分割・write回数はframe数とは数えない。JSON Lines profileは改行までを蓄積して1 logical frameとして解析し、1回のreadに複数行が含まれる場合は各行を順番に処理する。WebSocket profileはprotocolが定義するtext messageをlogical frameとし、fragment frameの境界は意味を持たない。
+
+### 2.1 Source snapshots and evidence
+
+本書のprofile記述はInformationalな観測記録であり、下表のrevisionに対してだけ再現可能性を主張する。`未固定`は、公式URLと対象ファイルは確認できたが、commit履歴を確認できなかったことを表す。確認日は2026-08-30である。外部profileのrevisionはYAMAIの適合要件ではない。
+
+| profile | protocol revision | 公式source revision／確認結果 | 対象ファイルまたは仕様 |
+|---|---|---|---|
+| Gimite `mjai` | `mjsonp`, 原典 `protocol_version=1`／現行コード `3` | `master`。公式GitHubのcommit履歴は2026-08-30に取得不能でcommit未固定 | [`lib/mjai/tcp_game_server.rb`](https://github.com/gimite/mjai/blob/master/lib/mjai/tcp_game_server.rb)、[`lib/mjai/game.rb`](https://github.com/gimite/mjai/blob/master/lib/mjai/game.rb)、[`lib/mjai/tcp_player.rb`](https://github.com/gimite/mjai/blob/master/lib/mjai/tcp_player.rb)、[`lib/mjai/action.rb`](https://github.com/gimite/mjai/blob/master/lib/mjai/action.rb) |
+| Mortal | MJAI event stream（protocol version fieldなし） | `main@0cff2b52982be5b1163aa9a62fb01f03ce91e0d2` | [`mortal/mortal.py`](https://github.com/Equim-chan/Mortal/blob/0cff2b52982be5b1163aa9a62fb01f03ce91e0d2/mortal/mortal.py)、[`libriichi/src/mjai/event.rs`](https://github.com/Equim-chan/Mortal/blob/0cff2b52982be5b1163aa9a62fb01f03ce91e0d2/libriichi/src/mjai/event.rs) |
+| mjai.app | `mjai-client:v3`, event-array batch | `main@cc24bace09673d1d38b4315031a1ce63fb1b5abf`（shutdown noticeを含む最終確認commit） | [`README.md`](https://github.com/smly/mjai.app/blob/cc24bace09673d1d38b4315031a1ce63fb1b5abf/README.md) |
+| Akagi | `v3.7.0` | `v3.7.0@a7565de28037c3759647d1d6327e5be42d11e924` | [`README.md`](https://github.com/shinkuan/Akagi/blob/v3.7.0/README.md)、[`mjai_bot/README.md`](https://github.com/shinkuan/Akagi/blob/v3.7.0/mjai_bot/README.md) |
+| RiichiLab | Protocol v2（2026-06-10 22:51 JST有効） | 公式仕様および告知で確認。実装は [`RiichiEnv@b1d08b3615a710f929679fefb50d1c384f2070b9`](https://github.com/smly/RiichiEnv/commit/b1d08b3615a710f929679fefb50d1c384f2070b9) を観測基準とする | [公式MJAI Protocol](https://riichi.dev/docs/protocol)、[`README.md`](https://github.com/smly/RiichiEnv/blob/b1d08b3615a710f929679fefb50d1c384f2070b9/README.md) |
+| mjai-reviewer | README記載の1.x系（0.x系とは非互換） | `master@2dc5ec5c8b28517cfb45f57eb21536d9a8f67aa9` | [`README.md`](https://github.com/Equim-chan/mjai-reviewer/blob/2dc5ec5c8b28517cfb45f57eb21536d9a8f67aa9/README.md)、[`faq.md`](https://github.com/Equim-chan/mjai-reviewer/blob/2dc5ec5c8b28517cfb45f57eb21536d9a8f67aa9/faq.md)、[`src/review/mortal.rs`](https://github.com/Equim-chan/mjai-reviewer/blob/2dc5ec5c8b28517cfb45f57eb21536d9a8f67aa9/src/review/mortal.rs) |
+
 ## 3. Gimite `mjai` TCP Server
 
 ### 3.1 Transportとlifecycle
@@ -91,16 +106,17 @@ Gimite profile は TCP 上の1行1 JSON object である。ホストは `hello` 
 
 ### 3.2 応答モデル
 
-ホストは各 event を全プレイヤーへ配信し、全プレイヤーから1 actionを読む。行動しないプレイヤーも `none` を返す。応答はrequest IDを持たず、到着順で直前eventへ結び付く。
+ホストは各eventを全プレイヤーへ配信し、全プレイヤーから1 actionを読む。行動しないプレイヤーも `none` を返す。応答はrequest IDを持たず、到着順で直前eventへ結び付く。
 
-Gimite v3は、自分の `tsumo`、他家の `dahai`・`kakan` に `possible_actions` を付加する。他家の加槓に対して `hora` を返すことで槍槓を宣言できる [GIMITE-GAME]。
+Gimite v3は、自分の `tsumo`、他家の `dahai`・`kakan` に `possible_actions` を付加する。他家の加槓に対して `hora` を返すことで槍槓を宣言できる [GIMITE-GAME]。Host → Playerのprotocol error message（`{"type":"error","message":...}`）と、Player → Hostの `error` actionは別のものとして扱う。前者は接続・入力エラーの通知、後者は要求を処理できないことを知らせる行動であり、いずれもYAMAIの`kind=error`または`kind=action`へ自動的に読み替えられない。
 
-TCP player実装の応答timeoutは60秒である。timeout、不正JSONまたは違法actionは `error` actionへ変換され、game validationで処理される [GIMITE-PLAYER]。
+TCP player実装の応答timeoutは60秒である。timeout、不正JSONまたは違法actionはPlayer → Hostの `error` actionとして扱われ、game validationで処理される [GIMITE-PLAYER]。接続受け入れやjoin失敗時にHost → Playerへ送る`error` protocol messageとは方向も意味も異なる。
 
 ### 3.3 識別子
 
 ```text
-profile_id: gimite-mjsonp-v3
+profile_id: gimite-mjai-v3
+aliases: gimite-mjsonp-v3 (旧記載。公式transport schemeの `mjsonp://` に由来)
 transport: tcp-jsonl-object
 input_unit: event-object
 response_policy: every-event
@@ -141,7 +157,7 @@ seat_source: argv
 
 ### 5.1 状態
 
-mjai.appは歴史的に重要な競技用profileであるが、旧サービスは2026年4月30日に終了し、後継はRiichiLabへ移行した [MJAI-APP-SUNSET]。本節は既存botと牌譜を扱うために記録する。
+mjai.appは歴史的に重要な競技用profileであるが、旧サービスは2026年4月30日に終了し、後継はRiichiLabへ移行した [MJAI-APP-SUNSET]。本節は既存botと牌譜を扱うために記録する。したがって、本profileはretired（現行サービスへの接続先ではない）として扱い、RiichiLabとwire互換であると解釈しないことが望ましい。
 
 ### 5.2 Batch interface
 
@@ -234,7 +250,7 @@ mjai-reviewerは対局ホストではなく、天鳳・Mahjong Soul等の牌譜�
 - 1.xと旧0.x系は互換でない
 - 変換元に存在しないMJAI情報はconverterが推定する場合がある
 
-したがって、mjai-reviewerを単一の対局wire dialectとして扱ってはならない。牌譜converterとengine adapterを別profileとして識別する必要がある。
+したがって、mjai-reviewerを単一の対局wire dialectとして扱わないことを推奨する。牌譜converterとengine adapterを別profileとして識別することが望ましい。
 
 ## 9. 相互運用上の含意
 
@@ -247,9 +263,9 @@ mjai-reviewerは対局ホストではなく、天鳳・Mahjong Soul等の牌譜�
 - 4人固定botと、Akagi・RiichiLabの3人麻雀event
 - replay consumerと、非公開情報を要求するlive play session
 
-### 9.2 Adapterの最低要件
+### 9.2 Adapter設計で明示する事項（推奨）
 
-adapterは次を明示しなければならない。
+adapterの設計上、相互運用に必要な次の事項を明示することを推奨する。本書はadapterへ規範要件を課さず、YAMAI適合性は [YRC 0003] `1.0-draft.5` の規範文書で判断する。
 
 1. object streamからbatchを作るflush条件
 2. batchからobject streamへ展開した際のresponse抑制
@@ -260,17 +276,17 @@ adapterは次を明示しなければならない。
 7. 裏ドラ表示牌欄の名称変換（YAMAIでは `ura_dora_markers` へ正規化）
 8. 3人麻雀と未知eventの拒否規則
 
-情報を損失する変換は、黙って既定値を補ってはならない。変換不能または推定したmemberを診断として記録すべきである。adapterの各変換規則と損失箇所は、[YRC 0003] 第16節のMJAI移行要件、および同第17節が要求する同一release tagのSchema、registry、公式test vectorへ追跡可能にする。
+情報を損失する変換は、黙って既定値を補わず、変換不能または推定したmemberを診断として記録することが望ましい。adapterの各変換規則と損失箇所は、[YRC 0003] `1.0-draft.5` 第16節のMJAI移行要件、および同第17節が要求する同一release tagのSchema、registry、公式test vectorへ追跡可能にすることを推奨する。
 
 ## 10. Security Considerations
 
-stdio profileではstdoutをprotocol専用とし、診断をstderrへ分離する必要がある。WebSocket profileでは認証token、observationおよび完全情報replayをログへ出力してはならない。
+stdio profileではstdoutをprotocol専用とし、診断をstderrへ分離することが望ましい。WebSocket profileでは認証token、observationおよび完全情報replayをログへ出力しないことを推奨する。
 
 外部bot subprocessは、入力牌譜、model、任意codeを処理する。競技・review hostはfilesystem、network、CPU、memory、process数および実行時間をsandboxで制限すべきである。
 
 ## 11. Registry Considerations
 
-本書の `profile_id` はYAMAI Project内の記述用識別子であり、各上流projectが割り当てた公式名称ではない。stable registryへ登録する前に、対象revision、maintainerおよびconformance fixtureを固定する必要がある。
+本書の `profile_id` はYAMAI Project内の記述用識別子であり、各上流projectが割り当てた公式名称ではない。stable registryへ登録する場合は、対象revision、maintainerおよびconformance fixtureを固定することが望ましい。
 
 ## 12. References
 
@@ -284,27 +300,27 @@ stdio profileではstdoutをprotocol専用とし、診断をstderrへ分離す�
   https://github.com/gimite/mjai/blob/master/lib/mjai/game.rb
 - [GIMITE-PLAYER] Gimite, `tcp_player.rb`.  
   https://github.com/gimite/mjai/blob/master/lib/mjai/tcp_player.rb
-- [MORTAL-ENGINE] Equim-chan, Mortal `mortal.py`.  
-  https://github.com/Equim-chan/Mortal/blob/main/mortal/mortal.py
-- [MORTAL-EVENT] Equim-chan, Mortal MJAI Event.  
-  https://github.com/Equim-chan/Mortal/blob/main/libriichi/src/mjai/event.rs
-- [MJAI-APP] smly, mjai.app README.  
-  https://github.com/smly/mjai.app
+- [MORTAL-ENGINE] Equim-chan, Mortal `mortal.py`（`main@0cff2b52982be5b1163aa9a62fb01f03ce91e0d2`）。
+  https://github.com/Equim-chan/Mortal/blob/0cff2b52982be5b1163aa9a62fb01f03ce91e0d2/mortal/mortal.py
+- [MORTAL-EVENT] Equim-chan, Mortal MJAI Event（`main@0cff2b52982be5b1163aa9a62fb01f03ce91e0d2`）。
+  https://github.com/Equim-chan/Mortal/blob/0cff2b52982be5b1163aa9a62fb01f03ce91e0d2/libriichi/src/mjai/event.rs
+- [MJAI-APP] smly, mjai.app README（`main@cc24bace09673d1d38b4315031a1ce63fb1b5abf`）。
+  https://github.com/smly/mjai.app/blob/cc24bace09673d1d38b4315031a1ce63fb1b5abf/README.md
 - [MJAI-APP-SUNSET] smly, “Sunsetting the Old RiichiLab”.  
   https://github.com/smly/mjai.app/discussions/203
-- [AKAGI-BOT] Shinkuan, “Writing an mjai bot for Akagi”.  
-  https://github.com/shinkuan/Akagi/blob/v3/mjai_bot/README.md
+- [AKAGI-BOT] Shinkuan, “Writing an mjai bot for Akagi”（`v3.7.0@a7565de28037c3759647d1d6327e5be42d11e924`）。
+  https://github.com/shinkuan/Akagi/blob/v3.7.0/mjai_bot/README.md
 - [RIICHI-PROTOCOL] RiichiLab, “MJAI Protocol”.  
   https://riichi.dev/docs/protocol
 - [RIICHI-PROTOCOL-V2] smly, “Protocol v2: request_id, action_ack, and time bank are now live”.  
   https://github.com/smly/RiichiEnv/discussions/216
-- [MJAI-REVIEWER] Equim-chan, mjai-reviewer.  
-  https://github.com/Equim-chan/mjai-reviewer
-- [MJAI-REVIEWER-FAQ] Equim-chan, mjai-reviewer FAQ.  
-  https://github.com/Equim-chan/mjai-reviewer/blob/master/faq.md
+- [MJAI-REVIEWER] Equim-chan, mjai-reviewer（`master@2dc5ec5c8b28517cfb45f57eb21536d9a8f67aa9`）。
+  https://github.com/Equim-chan/mjai-reviewer/blob/2dc5ec5c8b28517cfb45f57eb21536d9a8f67aa9/README.md
+- [MJAI-REVIEWER-FAQ] Equim-chan, mjai-reviewer FAQ（同revision）。
+  https://github.com/Equim-chan/mjai-reviewer/blob/2dc5ec5c8b28517cfb45f57eb21536d9a8f67aa9/faq.md
 - [YRC 0001] YAMAI Project, “デファクト MJAI プロトコル記述仕様”.
 - [YRC 0002] YAMAI Project, “MJAI プロトコルの設計上の欠陥”.
-- [YRC 0003] YAMAI Project, “YAMAI Protocol Version 1 (1.0-draft.4)”.
+- [YRC 0003] YAMAI Project, “YAMAI Protocol Version 1 (1.0-draft.5)”.
 
 ## Appendix A. Machine-readable Profile Template
 

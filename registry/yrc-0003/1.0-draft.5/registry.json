@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:yamai:registry:yrc-0003:1.0-draft.5",
+  "registry_version": "1.0-draft.5",
+  "protocol": "yamai",
+  "protocol_version": "1.0-draft.5",
+  "profiles": [
+    {
+      "id": "riichi-4p",
+      "revision": "1.0-draft.3",
+      "schema": "urn:yamai:schema:yrc-0003:1.0-draft.5:riichi-4p",
+      "rules_schema": "urn:yamai:schema:yrc-0005:1.0-draft.3:riichi-4p-rules",
+      "hash": "sha256:140a9b6d4d962799bb2bf2bc5dcdc2fa9ee88cc64374c930d0c3fe84ea749fb8"
+    }
+  ],
+  "capabilities": [
+    {"id": "resume", "status": "stable", "direction": "both", "requires": [], "security": "bearer-token"},
+    {"id": "snapshot", "status": "stable", "direction": "host-to-player", "requires": [], "security": "visibility-sensitive"}
+  ],
+  "message_kinds": [
+    {"id": "hello", "direction": "host-to-player", "schema": "urn:yamai:schema:yrc-0003:1.0-draft.5:hello"},
+    {"id": "join", "direction": "player-to-host", "schema": "urn:yamai:schema:yrc-0003:1.0-draft.5:join"},
+    {"id": "welcome", "direction": "host-to-player", "schema": "urn:yamai:schema:yrc-0003:1.0-draft.5:welcome"},
+    {"id": "event", "direction": "host-to-player", "schema": "urn:yamai:schema:yrc-0003:1.0-draft.5:event"},
+    {"id": "request", "direction": "host-to-player", "schema": "urn:yamai:schema:yrc-0003:1.0-draft.5:request"},
+    {"id": "action", "direction": "player-to-host", "schema": "urn:yamai:schema:yrc-0003:1.0-draft.5:action"},
+    {"id": "ack", "direction": "host-to-player", "schema": "urn:yamai:schema:yrc-0003:1.0-draft.5:ack"},
+    {"id": "error", "direction": "both", "schema": "urn:yamai:schema:yrc-0003:1.0-draft.5:error"},
+    {"id": "snapshot", "direction": "host-to-player", "schema": "urn:yamai:schema:yrc-0003:1.0-draft.5:snapshot"}
+  ],
+  "event_types": [
+    "start_game", "start_kyoku", "tsumo", "dahai", "chi", "pon", "daiminkan",
+    "ankan_declared", "ankan", "kakan_declared", "kakan", "dora", "reach",
+    "reach_accepted", "pao", "end_kyoku", "end_game"
+  ],
+  "action_types": ["none", "dahai", "chi", "pon", "daiminkan", "ankan", "kakan", "reach", "hora", "ryukyoku"],
+  "ack_statuses": ["accepted", "passed", "superseded", "defaulted", "stale", "rejected"],
+  "error_codes": [
+    {"id": "unsupported_version", "severity": "fatal"},
+    {"id": "unsupported_profile", "severity": "fatal"},
+    {"id": "profile_mismatch", "severity": "fatal"},
+    {"id": "unsupported_capability", "severity": "fatal"},
+    {"id": "unsupported_rules", "severity": "fatal"},
+    {"id": "unsupported_limit", "severity": "fatal"},
+    {"id": "unsupported_frame", "severity": "fatal"},
+    {"id": "invalid_frame", "severity": "fatal"},
+    {"id": "invalid_json", "severity": "fatal"},
+    {"id": "invalid_message", "severity": "contextual"},
+    {"id": "sequence_gap", "severity": "recoverable"},
+    {"id": "sequence_conflict", "severity": "fatal"},
+    {"id": "invalid_action", "severity": "recoverable"},
+    {"id": "request_conflict", "severity": "recoverable"},
+    {"id": "resume_unavailable", "severity": "fatal"},
+    {"id": "resource_limit", "severity": "fatal"},
+    {"id": "internal_error", "severity": "fatal"}
+  ],
+  "rule_keys": [
+    "game_length", "starting_points", "extension", "ranking_policy", "red_fives", "kuitan",
+    "ron_policy", "reaction_priority", "multiple_ron_settlement", "bankruptcy", "bankruptcy_threshold",
+    "dealer_continuation", "abortive_draw_continuation", "agariyame", "noten_payment", "riichi_stick_value",
+    "honba_ron_value", "honba_tsumo_value_per_payer", "kiriage_mangan", "kazoe_yakuman", "double_yakuman",
+    "pao", "chombo", "ankan_chankan", "kan_dora_timing", "invalid_action_policy", "time_control",
+    "abortive_draws", "local_yaku"
+  ],
+  "result_types": ["hora", "ryukyoku", "penalty"],
+  "result_reasons": ["fanpai", "kyushukyuhai", "suufon_renda", "suucha_riichi", "suukan_sanra", "sanchaho", "illegal_action"],
+  "limits": {
+    "max_message_bytes": {"min": 65536, "max": 1048576},
+    "max_json_depth": {"min": 16, "max": 64},
+    "max_unresolved_requests": {"min": 1, "max": 4},
+    "max_legal_actions": 512,
+    "max_event_count": 100000,
+    "max_send_backlog_bytes": 8388608,
+    "max_send_backlog_messages": 1024
+  },
+  "reserved_namespaces": {"field": "x_<owner>_<name>", "type": "x-<owner>-<name>"},
+  "schema_files": [
+    "schemas/yrc-0003/1.0-draft.5/common.schema.json",
+    "schemas/yrc-0003/1.0-draft.5/message.schema.json",
+    "schemas/yrc-0003/1.0-draft.5/host-message.schema.json",
+    "schemas/yrc-0003/1.0-draft.5/player-message.schema.json",
+    "schemas/yrc-0003/1.0-draft.5/negotiation/hello.schema.json",
+    "schemas/yrc-0003/1.0-draft.5/negotiation/join.schema.json",
+    "schemas/yrc-0003/1.0-draft.5/negotiation/welcome.schema.json",
+    "schemas/yrc-0003/1.0-draft.5/application/event.schema.json",
+    "schemas/yrc-0003/1.0-draft.5/application/request.schema.json",
+    "schemas/yrc-0003/1.0-draft.5/application/action.schema.json",
+    "schemas/yrc-0003/1.0-draft.5/application/ack.schema.json",
+    "schemas/yrc-0003/1.0-draft.5/application/error.schema.json",
+    "schemas/yrc-0003/1.0-draft.5/application/snapshot.schema.json",
+    "schemas/yrc-0003/1.0-draft.5/profile/riichi-4p.schema.json",
+    "schemas/yrc-0003/1.0-draft.5/profile/snapshot-state.schema.json"
+  ]
+}

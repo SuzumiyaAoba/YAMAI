@@ -1,0 +1,160 @@
+{
+  "V01_schema_null": {
+    "positive": {"kind":"event","yamai":"1.0-draft.5","session_id":"s1","game_id":"g1","seq":1,"event":{"type":"end_kyoku","result":{"type":"ryukyoku","reason":"suufon_renda","tenpai":null},"deltas":[0,0,0,0],"scores":[25000,25000,25000,25000],"next":{"type":"rotate","honba":1,"oya":1,"kyotaku":0,"extension_round":0}}},
+    "negative": {"kind":"event","yamai":"1.0-draft.5","session_id":"s1","game_id":"g1","seq":1,"event":{"type":"end_kyoku","result":{"type":"ryukyoku","reason":"fanpai","tenpai":null},"deltas":[0,0,0,0],"scores":[25000,25000,25000,25000],"next":{"type":"rotate","honba":1,"oya":1,"kyotaku":0,"extension_round":0}}},
+    "negative_expect":"invalid_message"
+  },
+  "V02_json_strict": {
+    "positive":{"kind":"hello","protocol":"yamai","versions":["1.0-draft.5"],"profiles":[],"capabilities":{"required":[],"optional":[]},"receive_limits":{"max_message_bytes":1048576,"max_json_depth":64,"max_unresolved_requests":4}},
+    "negative_raw":"{\"kind\":\"hello\",\"kind\":\"join\"}\n",
+    "negative_expect":"invalid_json",
+    "unicode_negative":"\\ud800",
+    "number_negative":"9007199254740992"
+  },
+  "V03_extension_namespace": {
+    "positive":{"kind":"hello","protocol":"yamai","versions":["1.0-draft.5"],"profiles":[],"capabilities":{"required":[],"optional":["x-acme-trace"]},"receive_limits":{"max_message_bytes":1048576,"max_json_depth":64,"max_unresolved_requests":4},"x_acme_trace":"ok"},
+    "negative":{"kind":"future_kind","x_acme_trace":true},
+    "negative_expect":"invalid_message"
+  },
+  "V04_version_profile": {
+    "positive":{"kind":"join","version":"1.0-draft.5","mode":"play","view":"seat","profile":"riichi-4p","profile_revision":"1.0-draft.3","profile_hash":"sha256:140a9b6d4d962799bb2bf2bc5dcdc2fa9ee88cc64374c930d0c3fe84ea749fb8","client":{"name":"A","version":"1"},"capabilities":{"required":[],"optional":[]},"receive_limits":{"max_message_bytes":1048576,"max_json_depth":64,"max_unresolved_requests":4}},
+    "negative_profile_hash":"sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "negative":{"kind":"join","version":"1.0-draft.5","mode":"play","view":"seat","profile":"riichi-4p","profile_revision":"1.0-draft.3","profile_hash":"sha256:0000000000000000000000000000000000000000000000000000000000000000","client":{"name":"A","version":"1"},"capabilities":{"required":[],"optional":[]},"receive_limits":{"max_message_bytes":1048576,"max_json_depth":64,"max_unresolved_requests":4}},
+    "negative_expect":"profile_mismatch"
+  },
+  "V05_capability_limits": {
+    "positive":{"kind":"join","version":"1.0-draft.5","mode":"play","view":"seat","profile":"riichi-4p","profile_revision":"1.0-draft.3","profile_hash":"sha256:140a9b6d4d962799bb2bf2bc5dcdc2fa9ee88cc64374c930d0c3fe84ea749fb8","client":{"name":"A","version":"1"},"capabilities":{"required":["resume"],"optional":["snapshot"]},"receive_limits":{"max_message_bytes":1048576,"max_json_depth":64,"max_unresolved_requests":4}},
+    "negative_capability":["resume","snapshot"],
+    "negative":{"kind":"join","version":"1.0-draft.5","mode":"play","view":"seat","profile":"riichi-4p","profile_revision":"1.0-draft.3","profile_hash":"sha256:140a9b6d4d962799bb2bf2bc5dcdc2fa9ee88cc64374c930d0c3fe84ea749fb8","client":{"name":"A","version":"1"},"capabilities":["resume","snapshot"],"receive_limits":{"max_message_bytes":1048576,"max_json_depth":64,"max_unresolved_requests":4}},
+    "negative_expect":"invalid_message"
+  },
+  "V06_transport_frame": {
+    "positive":{"trace":{"trace_type":"transport","transport":"jsonl","lines":["{\"kind\":\"hello\"}\n","{\"kind\":\"join\"}\r\n"],"split_at":[3,8]}},
+    "negative":{"trace":{"trace_type":"transport","transport":"jsonl","lines":["\n"]}},
+    "negative_expect":"invalid_frame",
+    "websocket_positive":{"message_type":"text","message":"{\"kind\":\"hello\"}","fragments":["{\"ki","nd\":\"hello\"}"]},
+    "websocket_negative":{"message_type":"binary"}
+  },
+  "V07_backpressure": {
+    "positive":{"trace":{"trace_type":"resource","harness":"stdio","peer_reads":true,"send_backlog_bytes":0,"send_backlog_messages":0,"write_deadline_ms":60000}},
+    "negative":{"trace":{"trace_type":"resource","harness":"stdio","peer_reads":false,"send_backlog_bytes":8388609,"send_backlog_messages":1024,"write_deadline_ms":60000}},
+    "negative_expect":"resource_limit"
+  },
+  "V08_decision_group": {
+    "positive":{"kind":"request","yamai":"1.0-draft.5","session_id":"s1","game_id":"g1","seq":2,"request_id":"r1","decision_group_id":"d1","decision_group_members":[{"request_id":"r1","seat":1},{"request_id":"r2","seat":2}],"decision_group_deadline_ms":3000,"decision_group_close":"all_resolved_or_deadline","seat":1,"caused_by_seq":1,"timeout_ms":1000,"time_bank_ms":1000,"legal_actions":[{"action_id":"n","action":{"type":"none"}}],"default_action_id":"n"},
+    "negative":{"kind":"request","yamai":"1.0-draft.5","session_id":"s1","game_id":"g1","seq":2,"request_id":"r1","decision_group_id":"d1","decision_group_members":[{"request_id":"r1","seat":1},{"request_id":"r2","seat":2}],"seat":1,"caused_by_seq":1,"timeout_ms":1000,"time_bank_ms":1000,"legal_actions":[{"action_id":"n","action":{"type":"none"}}],"default_action_id":"n"},
+    "negative_expect":"invalid_message"
+  },
+  "V09_score_conservation": {
+    "positive":{"kind":"event","yamai":"1.0-draft.5","session_id":"s1","game_id":"g1","seq":5,"event":{"type":"end_kyoku","result":{"type":"ryukyoku","reason":"fanpai","tenpai":[true,false,false,false]},"deltas":[3000,-1000,-1000,-1000],"scores":[28000,24000,24000,24000],"next":{"type":"rotate","honba":1,"oya":1,"kyotaku":0,"extension_round":0}}},
+    "negative":{"kind":"event","yamai":"1.0-draft.5","session_id":"s1","game_id":"g1","seq":5,"event":{"type":"end_kyoku","result":{"type":"ryukyoku","reason":"fanpai","tenpai":[false,false,false,false]},"deltas":[1,0,0,0],"scores":[25001,25000,25000,25000],"next":{"type":"rotate","honba":1,"oya":1,"kyotaku":0,"extension_round":0}}},
+    "negative_expect":"invalid_message"
+  },
+  "V10_ack_replay": {
+    "positive":{"kind":"action","yamai":"1.0-draft.5","session_id":"s1","game_id":"g1","request_id":"r1","action_id":"a1"},
+    "negative":{"kind":"action","yamai":"1.0-draft.5","session_id":"s1","game_id":"g1","request_id":"r1","action_id":"a2"},
+    "negative_context":{"resolved_status":"accepted"},
+    "negative_expect":"request_conflict"
+  },
+  "V11_resume_snapshot": {
+    "positive":{"kind":"snapshot","yamai":"1.0-draft.5","session_id":"s1","game_id":"g1","seq":4,"replaces_through_seq":3,"state":{"mode":"play","seat":0,"view":"seat","players":[{"seat":0,"name":"A"},{"seat":1,"name":"B"},{"seat":2,"name":"C"},{"seat":3,"name":"D"}],"scores":[25000,25000,25000,25000],"kyoku":null,"pending_requests":[]}},
+    "negative":{"kind":"join","version":"1.0-draft.5","mode":"play","view":"seat","profile":"riichi-4p","profile_revision":"1.0-draft.3","profile_hash":"sha256:140a9b6d4d962799bb2bf2bc5dcdc2fa9ee88cc64374c930d0c3fe84ea749fb8","client":{"name":"A","version":"1"},"capabilities":{"required":[],"optional":["resume"]},"receive_limits":{"max_message_bytes":1048576,"max_json_depth":64,"max_unresolved_requests":4},"resume":{"token":"abcdefghijklmnopqrstuv","last_seq":0}},
+    "negative_context":{"resume_available":false},
+    "negative_expect":"resume_unavailable"
+  },
+  "V12_visibility_auth_log": {
+    "positive":{"kind":"snapshot","yamai":"1.0-draft.5","session_id":"s1","game_id":"g1","seq":2,"replaces_through_seq":1,"state":{"mode":"spectate","seat":null,"view":"public","players":[{"seat":0,"name":"A"},{"seat":1,"name":"B"},{"seat":2,"name":"C"},{"seat":3,"name":"D"}],"scores":[25000,25000,25000,25000],"kyoku":null}},
+    "negative":{"kind":"snapshot","yamai":"1.0-draft.5","session_id":"s1","game_id":"g1","seq":2,"replaces_through_seq":1,"state":{"mode":"spectate","seat":null,"view":"public","players":[{"seat":0,"name":"A"},{"seat":1,"name":"B"},{"seat":2,"name":"C"},{"seat":3,"name":"D"}],"scores":[25000,25000,25000,25000],"kyoku":null,"pending_requests":[]}},
+    "negative_expect":"invalid_message"
+  },
+  "V13_event_order": {
+    "positive":{"trace":{"trace_type":"event_order","events":[{"type":"kakan_declared"},{"type":"kakan"},{"type":"dora"},{"type":"tsumo"},{"type":"request"},{"type":"ack"},{"type":"dahai"}]}},
+    "negative":{"trace":{"trace_type":"event_order","events":[{"type":"kakan_declared"},{"type":"dahai"},{"type":"dora"}]}},
+    "negative_expect":"invalid_message"
+  },
+  "V14_scoring_integrity": {
+    "positive":{"kind":"event","yamai":"1.0-draft.5","session_id":"s1","game_id":"g1","seq":6,"event":{"type":"end_kyoku","result":{"type":"hora","wins":[{"actor":0,"target":2,"pai":"7s","fu":30,"han":2,"yakus":[{"id":"tanyao","value":1,"unit":"han"}],"bonuses":[{"id":"dora","han":1}],"ura_dora_markers":[],"pao":[],"hand_points":2000,"deltas":[2000,0,-2000,0]}]},"deltas":[2000,0,-2000,0],"scores":[27000,25000,23000,25000],"next":{"type":"rotate","honba":0,"oya":1,"kyotaku":0,"extension_round":0}}},
+    "negative":{"kind":"event","yamai":"1.0-draft.5","session_id":"s1","game_id":"g1","seq":6,"event":{"type":"end_kyoku","result":{"type":"hora","wins":[{"actor":0,"target":2,"pai":"7s","fu":30,"han":1,"yakus":[{"id":"tanyao","value":1,"unit":"han"}],"bonuses":[{"id":"dora","han":1}],"ura_dora_markers":[],"pao":[],"hand_points":2000,"deltas":[2000,0,-2000,0]}]},"deltas":[2000,0,-2000,0],"scores":[27000,25000,23000,25000],"next":{"type":"rotate","honba":0,"oya":1,"kyotaku":0,"extension_round":0}}},
+    "negative_expect":"invalid_message"
+  },
+  "V15_replay_original_seq": {
+    "positive":{"trace":{"trace_type":"replay","events":[{"kind":"event","seq":1,"original_seq":42,"event":{"type":"dahai","actor":0,"pai":"9s","tsumogiri":true}},{"kind":"event","seq":2,"original_seq":43,"event":{"type":"dora","dora_marker":"2p"}}]}},
+    "negative":{"trace":{"trace_type":"replay","events":[{"kind":"event","seq":1,"event":{"type":"dahai","actor":0,"pai":"9s","tsumogiri":true}}]}},
+    "negative_expect":"invalid_message"
+  },
+  "V16_welcome_resume": {
+    "positive":{"trace":{"trace_type":"welcome","resumed":true,"replay_from_seq":121,"resume":{"token":"abcdefghijklmnopqrstuv","expires_in_ms":600000}}},
+    "negative":{"kind":"welcome","yamai":"1.0-draft.5","session_id":"s1","game_id":"g1","resumed":true,"seat":0,"mode":"play","view":"seat","profile":"riichi-4p","profile_revision":"1.0-draft.3","profile_hash":"sha256:140a9b6d4d962799bb2bf2bc5dcdc2fa9ee88cc64374c930d0c3fe84ea749fb8","players":[{"seat":0,"name":"A"},{"seat":1,"name":"B"},{"seat":2,"name":"C"},{"seat":3,"name":"D"}],"scores":[25000,25000,25000,25000],"rules":{"game_length":"tonnan","starting_points":25000,"extension":{"mode":"sudden_death","target_points":30000,"max_extra_rounds":4},"ranking_policy":"initial_seat_order","red_fives":{"m":1,"p":1,"s":1},"kuitan":true,"ron_policy":"double_only","reaction_priority":"hora_call_chi","multiple_ron_settlement":{"honba":"each_winner","kyotaku":"first_winner"},"bankruptcy":"end_game","bankruptcy_threshold":0,"dealer_continuation":{"win":true,"tenpai_draw":true},"abortive_draw_continuation":true,"agariyame":true,"noten_payment":{"total_points":3000,"unit":100,"remainder":"lowest_seat"},"riichi_stick_value":1000,"honba_ron_value":300,"honba_tsumo_value_per_payer":100,"kiriage_mangan":false,"kazoe_yakuman":"yakuman","double_yakuman":["kokushi_13_wait","suuankou_tanki","junsei_chuuren","daisuushii"],"pao":{"yakus":["daisangen","daisuushii"],"ron":"split","tsumo":"liable_all"},"chombo":{"penalty_points":8000,"distribution":"equal_other_players","remainder":"lowest_seat"},"ankan_chankan":"kokushi_only","kan_dora_timing":{"ankan":"before_rinshan","daiminkan":"after_rinshan_discard","kakan":"after_rinshan_discard"},"invalid_action_policy":"reject","time_control":{"grace_ms":3000,"bank_ms":15000,"bank_scope":"kyoku"},"abortive_draws":["kyushukyuhai","suufon_renda","suucha_riichi","suukan_sanra","sanchaho"],"local_yaku":[]}},
+    "negative_expect":"invalid_message"
+  },
+  "V17_end_game_rankings": {
+    "positive":{"kind":"event","yamai":"1.0-draft.5","session_id":"s1","game_id":"g1","seq":7,"event":{"type":"end_game","scores":[30000,28000,22000,20000],"rankings":[2,1,3,4],"kyotaku":0}},
+    "negative":{"kind":"event","yamai":"1.0-draft.5","session_id":"s1","game_id":"g1","seq":7,"event":{"type":"end_game","scores":[30000,28000,22000,20000],"rankings":[1,1,3,4],"kyotaku":0}},
+    "negative_expect":"invalid_message"
+  },
+  "V18_snapshot_state": {
+    "positive":{"kind":"snapshot","yamai":"1.0-draft.5","session_id":"s1","game_id":"g1","seq":5,"replaces_through_seq":4,"state":{"mode":"play","seat":0,"view":"seat","players":[{"seat":0,"name":"A"},{"seat":1,"name":"B"},{"seat":2,"name":"C"},{"seat":3,"name":"D"}],"scores":[25000,25000,25000,25000],"kyoku":{"bakaze":"E","kyoku":1,"honba":0,"kyotaku":0,"oya":0,"extension_round":0,"hands":[{"tiles":["1m","2m","3m","4m","5m","6m","7p","8p","9p","2s","3s","4s"]},{"count":13},{"count":13},{"count":13}],"rivers":[[],[],[],[]],"melds":[[],[],[],[]],"dora_markers":["2p"],"wall_remaining":69,"turn":{"actor":0,"phase":"awaiting_action","last_event_seq":3,"last_event":{"type":"tsumo","actor":0,"pai":"9s"}},"reach_status":[{"state":"none","double":false,"ippatsu":false},{"state":"none","double":false,"ippatsu":false},{"state":"none","double":false,"ippatsu":false},{"state":"none","double":false,"ippatsu":false}],"first_turn_eligible":[true,true,true,true],"kan_counts":[0,0,0,0],"rinshan":false,"haitei":false,"pending_kan":null,"self_state":{"temporary_furiten":false,"riichi_furiten":false,"kuikae_forbidden":[],"time_bank_ms":15000}},"pending_requests":[{"request_id":"r1","seat":0,"caused_by_seq":3,"timeout_ms":3000,"time_bank_ms":15000,"legal_actions":[{"action_id":"a1","action":{"type":"dahai","actor":0,"pai":"9s","tsumogiri":true}}],"default_action_id":"a1"}]}},
+    "negative":{"kind":"snapshot","yamai":"1.0-draft.5","session_id":"s1","game_id":"g1","seq":5,"replaces_through_seq":4,"state":{"mode":"play","seat":0,"view":"seat","players":[{"seat":0,"name":"A"},{"seat":1,"name":"B"},{"seat":2,"name":"C"},{"seat":3,"name":"D"}],"scores":[25000,25000,25000,25000],"kyoku":{"bakaze":"E","kyoku":1,"honba":0,"kyotaku":0,"oya":0,"extension_round":0,"hands":[{"tiles":["1m","2m","3m","4m","5m","6m","7p","8p","9p","2s","3s","4s"]},{"count":13},{"count":13},{"count":13}],"rivers":[[],[],[],[]],"melds":[[],[],[],[]],"dora_markers":["2p"],"wall_remaining":69,"turn":{"actor":0,"phase":"awaiting_draw","last_event_seq":3,"last_event":{"type":"tsumo","actor":0,"pai":"9s"}},"reach_status":[{"state":"none","double":false,"ippatsu":false},{"state":"none","double":false,"ippatsu":false},{"state":"none","double":false,"ippatsu":false},{"state":"none","double":false,"ippatsu":false}],"first_turn_eligible":[true,true,true,true],"kan_counts":[0,0,0,0],"rinshan":false,"haitei":false,"pending_kan":null,"self_state":{"temporary_furiten":false,"riichi_furiten":false,"kuikae_forbidden":[],"time_bank_ms":15000}},"pending_requests":[{"request_id":"r1","seat":0,"caused_by_seq":3,"timeout_ms":3000,"time_bank_ms":15000,"legal_actions":[{"action_id":"a1","action":{"type":"dahai","actor":0,"pai":"9s","tsumogiri":true}}],"default_action_id":"a1"}]}},
+    "negative_expect":"invalid_message"
+  },
+  "V19_resume_pending_deadline": {
+    "positive":{"trace":{"trace_type":"request_state","requests":[{"request_id":"r1","seat":0,"caused_by_seq":3,"timeout_ms":1000,"time_bank_ms":15000,"legal_actions":[{"action_id":"a1","action":{"type":"dahai","actor":0,"pai":"9s","tsumogiri":true}}],"default_action_id":"a1"}],"snapshot_remaining_ms":500}},
+    "negative":{"trace":{"trace_type":"request_state","requests":[{"request_id":"r1","seat":0,"caused_by_seq":3,"timeout_ms":1000,"time_bank_ms":15000,"legal_actions":[{"action_id":"a1","action":{"type":"dahai","actor":0,"pai":"9s","tsumogiri":true}}],"default_action_id":"a1"}],"snapshot_remaining_ms":1500}},
+    "negative_expect":"invalid_message"
+  },
+  "V20_multi_ron_conservation": {
+    "positive":{"trace":{"initial_scores":[25000,25000,25000,25000],"initial_kyotaku":1,"riichi_stick_value":1000,"events":[{"type":"end_kyoku","deltas":[2000,2000,-4000,0],"scores":[27000,27000,21000,25000],"kyotaku":1}]}},
+    "negative":{"trace":{"initial_scores":[25000,25000,25000,25000],"initial_kyotaku":1,"riichi_stick_value":1000,"events":[{"type":"end_kyoku","deltas":[2000,2000,-4000,0],"scores":[27000,27000,21000,25001],"kyotaku":1}]}},
+    "negative_expect":"invalid_message"
+  },
+  "V21_state_machine": {
+    "positive":{"trace":{"trace_type":"state_machine","initial_state":{"game_started":false,"phase":"idle","wall_remaining":136,"first_turn_eligible":[true,true,true,true],"kan_counts":[0,0,0,0],"pending_kan":false},"events":[{"type":"start_game"},{"type":"start_kyoku"},{"type":"tsumo"},{"type":"dahai","actor":0},{"type":"end_kyoku"},{"type":"end_game"}]}},
+    "negative":{"trace":{"trace_type":"state_machine","initial_state":{"game_started":false,"phase":"idle","wall_remaining":136,"first_turn_eligible":[true,true,true,true],"kan_counts":[0,0,0,0],"pending_kan":false},"events":[{"type":"start_game"},{"type":"end_game"},{"type":"end_kyoku"}]}},
+    "negative_expect":"invalid_message"
+  },
+  "V22_ankan_projection": {
+    "positive":{"kind":"event","yamai":"1.0-draft.5","session_id":"s1","game_id":"g1","seq":8,"event":{"type":"ankan","actor":0,"consumed":[null,null,null,null]}},
+    "negative":{"kind":"event","yamai":"1.0-draft.5","session_id":"s1","game_id":"g1","seq":8,"event":{"type":"dahai","actor":0,"pai":null,"tsumogiri":false}},
+    "negative_expect":"invalid_message"
+  },
+  "V23_scoring_vectors": {
+    "positive":{"trace":{"trace_type":"scoring","scoring_vector_ids":["child_30fu_3han_ron","dealer_40fu_3han_ron","child_30fu_2han_tsumo","multiple_ron_settlement","pao_split_rounding","noten_by_tenpai_count","double_yakuman","red_dora_and_ura_dora"]}},
+    "negative":{"trace":{"trace_type":"scoring","scoring_vector_ids":["child_30fu_3han_ron"]}},
+    "negative_expect":"invalid_message"
+  },
+  "V24_capability_negotiation": {
+    "positive":{"kind":"hello","protocol":"yamai","versions":["1.0-draft.5"],"profiles":[],"capabilities":{"required":[],"optional":["resume","snapshot"]},"receive_limits":{"max_message_bytes":1048576,"max_json_depth":64,"max_unresolved_requests":4}},
+    "negative":{"kind":"hello","protocol":"yamai","versions":["1.0-draft.5"],"profiles":[],"capabilities":{"required":["resume"],"optional":["resume"]},"receive_limits":{"max_message_bytes":1048576,"max_json_depth":64,"max_unresolved_requests":4}},
+    "negative_expect":"invalid_message"
+  },
+  "V25_group_consistency": {
+    "positive":{"kind":"request","yamai":"1.0-draft.5","session_id":"s1","game_id":"g1","seq":9,"request_id":"r1","decision_group_id":"d1","decision_group_members":[{"request_id":"r1","seat":1},{"request_id":"r2","seat":2}],"decision_group_deadline_ms":3000,"decision_group_close":"all_resolved_or_deadline","seat":1,"caused_by_seq":8,"timeout_ms":1000,"time_bank_ms":1000,"legal_actions":[{"action_id":"c","action":{"type":"chi","actor":1,"target":3,"pai":"3m","consumed":["1m","2m"],"dahai":{"type":"dahai","actor":1,"pai":"9p","tsumogiri":false}}},{"action_id":"p","action":{"type":"pon","actor":1,"target":3,"pai":"E","consumed":["E","E"],"dahai":{"type":"dahai","actor":1,"pai":"9p","tsumogiri":false}}},{"action_id":"r","action":{"type":"reach","actor":1,"dahai":{"type":"dahai","actor":1,"pai":"9p","tsumogiri":false}}}],"default_action_id":"c"},
+    "negative_variants":[
+      {"kind":"request","yamai":"1.0-draft.5","session_id":"s1","game_id":"g1","seq":9,"request_id":"r1","seat":1,"caused_by_seq":8,"timeout_ms":1000,"time_bank_ms":1000,"legal_actions":[{"action_id":"c","action":{"type":"chi","actor":1,"target":3,"pai":"3m","consumed":["1m","2m","3m"],"dahai":{"type":"dahai","actor":1,"pai":"9p","tsumogiri":false}}}],"default_action_id":"c"},
+      {"kind":"request","yamai":"1.0-draft.5","session_id":"s1","game_id":"g1","seq":9,"request_id":"r1","seat":1,"caused_by_seq":8,"timeout_ms":1000,"time_bank_ms":1000,"legal_actions":[{"action_id":"r","action":{"type":"reach","actor":1,"dahai":{"type":"dahai","actor":2,"pai":"9p","tsumogiri":false}}}],"default_action_id":"r"}
+    ],
+    "negative_expect":"invalid_message"
+  },
+  "V26_penalty_terminal": {
+    "positive":{"kind":"event","yamai":"1.0-draft.5","session_id":"s1","game_id":"g1","seq":10,"event":{"type":"end_kyoku","result":{"type":"penalty","offender":0,"reason":"illegal_action","penalty":{"payments":[{"from":0,"to":1,"points":2700},{"from":0,"to":2,"points":2700},{"from":0,"to":3,"points":2600}]}},"deltas":[-8000,2700,2700,2600],"scores":[17000,27700,27700,27600],"next":{"type":"rotate","honba":1,"oya":1,"kyotaku":0,"extension_round":0}}},
+    "negative":{"kind":"event","yamai":"1.0-draft.5","session_id":"s1","game_id":"g1","seq":10,"event":{"type":"end_kyoku","result":{"type":"penalty","offender":0,"reason":"illegal_action","penalty":{"payments":[{"from":0,"to":1,"points":2700},{"from":0,"to":2,"points":2700},{"from":0,"to":3,"points":2600}]}},"deltas":[-7999,2700,2700,2600],"scores":[17001,27700,27700,27600],"next":{"type":"rotate","honba":1,"oya":1,"kyotaku":0,"extension_round":0}}},
+    "negative_expect":"invalid_message"
+  },
+  "V27_noten_payments": {
+    "positive":{"trace":{"trace_type":"noten","total_points":3000,"cases":[{"tenpai":[false,false,false,false],"deltas":[0,0,0,0]},{"tenpai":[true,false,false,false],"deltas":[3000,-1000,-1000,-1000]},{"tenpai":[true,true,false,false],"deltas":[1500,1500,-1500,-1500]},{"tenpai":[true,true,true,false],"deltas":[1000,1000,1000,-3000]},{"tenpai":[true,true,true,true],"deltas":[0,0,0,0]}]}},
+    "negative":{"trace":{"trace_type":"noten","total_points":3000,"cases":[{"tenpai":[true,true,false,false],"deltas":[3000,-1000,-1000,-1000]}]}},
+    "negative_expect":"invalid_message"
+  },
+  "V28_replay_view": {
+    "positive":{"trace":{"trace_type":"replay","events":[{"kind":"event","seq":1,"original_seq":100,"event":{"type":"dahai","actor":0,"pai":"9s","tsumogiri":true}},{"kind":"event","seq":2,"original_seq":101,"event":{"type":"dahai","actor":1,"pai":"1m","tsumogiri":false}}]}},
+    "negative":{"trace":{"trace_type":"replay","events":[{"kind":"event","seq":1,"original_seq":100},{"kind":"ack","seq":2,"original_seq":101}]}},
+    "negative_expect":"invalid_message"
+  },
+  "V29_deadline_duplicate_request": {
+    "positive":{"trace":{"trace_type":"composite","requests":[{"request_id":"r1","seat":0,"caused_by_seq":1,"timeout_ms":1000,"time_bank_ms":1000,"legal_actions":[{"action_id":"n","action":{"type":"none"}}],"default_action_id":"n"},{"request_id":"r2","seat":1,"caused_by_seq":1,"timeout_ms":1000,"time_bank_ms":1000,"legal_actions":[{"action_id":"n","action":{"type":"none"}}],"default_action_id":"n"}],"ack":{"statuses":["rejected","defaulted"],"request_open":true}}},
+    "positive_messages":[{"kind":"ack","yamai":"1.0-draft.5","session_id":"s1","game_id":"g1","seq":10,"request_id":"r1","action_id":"n","status":"accepted","elapsed_ms":10,"time_bank_ms":990},{"kind":"ack","yamai":"1.0-draft.5","session_id":"s1","game_id":"g1","seq":11,"request_id":"r1","action_id":"n","status":"passed","elapsed_ms":20,"time_bank_ms":980},{"kind":"ack","yamai":"1.0-draft.5","session_id":"s1","game_id":"g1","seq":12,"request_id":"r1","action_id":"p","status":"superseded","elapsed_ms":30,"time_bank_ms":970},{"kind":"ack","yamai":"1.0-draft.5","session_id":"s1","game_id":"g1","seq":13,"request_id":"r1","action_id":"n","status":"defaulted","elapsed_ms":1000,"time_bank_ms":0},{"kind":"ack","yamai":"1.0-draft.5","session_id":"s1","game_id":"g1","seq":14,"request_id":"r1","action_id":"n","status":"stale","elapsed_ms":1000,"time_bank_ms":0},{"kind":"ack","yamai":"1.0-draft.5","session_id":"s1","game_id":"g1","seq":15,"request_id":"r1","action_id":"bad","status":"rejected","elapsed_ms":40,"time_bank_ms":960}],
+    "negative_messages":[{"kind":"ack","yamai":"1.0-draft.5","session_id":"s1","game_id":"g1","seq":16,"request_id":"r1","action_id":"n","status":"accepted","time_bank_ms":900}],
+    "negative":{"trace":{"trace_type":"composite","requests":[{"request_id":"r1","seat":0,"caused_by_seq":1,"timeout_ms":1000,"time_bank_ms":1000,"legal_actions":[{"action_id":"n","action":{"type":"none"}}],"default_action_id":"n"},{"request_id":"r2","seat":0,"caused_by_seq":1,"timeout_ms":1000,"time_bank_ms":1000,"legal_actions":[{"action_id":"n","action":{"type":"none"}}],"default_action_id":"n"}],"ack":{"statuses":["rejected"],"request_open":false}}},
+    "negative_expect":"invalid_message"
+  }
+}
