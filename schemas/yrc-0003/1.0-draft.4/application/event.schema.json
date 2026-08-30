@@ -1,0 +1,111 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:yamai:schema:yrc-0003:1.0-draft.4:event",
+  "type": "object",
+  "required": ["yamai", "kind", "session_id", "game_id", "seq", "event"],
+  "properties": {
+    "yamai": {"const": "1.0-draft.4"},
+    "kind": {"const": "event"},
+    "session_id": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.4:common#/$defs/id"},
+    "game_id": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.4:common#/$defs/id"},
+    "seq": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.4:common#/$defs/positiveInteger"},
+    "original_seq": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.4:common#/$defs/positiveInteger"},
+    "event": {
+      "oneOf": [
+        {
+          "type": "object", "required": ["type", "players", "rules", "scores"],
+          "properties": {
+            "type": {"const": "start_game"},
+            "players": {"type": "array", "minItems": 4, "maxItems": 4},
+            "rules": {"$ref": "urn:yamai:schema:yrc-0005:1.0-draft.2:riichi-4p-rules"},
+            "scores": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.4:common#/$defs/scoreArray"}
+          },
+          "additionalProperties": true
+        },
+        {
+          "type": "object", "required": ["type", "bakaze", "kyoku", "honba", "kyotaku", "oya", "extension_round", "dora_marker", "scores", "hands"],
+          "properties": {
+            "type": {"const": "start_kyoku"},
+            "bakaze": {"type": "string", "enum": ["E", "S", "W", "N"]},
+            "kyoku": {"type": "integer", "minimum": 1, "maximum": 4},
+            "honba": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.4:common#/$defs/nonNegativeInteger"},
+            "kyotaku": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.4:common#/$defs/nonNegativeInteger"},
+            "oya": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.4:common#/$defs/seat"},
+            "extension_round": {"type": "integer", "minimum": 0, "maximum": 100},
+            "dora_marker": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.4:common#/$defs/tile"},
+            "scores": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.4:common#/$defs/scoreArray"},
+            "hands": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.4:common#/$defs/hands"}
+          },
+          "additionalProperties": true
+        },
+        {
+          "type": "object", "required": ["type", "actor", "pai"],
+          "properties": {"type": {"const": "tsumo"}, "actor": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.4:common#/$defs/seat"}, "pai": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.4:common#/$defs/tileOrHidden"}},
+          "additionalProperties": true
+        },
+        {
+          "type": "object", "required": ["type", "actor", "pai", "tsumogiri"],
+          "properties": {"type": {"const": "dahai"}, "actor": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.4:common#/$defs/seat"}, "pai": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.4:common#/$defs/tile"}, "tsumogiri": {"type": "boolean"}},
+          "additionalProperties": true
+        },
+        {
+          "type": "object", "required": ["type", "actor", "target", "pai", "consumed"],
+          "properties": {"type": {"const": "chi"}, "actor": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.4:common#/$defs/seat"}, "target": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.4:common#/$defs/seat"}, "pai": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.4:common#/$defs/tile"}, "consumed": {"type": "array", "minItems": 2, "maxItems": 2, "items": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.4:common#/$defs/tile"}}},
+          "additionalProperties": true
+        },
+        {
+          "type": "object", "required": ["type", "actor", "target", "pai", "consumed"],
+          "properties": {"type": {"const": "pon"}, "actor": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.4:common#/$defs/seat"}, "target": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.4:common#/$defs/seat"}, "pai": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.4:common#/$defs/tile"}, "consumed": {"type": "array", "minItems": 2, "maxItems": 2, "items": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.4:common#/$defs/tile"}}},
+          "additionalProperties": true
+        },
+        {
+          "type": "object", "required": ["type", "actor", "target", "pai", "consumed"],
+          "properties": {"type": {"const": "daiminkan"}, "actor": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.4:common#/$defs/seat"}, "target": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.4:common#/$defs/seat"}, "pai": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.4:common#/$defs/tile"}, "consumed": {"type": "array", "minItems": 3, "maxItems": 3, "items": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.4:common#/$defs/tile"}}},
+          "additionalProperties": true
+        },
+        {
+          "type": "object", "required": ["type", "actor", "consumed"],
+          "properties": {"type": {"enum": ["ankan_declared", "ankan"]}, "actor": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.4:common#/$defs/seat"}, "consumed": {"type": "array", "minItems": 4, "maxItems": 4, "items": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.4:common#/$defs/tile"}}},
+          "additionalProperties": true
+        },
+        {
+          "type": "object", "required": ["type", "actor", "pai", "consumed"],
+          "properties": {"type": {"enum": ["kakan_declared", "kakan"]}, "actor": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.4:common#/$defs/seat"}, "pai": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.4:common#/$defs/tile"}, "consumed": {"type": "array", "minItems": 3, "maxItems": 3, "items": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.4:common#/$defs/tile"}}},
+          "additionalProperties": true
+        },
+        {
+          "type": "object", "required": ["type", "dora_marker"],
+          "properties": {"type": {"const": "dora"}, "dora_marker": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.4:common#/$defs/tile"}},
+          "additionalProperties": true
+        },
+        {
+          "type": "object", "required": ["type", "actor"],
+          "properties": {"type": {"const": "reach"}, "actor": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.4:common#/$defs/seat"}},
+          "additionalProperties": true
+        },
+        {
+          "type": "object", "required": ["type", "actor", "deltas", "scores", "kyotaku"],
+          "properties": {"type": {"const": "reach_accepted"}, "actor": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.4:common#/$defs/seat"}, "deltas": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.4:common#/$defs/scoreArray"}, "scores": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.4:common#/$defs/scoreArray"}, "kyotaku": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.4:common#/$defs/nonNegativeInteger"}},
+          "additionalProperties": true
+        },
+        {
+          "type": "object", "required": ["type", "actor", "yaku_id", "liable_seat"],
+          "properties": {"type": {"const": "pao"}, "actor": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.4:common#/$defs/seat"}, "yaku_id": {"type": "string"}, "liable_seat": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.4:common#/$defs/seat"}},
+          "additionalProperties": true
+        },
+        {
+          "type": "object", "required": ["type", "result", "deltas", "scores", "next"],
+          "properties": {"type": {"const": "end_kyoku"}, "result": {"$ref": "urn:yamai:schema:yrc-0005:1.0-draft.2:scoring-result"}, "deltas": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.4:common#/$defs/scoreArray"}, "scores": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.4:common#/$defs/scoreArray"}, "next": {"type": "object", "required": ["type"], "properties": {"type": {"type": "string", "enum": ["renchan", "rotate", "end_game"]}, "honba": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.4:common#/$defs/nonNegativeInteger"}, "oya": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.4:common#/$defs/seat"}, "kyotaku": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.4:common#/$defs/nonNegativeInteger"}, "extension_round": {"type": "integer", "minimum": 0, "maximum": 100}}, "additionalProperties": true}
+          },
+          "additionalProperties": true
+        },
+        {
+          "type": "object", "required": ["type", "scores", "rankings", "kyotaku"],
+          "properties": {"type": {"const": "end_game"}, "scores": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.4:common#/$defs/scoreArray"}, "rankings": {"type": "array", "minItems": 4, "maxItems": 4, "uniqueItems": true, "items": {"type": "integer", "minimum": 1, "maximum": 4}}, "kyotaku": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.4:common#/$defs/nonNegativeInteger"}},
+          "additionalProperties": true
+        }
+      ]
+    }
+  },
+  "additionalProperties": true
+}

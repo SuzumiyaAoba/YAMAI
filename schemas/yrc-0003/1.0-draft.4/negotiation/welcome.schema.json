@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:yamai:schema:yrc-0003:1.0-draft.4:welcome",
+  "type": "object",
+  "required": ["yamai", "kind", "session_id", "game_id", "resumed", "seat", "mode", "view", "profile", "profile_revision", "profile_hash", "players", "scores", "rules"],
+  "properties": {
+    "yamai": {"const": "1.0-draft.4"},
+    "kind": {"const": "welcome"},
+    "session_id": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.4:common#/$defs/id"},
+    "game_id": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.4:common#/$defs/id"},
+    "resumed": {"type": "boolean"},
+    "replay_from_seq": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.4:common#/$defs/positiveInteger"},
+    "resume": {
+      "type": "object",
+      "required": ["token", "expires_in_ms"],
+      "properties": {
+        "token": {"type": "string", "pattern": "^[A-Za-z0-9._~-]{22,256}$"},
+        "expires_in_ms": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.4:common#/$defs/nonNegativeInteger"}
+      },
+      "additionalProperties": false
+    },
+    "seat": {"anyOf": [{"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.4:common#/$defs/seat"}, {"type": "null"}]},
+    "mode": {"type": "string", "enum": ["play", "spectate", "replay"]},
+    "view": {
+      "anyOf": [
+        {"type": "string", "enum": ["seat", "public", "full"]},
+        {"type": "object", "required": ["seat"], "properties": {"seat": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.4:common#/$defs/seat"}}, "additionalProperties": false}
+      ]
+    },
+    "profile": {"const": "riichi-4p"},
+    "profile_revision": {"const": "1.0-draft.2"},
+    "profile_hash": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.4:common#/$defs/profileHash"},
+    "players": {
+      "type": "array", "minItems": 4, "maxItems": 4,
+      "items": {
+        "type": "object", "required": ["seat", "name"],
+        "properties": {"seat": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.4:common#/$defs/seat"}, "name": {"type": "string", "minLength": 1, "maxLength": 128}},
+        "additionalProperties": true
+      }
+    },
+    "scores": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.4:common#/$defs/scoreArray"},
+    "rules": {"$ref": "urn:yamai:schema:yrc-0005:1.0-draft.2:riichi-4p-rules"}
+  },
+  "additionalProperties": true
+}

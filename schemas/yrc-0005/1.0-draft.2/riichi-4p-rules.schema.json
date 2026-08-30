@@ -1,0 +1,139 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:yamai:schema:yrc-0005:1.0-draft.2:riichi-4p-rules",
+  "title": "YAMAI riichi-4p rules",
+  "type": "object",
+  "required": [
+    "game_length", "starting_points", "extension", "ranking_policy", "red_fives",
+    "kuitan", "ron_policy", "reaction_priority", "multiple_ron_settlement", "bankruptcy",
+    "bankruptcy_threshold", "dealer_continuation", "abortive_draw_continuation", "agariyame",
+    "noten_payment", "riichi_stick_value", "honba_ron_value", "honba_tsumo_value_per_payer",
+    "kiriage_mangan", "kazoe_yakuman", "double_yakuman", "pao", "chombo",
+    "ankan_chankan", "kan_dora_timing", "invalid_action_policy", "time_control",
+    "abortive_draws", "local_yaku"
+  ],
+  "properties": {
+    "game_length": {"type": "string", "enum": ["tonpu", "tonnan"]},
+    "starting_points": {"type": "integer", "minimum": 0, "maximum": 9007199254740900, "multipleOf": 100},
+    "extension": {
+      "type": "object",
+      "required": ["mode", "target_points", "max_extra_rounds"],
+      "properties": {
+        "mode": {"type": "string", "enum": ["none", "sudden_death"]},
+        "target_points": {"type": "integer", "minimum": 0, "maximum": 9007199254740900, "multipleOf": 100},
+        "max_extra_rounds": {"type": "integer", "minimum": 0, "maximum": 100}
+      },
+      "additionalProperties": true
+    },
+    "ranking_policy": {"const": "initial_seat_order"},
+    "red_fives": {
+      "type": "object",
+      "required": ["m", "p", "s"],
+      "properties": {
+        "m": {"type": "integer", "minimum": 0, "maximum": 4},
+        "p": {"type": "integer", "minimum": 0, "maximum": 4},
+        "s": {"type": "integer", "minimum": 0, "maximum": 4}
+      },
+      "additionalProperties": false
+    },
+    "kuitan": {"type": "boolean"},
+    "ron_policy": {"type": "string", "enum": ["multiple", "head_bump", "double_only"]},
+    "reaction_priority": {"const": "hora_call_chi"},
+    "multiple_ron_settlement": {
+      "type": "object",
+      "required": ["honba", "kyotaku"],
+      "properties": {
+        "honba": {"type": "string", "enum": ["each_winner", "first_winner"]},
+        "kyotaku": {"type": "string", "enum": ["first_winner", "equal_split"]}
+      },
+      "additionalProperties": false
+    },
+    "bankruptcy": {"type": "string", "enum": ["continue", "end_game"]},
+    "bankruptcy_threshold": {"type": "integer", "minimum": -9007199254740900, "maximum": 9007199254740900, "multipleOf": 100},
+    "dealer_continuation": {
+      "type": "object",
+      "required": ["win", "tenpai_draw"],
+      "properties": {"win": {"type": "boolean"}, "tenpai_draw": {"type": "boolean"}},
+      "additionalProperties": false
+    },
+    "abortive_draw_continuation": {"type": "boolean"},
+    "agariyame": {"type": "boolean"},
+    "noten_payment": {
+      "type": "object",
+      "required": ["total_points", "unit", "remainder"],
+      "properties": {
+        "total_points": {"type": "integer", "minimum": 0, "maximum": 9007199254740900, "multipleOf": 600},
+        "unit": {"const": 100},
+        "remainder": {"const": "lowest_seat"}
+      },
+      "additionalProperties": false
+    },
+    "riichi_stick_value": {"type": "integer", "minimum": 0, "maximum": 9007199254740900, "multipleOf": 100},
+    "honba_ron_value": {"type": "integer", "minimum": 0, "maximum": 9007199254740900, "multipleOf": 100},
+    "honba_tsumo_value_per_payer": {"type": "integer", "minimum": 0, "maximum": 9007199254740900, "multipleOf": 100},
+    "kiriage_mangan": {"type": "boolean"},
+    "kazoe_yakuman": {"type": "string", "enum": ["yakuman", "sanbaiman"]},
+    "double_yakuman": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"type": "string", "enum": ["kokushi_13_wait", "suuankou_tanki", "junsei_chuuren", "daisuushii"]}
+    },
+    "pao": {
+      "type": "object",
+      "required": ["yakus", "ron", "tsumo"],
+      "properties": {
+        "yakus": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string", "enum": ["daisangen", "daisuushii"]}
+        },
+        "ron": {"type": "string", "enum": ["split", "liable_all"]},
+        "tsumo": {"type": "string", "enum": ["normal", "liable_all"]}
+      },
+      "additionalProperties": false
+    },
+    "chombo": {
+      "type": "object",
+      "required": ["penalty_points", "distribution", "remainder"],
+      "properties": {
+        "penalty_points": {"type": "integer", "minimum": 0, "maximum": 9007199254740900, "multipleOf": 100},
+        "distribution": {"const": "equal_other_players"},
+        "remainder": {"const": "lowest_seat"}
+      },
+      "additionalProperties": false
+    },
+    "ankan_chankan": {"type": "string", "enum": ["never", "kokushi_only"]},
+    "kan_dora_timing": {
+      "type": "object",
+      "required": ["ankan", "daiminkan", "kakan"],
+      "properties": {
+        "ankan": {"type": "string", "enum": ["before_rinshan", "after_rinshan_discard"]},
+        "daiminkan": {"type": "string", "enum": ["before_rinshan", "after_rinshan_discard"]},
+        "kakan": {"type": "string", "enum": ["before_rinshan", "after_rinshan_discard"]}
+      },
+      "additionalProperties": false
+    },
+    "invalid_action_policy": {"type": "string", "enum": ["reject", "default", "chombo"]},
+    "time_control": {
+      "type": "object",
+      "required": ["grace_ms", "bank_ms", "bank_scope"],
+      "properties": {
+        "grace_ms": {"type": "integer", "minimum": 0, "maximum": 600000},
+        "bank_ms": {"type": "integer", "minimum": 0, "maximum": 600000},
+        "bank_scope": {"type": "string", "enum": ["kyoku", "game"]}
+      },
+      "additionalProperties": false
+    },
+    "abortive_draws": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"type": "string", "enum": ["kyushukyuhai", "suufon_renda", "suucha_riichi", "suukan_sanra", "sanchaho"]}
+    },
+    "local_yaku": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"type": "string"}
+    }
+  },
+  "additionalProperties": true
+}

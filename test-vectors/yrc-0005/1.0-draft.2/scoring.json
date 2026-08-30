@@ -1,0 +1,14 @@
+{
+  "protocol_version": "1.0-draft.4",
+  "profile_revision": "1.0-draft.2",
+  "vectors": [
+    {"id":"child_30fu_3han_ron","dealer":false,"tsumo":false,"fu":30,"han":3,"basic_points":960,"hand_points":3900},
+    {"id":"dealer_40fu_3han_ron","dealer":true,"tsumo":false,"fu":40,"han":3,"basic_points":1280,"hand_points":7700},
+    {"id":"child_30fu_2han_tsumo","dealer":false,"tsumo":true,"fu":30,"han":2,"basic_points":480,"hand_points":2000},
+    {"id":"multiple_ron_settlement","honba":"each_winner","kyotaku":"first_winner","conserves_points":true},
+    {"id":"pao_split_rounding","ceil_unit":100,"conserves_points":true},
+    {"id":"noten_by_tenpai_count","total_points":3000,"cases":[0,1,2,3,4]},
+    {"id":"double_yakuman","yakuman_value":2,"basic_points":16000},
+    {"id":"red_dora_and_ura_dora","bonus_ids":["dora","uradora","akadora"]}
+  ]
+}

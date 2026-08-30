@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:yamai:schema:yrc-0003:1.0-draft.4:error",
+  "type": "object",
+  "required": ["kind", "code", "severity", "message"],
+  "properties": {
+    "yamai": {"const": "1.0-draft.4"},
+    "kind": {"const": "error"},
+    "session_id": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.4:common#/$defs/id"},
+    "game_id": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.4:common#/$defs/id"},
+    "seq": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.4:common#/$defs/positiveInteger"},
+    "code": {"type": "string", "pattern": "^[a-z][a-z0-9_]{1,63}$"},
+    "severity": {"type": "string", "enum": ["recoverable", "fatal"]},
+    "message": {"type": "string", "minLength": 1, "maxLength": 4096},
+    "caused_by_seq": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.4:common#/$defs/positiveInteger"},
+    "request_id": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.4:common#/$defs/id"},
+    "expected_seq": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.4:common#/$defs/positiveInteger"},
+    "received_seq": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.4:common#/$defs/positiveInteger"},
+    "action_id": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.4:common#/$defs/id"},
+    "original_status": {"type": "string", "enum": ["accepted", "passed", "superseded", "defaulted", "stale", "rejected"]}
+  },
+  "additionalProperties": true
+}

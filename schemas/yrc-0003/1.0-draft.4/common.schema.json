@@ -1,0 +1,183 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:yamai:schema:yrc-0003:1.0-draft.4:common",
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._:-]{1,64}$"
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+(?:-draft\\.[0-9]+)?$",
+      "maxLength": 32
+    },
+    "profileName": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{0,31}$"
+    },
+    "profileHash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "seat": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 3
+    },
+    "safeInteger": {
+      "type": "integer",
+      "minimum": -9007199254740991,
+      "maximum": 9007199254740991
+    },
+    "nonNegativeInteger": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "positiveInteger": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "tile": {
+      "type": "string",
+      "enum": [
+        "1m", "2m", "3m", "4m", "5m", "5mr", "6m", "7m", "8m", "9m",
+        "1p", "2p", "3p", "4p", "5p", "5pr", "6p", "7p", "8p", "9p",
+        "1s", "2s", "3s", "4s", "5s", "5sr", "6s", "7s", "8s", "9s",
+        "E", "S", "W", "N", "P", "F", "C"
+      ]
+    },
+    "tileOrHidden": {
+      "anyOf": [
+        {"$ref": "#/$defs/tile"},
+        {"type": "null"}
+      ]
+    },
+    "seatArray": {
+      "type": "array",
+      "minItems": 4,
+      "maxItems": 4,
+      "items": {"$ref": "#/$defs/seat"}
+    },
+    "intSeatArray": {
+      "type": "array",
+      "minItems": 4,
+      "maxItems": 4,
+      "items": {"$ref": "#/$defs/safeInteger"}
+    },
+    "scoreArray": {
+      "type": "array",
+      "minItems": 4,
+      "maxItems": 4,
+      "items": {"$ref": "#/$defs/safeInteger"}
+    },
+    "capabilityName": {
+      "type": "string",
+      "pattern": "^(?:[a-z][a-z0-9_]{0,63}|x-[A-Za-z0-9][A-Za-z0-9_.-]{0,63})$"
+    },
+    "capabilities": {
+      "type": "object",
+      "required": ["required", "optional"],
+      "properties": {
+        "required": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/capabilityName"},
+          "uniqueItems": true,
+          "maxItems": 64
+        },
+        "optional": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/capabilityName"},
+          "uniqueItems": true,
+          "maxItems": 64
+        }
+      },
+      "additionalProperties": false
+    },
+    "receiveLimits": {
+      "type": "object",
+      "required": ["max_message_bytes", "max_json_depth", "max_unresolved_requests"],
+      "properties": {
+        "max_message_bytes": {"type": "integer", "minimum": 65536, "maximum": 1048576},
+        "max_json_depth": {"type": "integer", "minimum": 16, "maximum": 64},
+        "max_unresolved_requests": {"type": "integer", "minimum": 1, "maximum": 4}
+      },
+      "additionalProperties": false
+    },
+    "profileAdvertisement": {
+      "type": "object",
+      "required": ["name", "revisions", "hashes"],
+      "properties": {
+        "name": {"$ref": "#/$defs/profileName"},
+        "revisions": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/version"}
+        },
+        "hashes": {
+          "type": "object",
+          "minProperties": 1,
+          "maxProperties": 16,
+          "additionalProperties": {"$ref": "#/$defs/profileHash"}
+        }
+      },
+      "additionalProperties": false
+    },
+    "client": {
+      "type": "object",
+      "required": ["name", "version"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1, "maxLength": 128},
+        "version": {"type": "string", "minLength": 1, "maxLength": 64}
+      },
+      "additionalProperties": true
+    },
+    "hand": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["tiles"],
+          "properties": {
+            "tiles": {
+              "type": "array",
+              "minItems": 0,
+              "maxItems": 14,
+              "items": {"$ref": "#/$defs/tile"}
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["count"],
+          "properties": {
+            "count": {"$ref": "#/$defs/nonNegativeInteger"}
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "hands": {
+      "type": "array",
+      "minItems": 4,
+      "maxItems": 4,
+      "items": {"$ref": "#/$defs/hand"}
+    },
+    "eventEnvelope": {
+      "type": "object",
+      "required": ["yamai", "kind", "session_id", "game_id", "seq"],
+      "properties": {
+        "yamai": {"const": "1.0-draft.4"},
+        "kind": {"type": "string"},
+        "session_id": {"$ref": "#/$defs/id"},
+        "game_id": {"$ref": "#/$defs/id"},
+        "seq": {"$ref": "#/$defs/positiveInteger"},
+        "original_seq": {"$ref": "#/$defs/positiveInteger"}
+      },
+      "additionalProperties": true
+    }
+  }
+}
