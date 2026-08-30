@@ -3,7 +3,7 @@
   "protocol_version": "1.0-draft.5",
   "profile": "riichi-4p",
   "profile_revision": "1.0-draft.3",
-  "profile_hash": "sha256:f51daf9b497bae12f87c01b3760a720f34dea0438ae15c593793baa28e9a4bf4",
+  "profile_hash": "sha256:811182d20eb1d33304913f3f9a91cfc68d9304a08230affff0ffb4ba21bdf5d5",
   "registry": [
     "registry/yrc-0003/1.0-draft.5/registry.json",
     "registry/yrc-0005/1.0-draft.3/registry.json"
@@ -55,6 +55,12 @@
     {"id": "V31_group_grace_zero", "area": "group-grace-zero", "expect_positive": "valid", "expect_negative": "invalid_message"},
     {"id": "V32_group_grace_variable", "area": "group-grace-variable", "expect_positive": "valid", "expect_negative": "invalid_message"},
     {"id": "V33_group_grace_deadline", "area": "group-grace-deadline", "expect_positive": "valid", "expect_negative": "invalid_message"},
-    {"id": "V34_game_event_before_start", "area": "state-machine-start-order", "expect_positive": "valid", "expect_negative": "invalid_message"}
+    {"id": "V34_game_event_before_start", "area": "state-machine-start-order", "expect_positive": "valid", "expect_negative": "invalid_message"},
+    {"id": "V35_session_stateful", "area": "session-stateful-lifecycle", "expect_positive": "valid", "expect_negative": "invalid_message"},
+    {"id": "V36_session_group_linearization", "area": "session-concurrent-group", "expect_positive": "valid", "expect_negative": "invalid_message"},
+    {"id": "V37_session_timeout_order", "area": "session-timeout-order", "expect_positive": "valid", "expect_negative": "invalid_message"},
+    {"id": "V38_session_snapshot_replace", "area": "session-snapshot-replacement", "expect_positive": "valid", "expect_negative": "invalid_message"},
+    {"id": "V39_session_visibility_projection", "area": "session-visibility-projection", "expect_positive": "valid", "expect_negative": "invalid_message"},
+    {"id": "V40_session_replay_target_game", "area": "session-replay-target-game", "expect_positive": "valid", "expect_negative": "invalid_message"}
   ]
 }

@@ -56,7 +56,8 @@
     {
       "if": {"properties": {"mode": {"const": "spectate"}}},
       "then": {
-        "properties": {"seat": {"type": "null"}, "view": {"const": "public"}}
+        "properties": {"seat": {"type": "null"}, "view": {"const": "public"}},
+        "not": {"required": ["resume"]}
       }
     },
     {
@@ -70,7 +71,8 @@
               {"type": "object", "required": ["seat"], "properties": {"seat": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.5:common#/$defs/seat"}}, "additionalProperties": false, "patternProperties": {"^x_[A-Za-z0-9][A-Za-z0-9_]{0,63}$": {}}}
             ]
           }
-        }
+        },
+        "not": {"required": ["resume"]}
       }
     },
     {

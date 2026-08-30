@@ -22,7 +22,7 @@
       "items": {"type": "string"}
     },
     "cases": {
-      "type": "array", "minItems": 34, "maxItems": 34,
+      "type": "array", "minItems": 40, "maxItems": 40,
       "items": {
         "type": "object", "required": ["id", "area", "expect_positive", "expect_negative"],
         "properties": {"id": {"type": "string"}, "area": {"type": "string"}, "expect_positive": {"type": "string"}, "expect_negative": {"type": "string"}, "negative_profile_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}},

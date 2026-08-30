@@ -15,10 +15,13 @@
 3. YRC 0003 の message Schema とその `$ref` 閉包、および YRC 0005 の rules/result Schema は、JSON の型、必須 member、列挙値および構造を機械的に検査する規範成果物である。release manifest が対象ファイルを列挙する。
 4. registry は、profile、capability、message kind、event/action、error、rule、result reason および yaku/bonus の識別子と許可値を確定する。
 5. 公式 test vector は、Schemaだけでは表現しにくい相互作用、境界条件、状態遷移、秘匿、再送、精算および資源制限の期待結果を確定する。
+6. Stateful trace Schemaとsemantic validatorは、sessionを通した前後条件、`seq` ledger、request/group、timeout、snapshot置換およびvisibility射影を実行検査する。
+7. YRC 0005 scoring oracleは、fixtureの期待値を入力として使用せず、手牌・rule・eventから役、符、点数、支払いおよびdeltaを再計算する。
+8. Canonical Protocol Core Quintモデルと`refinement_mapping`は、明記された有限境界内で正準状態・並行request・clock・ledger・resumeの安全性を検査する。有限モデル検査を無制限状態または実装コードの完全証明とみなしてはならない。
 
 YRC 0001、YRC 0002 および YRC 0004 は Informational 文書であり、既存 MJAI の背景・欠陥・実装差を説明する。これらの記述は YAMAI 適合要件の代替にならない。
 
-JSON Schema の検証だけでは、重複 JSON key、frame境界、`seq` の連続性、状態遷移、request の冪等性、visibility、点数保存則および timing の全てを保証できない。`scripts/validate_artifacts.py` は成果物の整合性と公式 vector の最小検査を行うが、スクリプトが成功したことだけで YRC 0003 第17節の完全適合を表明してはならない。適合表明には、本文、Schema、registry、公式 vector および必要な独立相互運用試験を併せて確認する。
+JSON Schema の検証だけでは、重複 JSON key、frame境界、`seq` の連続性、状態遷移、request の冪等性、visibility、点数保存則および timing の全てを保証できない。`scripts/validate_artifacts.py`、`scripts/score_oracle.py`およびQuintモデルは、それぞれ異なる検証層を担当するが、いずれか一つの成功だけで YRC 0003 第17節の完全適合を表明してはならない。適合表明には、本文、Schema、registry、公式 vector、stateful trace、scoring oracle、形式モデルおよび必要な独立相互運用試験を併せて確認する。
 
 ## 3. Protocol Version と profile hash の責務
 
@@ -31,14 +34,14 @@ JSON Schema の検証だけでは、重複 JSON key、frame境界、`seq` の連
 - YRC 0005 の scoring-vectors Schema
 - profile hash 自身を除いた YRC 0003 registry
 - YRC 0005 registry
-- YRC 0003 official vectors（vector 内の `profile_hash` はゼロ値へ正規化）
+- YRC 0003 official vectors（vector 内の `profile_hash`、`hello.profiles[].hashes` の各値、および`wire`文字列内の対応するhash literalはゼロ値へ正規化）
 - YRC 0005 scoring vectors
 
 Protocol message Schema、release manifest および規範本文は `profile_hash` の入力ではない。前者は Protocol Version、後二者は release ID と同一 Git tag によって固定する。この責務境界を理由に、Protocol Version、profile revision、profile hash および release ID/tag を別の値として管理する。
 
 ## 4. Release ID、tag および互換性
 
-各公開単位は root の [`release-manifest.json`](../release-manifest.json) に一意な `release_id` を持つ。manifest に列挙された規範文書、全 Schema、registry、vector、validator および本プロセス文書は、同じ Git commit と同じ release tag から取得できなければならない。別の tag の成果物を混在させてはならない。
+各公開単位は root の [`release-manifest.json`](../release-manifest.json) に一意な `release_id` を持つ。manifest に列挙された規範文書、全 Schema、registry、vector、validator、scoring oracle、canonical形式モデルおよび本プロセス文書は、同じ Git commit と同じ release tag から取得できなければならない。別の tag の成果物を混在させてはならない。
 
 互換性は次の順に判定する。
 

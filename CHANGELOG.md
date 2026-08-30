@@ -6,9 +6,16 @@
 
 ### Changed
 
+- YRC 0003 に、全 message の正準状態（Protocol Core）、原子的な `Apply` 契約、前後条件および検証層ごとの一意な error 選択規則を追加。
+- host の wire ledger（seq、wire bytes、transaction）を正準化し、範囲 replay、resume、snapshot の `replaces_through_seq` と状態置換を byte-for-byte の規則として明文化。
+- decision group の request 発行順、group/個別 deadline、単調時計の同値境界、lock 内 linearization、ACK と採用 event の原子 transaction を明文化。
+- `play` の任意 seat 要求・最小空席割当と `welcome.seat` の関係、replay の game/recording target、reach 宣言取消しおよび延長局の通し番号・上限を修正。
+- mode/view ごとの完全な visibility 射影を定義し、snapshot、`last_event`、pending request、self state および秘匿牌へ同じ投影を再帰適用する規則を追加。
+- session全体を検査するstateful trace Schemaと正負vectorを追加し、join/welcome、seq ledger、request/ACK終端、group、timeout、snapshotおよびvisibilityをsemantic validatorで検査。
+- 入力から役・符・点数・支払いを再計算する独立scoring oracleと、最大4件の並行request、単調時計、immutable ledger、resume/snapshotおよびrefinement mappingを持つCanonical Protocol Core Quintモデルを追加。
 - YRC 0003 の Protocol Version を `1.0-draft.5`、`riichi-4p` profile の revision を `1.0-draft.3` へ更新。
 - YRC 0003/YRC 0005 の規範本文、Schema、registry および test vector に非互換修正があるため、旧 draft と混在しないよう Protocol Version/profile revision を bump。
-- 現行成果物に基づき、`riichi-4p` の profile hash を `sha256:f51daf9b497bae12f87c01b3760a720f34dea0438ae15c593793baa28e9a4bf4` へ更新。
+- 現行成果物に基づき、`riichi-4p` の profile hash を `sha256:811182d20eb1d33304913f3f9a91cfc68d9304a08230affff0ffb4ba21bdf5d5` へ更新。
 - Schema、registry、vector の参照先を `1.0-draft.5` / `1.0-draft.3` のディレクトリへ移行。
 - YRC 0003 の規範本文を、JSON Lines の frame 境界、mode 別の resume、`start_game`/`end_game` の順序、decision group の `group_start` と deadline、未解決 request の terminal 化、再接続時の時計進行および liveness の前提に合わせて明確化。
 - YRC 0005 の規範本文を、meld の `open`、本場・供託を含む精算入力、切り上げ満貫・数え役満境界、親ツモ、責任払いおよびチョンボ精算に合わせて明確化。

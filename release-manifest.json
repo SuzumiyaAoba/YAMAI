@@ -15,7 +15,7 @@
       "name": "riichi-4p",
       "revision": "1.0-draft.3",
       "document": "docs/riichi-4p-rules.md",
-      "profile_hash": "sha256:f51daf9b497bae12f87c01b3760a720f34dea0438ae15c593793baa28e9a4bf4"
+      "profile_hash": "sha256:811182d20eb1d33304913f3f9a91cfc68d9304a08230affff0ffb4ba21bdf5d5"
     }
   ],
   "normative_documents": [
@@ -43,6 +43,7 @@
     "schemas/yrc-0003/1.0-draft.5/player-message.schema.json",
     "schemas/yrc-0003/1.0-draft.5/profile/riichi-4p.schema.json",
     "schemas/yrc-0003/1.0-draft.5/profile/snapshot-state.schema.json",
+    "schemas/yrc-0003/1.0-draft.5/stateful-trace.schema.json",
     "schemas/yrc-0003/1.0-draft.5/vector-manifest.schema.json",
     "schemas/yrc-0005/1.0-draft.3/riichi-4p-rules.schema.json",
     "schemas/yrc-0005/1.0-draft.3/scoring-result.schema.json",
@@ -60,7 +61,17 @@
   "validator": {
     "path": "scripts/validate_artifacts.py",
     "command": "rtk python3 scripts/validate_artifacts.py",
+    "scoring_oracle": {
+      "path": "scripts/score_oracle.py",
+      "command": "rtk python3 scripts/score_oracle.py"
+    },
     "full_conformance": false
+  },
+  "formal_verification": {
+    "canonical_model": "verification/quint/yamai_protocol_core.qnt",
+    "bounded_model": "verification/quint/yamai_protocol_core_bounded.qnt",
+    "refinement_mapping": "yamai_protocol_core::refinement_mapping",
+    "scope": "bounded"
   },
   "profile_hash_scope": {
     "canonicalization": "RFC8785-JCS",
@@ -75,7 +86,7 @@
     ],
     "normalization": {
       "yrc0003_registry": "remove profiles[].hash",
-      "official_vectors": "replace every profile_hash value with sha256: followed by 64 zeroes"
+      "official_vectors": "replace every profile_hash value, every hello.profiles[].hashes value, and each corresponding hash literal in wire strings with sha256: followed by 64 zeroes"
     },
     "protocol_version_pins": [
       "schemas/yrc-0003/1.0-draft.5/message.schema.json"

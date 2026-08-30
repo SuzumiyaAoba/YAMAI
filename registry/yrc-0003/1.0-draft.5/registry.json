@@ -10,7 +10,7 @@
       "revision": "1.0-draft.3",
       "schema": "urn:yamai:schema:yrc-0003:1.0-draft.5:riichi-4p",
       "rules_schema": "urn:yamai:schema:yrc-0005:1.0-draft.3:riichi-4p-rules",
-      "hash": "sha256:f51daf9b497bae12f87c01b3760a720f34dea0438ae15c593793baa28e9a4bf4"
+      "hash": "sha256:811182d20eb1d33304913f3f9a91cfc68d9304a08230affff0ffb4ba21bdf5d5"
     }
   ],
   "capabilities": [
@@ -89,6 +89,7 @@
     "schemas/yrc-0003/1.0-draft.5/application/error.schema.json",
     "schemas/yrc-0003/1.0-draft.5/application/snapshot.schema.json",
     "schemas/yrc-0003/1.0-draft.5/profile/riichi-4p.schema.json",
-    "schemas/yrc-0003/1.0-draft.5/profile/snapshot-state.schema.json"
+    "schemas/yrc-0003/1.0-draft.5/profile/snapshot-state.schema.json",
+    "schemas/yrc-0003/1.0-draft.5/stateful-trace.schema.json"
   ]
 }

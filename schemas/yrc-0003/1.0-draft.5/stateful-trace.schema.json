@@ -1,0 +1,104 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:yamai:schema:yrc-0003:1.0-draft.5:stateful-trace",
+  "$defs": {
+    "message": {
+      "$ref": "urn:yamai:schema:yrc-0003:1.0-draft.5:message"
+    },
+    "messageStep": {
+      "type": "object",
+      "required": ["at_ms", "direction", "client_id", "wire", "message"],
+      "properties": {
+        "at_ms": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.5:common#/$defs/nonNegativeInteger"},
+        "direction": {"type": "string", "enum": ["in", "out"]},
+        "client_id": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.5:common#/$defs/id"},
+        "wire": {"type": "string", "minLength": 1},
+        "arrival_ticket": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.5:common#/$defs/nonNegativeInteger"},
+        "transaction_id": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.5:common#/$defs/id"},
+        "operation_id": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.5:common#/$defs/id"},
+        "group_start": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.5:common#/$defs/nonNegativeInteger"},
+        "individual_deadline": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.5:common#/$defs/nonNegativeInteger"},
+        "prior_time_bank_ms": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.5:common#/$defs/nonNegativeInteger"},
+        "linearization_ticket": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.5:common#/$defs/nonNegativeInteger"},
+        "message": {"$ref": "#/$defs/message"}
+      },
+      "additionalProperties": false,
+      "patternProperties": {"^x_[A-Za-z0-9][A-Za-z0-9_]{0,63}$": {}}
+    },
+    "ledgerEntry": {
+      "type": "object",
+      "required": ["seq", "wire", "transaction_id", "operation_id", "message"],
+      "properties": {
+        "seq": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.5:common#/$defs/positiveInteger"},
+        "wire": {"type": "string", "minLength": 1},
+        "transaction_id": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.5:common#/$defs/id"},
+        "operation_id": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.5:common#/$defs/id"},
+        "message": {"$ref": "#/$defs/message"}
+      },
+      "additionalProperties": false,
+      "patternProperties": {"^x_[A-Za-z0-9][A-Za-z0-9_]{0,63}$": {}}
+    },
+    "client": {
+      "type": "object",
+      "required": ["client_id", "mode", "view"],
+      "properties": {
+        "client_id": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.5:common#/$defs/id"},
+        "mode": {"type": "string", "enum": ["play", "spectate", "replay"]},
+        "view": {
+          "anyOf": [
+            {"type": "string", "enum": ["seat", "public", "full"]},
+            {"type": "object", "required": ["seat"], "properties": {"seat": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.5:common#/$defs/seat"}}, "additionalProperties": false, "patternProperties": {"^x_[A-Za-z0-9][A-Za-z0-9_]{0,63}$": {}}}
+          ]
+        },
+        "seat": {"anyOf": [{"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.5:common#/$defs/seat"}, {"type": "null"}]}
+      },
+      "additionalProperties": false,
+      "patternProperties": {"^x_[A-Za-z0-9][A-Za-z0-9_]{0,63}$": {}}
+    },
+    "projection": {
+      "type": "object",
+      "required": ["mode", "view", "seat", "message"],
+      "properties": {
+        "mode": {"type": "string", "enum": ["play", "spectate", "replay"]},
+        "view": {
+          "anyOf": [
+            {"type": "string", "enum": ["seat", "public", "full"]},
+            {"type": "object", "required": ["seat"], "properties": {"seat": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.5:common#/$defs/seat"}}, "additionalProperties": false, "patternProperties": {"^x_[A-Za-z0-9][A-Za-z0-9_]{0,63}$": {}}}
+          ]
+        },
+        "seat": {"anyOf": [{"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.5:common#/$defs/seat"}, {"type": "null"}]},
+        "message": {"$ref": "#/$defs/message"}
+      },
+      "additionalProperties": false,
+      "patternProperties": {"^x_[A-Za-z0-9][A-Za-z0-9_]{0,63}$": {}}
+    },
+    "visibilityRecord": {
+      "type": "object",
+      "required": ["source", "projections"],
+      "properties": {
+        "source": {"$ref": "#/$defs/message"},
+        "projections": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/projection"}}
+      },
+      "additionalProperties": false,
+      "patternProperties": {"^x_[A-Za-z0-9][A-Za-z0-9_]{0,63}$": {}}
+    }
+  },
+  "type": "object",
+  "required": ["trace_type", "session_id", "game_id", "messages", "ledger"],
+  "properties": {
+    "trace_type": {"const": "session"},
+    "session_id": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.5:common#/$defs/id"},
+    "game_id": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.5:common#/$defs/id"},
+    "ledger_start_seq": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.5:common#/$defs/positiveInteger"},
+    "allow_open_requests": {"type": "boolean"},
+    "clients": {"type": "array", "items": {"$ref": "#/$defs/client"}},
+    "messages": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/messageStep"}},
+    "ledger": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/ledgerEntry"}},
+    "visibility": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/visibilityRecord"}},
+    "profile": {"type": "object"},
+    "rules": {"type": "object"},
+    "welcome": {"type": "object"}
+  },
+  "additionalProperties": false,
+  "patternProperties": {"^x_[A-Za-z0-9][A-Za-z0-9_]{0,63}$": {}}
+}

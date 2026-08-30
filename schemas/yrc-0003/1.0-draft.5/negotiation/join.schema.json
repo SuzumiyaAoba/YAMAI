@@ -7,6 +7,7 @@
     "kind": {"const": "join"},
     "version": {"const": "1.0-draft.5"},
     "mode": {"type": "string", "enum": ["play", "spectate", "replay"]},
+    "seat": {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.5:common#/$defs/seat"},
     "view": {
       "anyOf": [
         {"type": "string", "enum": ["seat", "public", "full"]},
@@ -71,7 +72,7 @@
           "view": {"const": "public"},
           "target": {"type": "object", "required": ["type"], "properties": {"type": {"const": "game"}}}
         },
-        "not": {"required": ["resume"]}
+        "not": {"anyOf": [{"required": ["resume"]}, {"required": ["seat"]}]}
       }
     },
     {
@@ -79,7 +80,7 @@
       "then": {
         "required": ["target"],
         "properties": {
-          "target": {"type": "object", "required": ["type"], "properties": {"type": {"const": "recording"}}},
+          "target": {"type": "object", "required": ["type"], "properties": {"type": {"enum": ["game", "recording"]}}},
           "view": {
             "anyOf": [
               {"type": "string", "enum": ["public", "full"]},
@@ -87,7 +88,14 @@
             ]
           }
         },
-        "not": {"required": ["resume"]}
+        "not": {"anyOf": [{"required": ["resume"]}, {"required": ["seat"]}]}
+      }
+    },
+    {
+      "if": {"required": ["resume"]},
+      "then": {
+        "properties": {"mode": {"const": "play"}},
+        "not": {"required": ["seat"]}
       }
     }
   ],

@@ -2,10 +2,12 @@
 
 このディレクトリは、YAMAI の規範文書にある一部の制御フローを有限状態機械へ抽象化し、Quint/TLC で静的検証するための補助モデルを収録する。いずれも限定的な制御フロー抽象モデルであり、JSON Schema、wire protocol実装、または `riichi-4p` の牌・役・点数エンジンの代替ではない。
 
-## 4モデルの役割
+## 5モデルの役割
 
 | ファイル | 目的 | 主な抽象化 | 接続・探索範囲 |
 |---|---|---|---|
+| [`yamai_protocol_core.qnt`](yamai_protocol_core.qnt) | 規範Protocol Coreのcanonical modelとrefinement mapping | 最大4件のrequest/group map、単調時計、deadline/grace/timebank、immutable seq ledger、delivery/applied、resume/replay/snapshot、全ACK結果 | `MAX_SEQ`、`MAX_CLOCK`等の有限境界。規範状態への対応は`refinement_mapping`で検査 |
+| [`yamai_protocol_core_bounded.qnt`](yamai_protocol_core_bounded.qnt) | canonical modelのCI用決定的refinement trace | 4 request slot、deadline/default/ACK、group linearization、ledger、delivery/applied、replay、snapshot | phase-driven traceを固定seedで最後まで実行 |
 | [`yamai_protocol.qnt`](yamai_protocol.qnt) | 既存の小さな基準モデル | session、host seq、single/group request、per-member action/ACK/default、resume/snapshot、score/kyotaku | 接続切断を含む。1 transactionずつの有限シミュレーション |
 | [`yamai_protocol_extended.qnt`](yamai_protocol_extended.qnt) | 規範要件を広く対応付ける拡張モデル | hello/join/welcome の version/profile/hash/capability、seq fresh/gap/duplicate/conflict/replay、pending resume/snapshot、request group、timeout、end_kyoku/end_game。disconnect/pending中もhost内部のtick・ACK/default・resolveを継続し、未配送結果をbacklog rangeへ保持 | `MAX_SEQ=8` などの有限境界。disconnect/resume の不安定な環境も到達可能 |
 | [`yamai_request_liveness.qnt`](yamai_request_liveness.qnt) | request liveness の完全有限検査 | single/group、全member ACK、timeout/default、期限前 action の後着ACK、atomic resolve | `stable_connection=true` を不変条件とし、1 request/run。接続切断・wire・交渉は除外 |
@@ -47,7 +49,9 @@ request liveness の `group_resolves_under_stable_connection`、`timeout_closes_
 
 ## モデル間の関係と限界
 
-4モデルは同じ規範要件を異なる有限射影で調べる補完的なモデルである。共通する `host_seq`、request lifecycle、resume phase などの名前は対応付けのために揃えているが、モデル間の trace inclusion、simulation relation、refinement mapping、または合成した一つの状態機械に対する形式的な refinement/composition theorem は定義していない。したがって、あるモデルのTLC成功から別モデルや実装の性質を自動的に導出してはならない。
+`yamai_protocol_core.qnt`を正準モデルとし、`refinement_session`、`refinement_requests`、`refinement_wire`、`refinement_resume`を合成した`refinement_mapping`で、有限化した具体状態が規範Protocol Coreの状態制約を満たすことを検査する。append-only ledger、delivery/applied順序、request map、group linearization、clock/deadline、ACK結果は`protocol_invariant`の構成要素である。
+
+既存4モデルは、canonical modelの特定側面をより小さい状態空間で調べる補完モデルである。canonical modelから既存4モデルへの機械的なtrace inclusion/composition theoremは定義していないため、既存モデルのTLC成功だけからcanonical modelや実装の適合性を導出してはならない。また、`refinement_mapping`の成功も下記の有限境界内の主張であり、無制限状態や実装コードへの証明ではない。
 
 特に、複数の同時 request、複数 decision group、group間の優先順位、複数 pending snapshot/replay、複数回の disconnect/resume、wire backlog と request state の全組合せを一つのモデルで網羅していない。今回の検査は、full extended の safety/witness、request liveness の小型モデル、resume/delivery liveness の小型モデルという分割ごとの主張に限定される。
 
@@ -103,6 +107,10 @@ nix develop --command quint --version
 ### parse / typecheck
 
 ```sh
+nix develop --command quint parse verification/quint/yamai_protocol_core.qnt
+nix develop --command quint typecheck verification/quint/yamai_protocol_core.qnt
+nix develop --command quint parse verification/quint/yamai_protocol_core_bounded.qnt
+nix develop --command quint typecheck verification/quint/yamai_protocol_core_bounded.qnt
 nix develop --command quint parse verification/quint/yamai_protocol.qnt
 nix develop --command quint typecheck verification/quint/yamai_protocol.qnt
 nix develop --command quint parse verification/quint/yamai_protocol_extended.qnt
@@ -112,6 +120,21 @@ nix develop --command quint typecheck verification/quint/yamai_request_liveness.
 nix develop --command quint parse verification/quint/yamai_resume_delivery.qnt
 nix develop --command quint typecheck verification/quint/yamai_resume_delivery.qnt
 ```
+
+### canonical Protocol Core のbounded safety/refinement
+
+full canonical modelのTLC完全探索は状態空間が急増するため、CIでは同じ主要状態射影を持つphase-driven bounded modelの決定的traceを最後まで実行する。
+
+```sh
+nix develop --command quint run \
+  --main yamai_protocol_core_bounded \
+  verification/quint/yamai_protocol_core_bounded.qnt --max-steps 24 \
+  --max-samples 1 --seed 0x79616d61695f636f \
+  --invariants protocol_invariant refinement_mapping \
+  --witnesses witness_complete
+```
+
+これはbounded modelの決定的conformance traceであり、状態空間の完全探索、full canonical model、無制限実装の完全証明ではない。リリース証拠にはtrace結果と、full canonical modelで完走・打切りした探索範囲を区別して記録する。
 
 ### extended の safety
 

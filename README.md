@@ -31,11 +31,14 @@ YRC 0001、YRC 0002、YRC 0004は既存プロトコルを記述・分析するIn
 YRC 0003 `1.0-draft.5` と `riichi-4p` profile（YRC 0005 `1.0-draft.3`）は、文書と機械可読成果物を組み合わせて一つの規範セットを構成します。全対象ファイルは [release manifest](release-manifest.json) に列挙されています。
 
 - [YRC 0003 message Schema root](schemas/yrc-0003/1.0-draft.5/message.schema.json)（参照される全Schemaを含む）
+- [YRC 0003 stateful trace Schema](schemas/yrc-0003/1.0-draft.5/stateful-trace.schema.json)（session全体の遷移・再送・timeout・visibilityを検査）
 - [YRC 0005 `riichi-4p` rules Schema](schemas/yrc-0005/1.0-draft.3/riichi-4p-rules.schema.json)
 - [YRC 0005 scoring vectors Schema](schemas/yrc-0005/1.0-draft.3/scoring-vectors.schema.json)
 - [YRC 0003 registry](registry/yrc-0003/1.0-draft.5/registry.json)、[YRC 0005 registry](registry/yrc-0005/1.0-draft.3/registry.json)
 - [YRC 0003 vector manifest](test-vectors/yrc-0003/1.0-draft.5/manifest.json)
 - [YRC 0003 test vector](test-vectors/yrc-0003/1.0-draft.5/vectors.json)、[YRC 0005 scoring test vector](test-vectors/yrc-0005/1.0-draft.3/scoring.json)
+- [実行可能な点数oracle](scripts/score_oracle.py)
+- [Canonical Protocol Core Quintモデル](verification/quint/yamai_protocol_core.qnt)と[CI用bounded refinementモデル](verification/quint/yamai_protocol_core_bounded.qnt)
 
 Protocol Version は message Schema とその `$ref` 閉包を固定し、`profile_revision` と `profile_hash` は profile成果物を識別します。現在の `profile_hash` は RFC 8785 JCS で profile/rules/scoring-vectors Schema、hashを除くregistry、official/scoring vectorを入力とし、Protocol message Schema、manifestおよび規範本文は入力としません。これらはそれぞれ Protocol Version と release ID／同一 Git tag で固定します。
 
@@ -43,7 +46,10 @@ Protocol Version は message Schema とその `$ref` 閉包を固定し、`profi
 
 ```sh
 rtk python3 scripts/validate_artifacts.py
+rtk python3 scripts/score_oracle.py
 ```
+
+Canonical Protocol Coreは、正準状態を最大4件の並行request、単調時計、immutable seq ledger、resume/snapshotまで有限化し、`refinement_mapping`で規範状態との対応条件を検査します。これは有限境界の安全性検査であり、無制限の実装適合証明ではありません。実行方法と境界は[Quint検証README](verification/quint/README.md)を参照してください。
 
 ## 設計原則
 
