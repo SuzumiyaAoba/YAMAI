@@ -5,8 +5,8 @@
 | 文書系列 | YAMAI Request for Comments (YRC) |
 | 文書番号 | YRC 0005 |
 | 表題 | YAMAI Riichi Mahjong Four-Player Scoring Rules |
-| 分類 | Standards Track |
-| 状態 | Draft |
+| 分類 | Derived / Historical |
+| 状態 | Derived（規範本文は YRC 0003 §7.6） |
 | 版 | 1.0-draft.3 |
 | 発行日 | 2026-08-30 |
 | 対応Protocol Version | YRC 0003 `1.0-draft.5` |
@@ -15,13 +15,13 @@
 
 ## Abstract
 
-本書は、YAMAI Protocolの `riichi-4p` profileが使用する標準役ID、役満condition、ドラbonus、符計算および点数計算を規定する。[YRC 0003] はtransport、状態遷移およびrule valueを規定し、本書はそれらの麻雀上の意味を規定する。
+本書は、YAMAI Protocolの `riichi-4p` profileが使用する標準役ID、役満condition、ドラbonus、符計算および点数計算を整理した履歴的・派生文書である。現行の規範定義は YRC 0003 `docs/yamai-protocol.md` §7.6 に閉じて存在し、本書はそれに新しい要求を追加しない。
 
 ## Status of This Memo
 
-本書はYAMAI Projectが管理するStandards Track Draftであり、IETF Internet Standardではない。本書の配布に制限はない。
+本書はYAMAI Projectが管理する履歴的・派生文書であり、IETF Internet StandardでもYAMAIの現行規範文書でもない。本書の配布に制限はない。
 
-本書は [YRC 0003] Protocol Version `1.0-draft.5` と組み合わせて使用する。本書と [YRC 0003] に矛盾がある場合、対局状態とwire処理は [YRC 0003]、役・符・点数は本書を優先する。矛盾は次のdraft revisionで修正しなければならない。
+本書は [YRC 0003] Protocol Version `1.0-draft.5` の §7.6 から生成された派生文書であり、単独で規範性を持たない。本書と [YRC 0003] に矛盾がある場合は常に [YRC 0003] 本文を優先し、矛盾は次の派生成果物更新で修正する。
 
 ## Table of Contents
 

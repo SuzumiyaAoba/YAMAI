@@ -6,6 +6,7 @@
 
 ### Changed
 
+- YRC 0003 本文へ `riichi-4p` の全規範意味論を統合し、文書単体で自己完結する唯一の authority とした。Schema、registry、vector、oracle および Quint は派生成果物と明記し、本文優先、現行意味論不変および固定 profile hash（`sha256:811182d20eb1d33304913f3f9a91cfc68d9304a08230affff0ffb4ba21bdf5d5`）の責務を整理。
 - YRC 0003 に、全 message の正準状態（Protocol Core）、原子的な `Apply` 契約、前後条件および検証層ごとの一意な error 選択規則を追加。
 - host の wire ledger（seq、wire bytes、transaction）を正準化し、範囲 replay、resume、snapshot の `replaces_through_seq` と状態置換を byte-for-byte の規則として明文化。
 - decision group の request 発行順、group/個別 deadline、単調時計の同値境界、lock 内 linearization、ACK と採用 event の原子 transaction を明文化。

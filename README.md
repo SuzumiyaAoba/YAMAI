@@ -20,15 +20,15 @@ MJAI は麻雀 AI と牌譜交換のデファクト標準として広く使わ�
 - [YRC 0004: 代表的 MJAI 実装プロファイル](docs/mjai-implementations.md)
   - Gimite、Mortal、mjai.app、Akagi v3、RiichiLab、mjai-reviewerのwire差を比較します。
 - [YRC 0005: YAMAI `riichi-4p` 役・符・点数規則 (1.0-draft.3)](docs/riichi-4p-rules.md)
-  - 標準役、役満、ドラbonus、符、基本点、支払いを規範化します。
+  - YRC 0003 §7.6 から生成された派生・履歴文書です。標準役、役満、ドラbonus、符、基本点、支払いを整理します。
 
-YRC 0001、YRC 0002、YRC 0004は既存プロトコルを記述・分析するInformational文書です。YRC 0003と、YRC 0003が各profileの規範参照として指定するStandards Track文書（現在の `riichi-4p` ではYRC 0005 `1.0-draft.3`）がYAMAI実装に対する規範要件を定めます。いずれも現在はDraftであり、IETF RFCではありません。
+YRC 0001、YRC 0002、YRC 0004およびYRC 0005は既存プロトコルまたはprofileを記述・整理するInformational／派生・履歴文書です。YRC 0003 `docs/yamai-protocol.md` が、組込み `riichi-4p` profile（§7.6を含む）を含めたYAMAI実装に対する唯一の規範本文です。いずれも現在はDraftであり、IETF RFCではありません。
 
 仕様の権威関係、Protocol Version と profile hash の責務、互換性判定、変更・承認・公開手順は [仕様策定・リリースプロセス](docs/specification-process.md) に定めます。現在の release ID と、同一 Git tag に束ねる対象は [release manifest](release-manifest.json) で固定し、変更理由と互換性影響は [変更履歴](CHANGELOG.md) に記録します。
 
 ## 規範成果物と検証範囲
 
-YRC 0003 `1.0-draft.5` と `riichi-4p` profile（YRC 0005 `1.0-draft.3`）は、文書と機械可読成果物を組み合わせて一つの規範セットを構成します。全対象ファイルは [release manifest](release-manifest.json) に列挙されています。
+YRC 0003 `1.0-draft.5` 本文がProtocolと `riichi-4p` profileを単体で完全に定義します。Schema、registry、test vector、scoring oracle、Quint modelおよびvalidatorは本文から生成・検証される派生成果物であり、本文と競合する場合は本文が優先されます。全対象ファイルは [release manifest](release-manifest.json) に列挙されています。
 
 - [YRC 0003 message Schema root](schemas/yrc-0003/1.0-draft.5/message.schema.json)（参照される全Schemaを含む）
 - [YRC 0003 stateful trace Schema](schemas/yrc-0003/1.0-draft.5/stateful-trace.schema.json)（session全体の遷移・再送・timeout・visibilityを検査）

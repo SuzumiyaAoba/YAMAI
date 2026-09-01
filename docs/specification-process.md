@@ -10,13 +10,13 @@
 
 実装者は、次の順序で成果物の適用範囲を確認する。
 
-1. YRC 0003 は Protocol Version の transport、message envelope、交渉、状態遷移、visibility、error、resume および適合性を規定する。
-2. YRC 0005 は `riichi-4p` profile の役、役満、bonus、符、点数および精算の意味を規定する。YRC 0003 と YRC 0005 の境界は、YRC 0005 の Status of This Memo に従う。
-3. YRC 0003 の message Schema とその `$ref` 閉包、および YRC 0005 の rules/result Schema は、JSON の型、必須 member、列挙値および構造を機械的に検査する規範成果物である。release manifest が対象ファイルを列挙する。
-4. registry は、profile、capability、message kind、event/action、error、rule、result reason および yaku/bonus の識別子と許可値を確定する。
-5. 公式 test vector は、Schemaだけでは表現しにくい相互作用、境界条件、状態遷移、秘匿、再送、精算および資源制限の期待結果を確定する。
+1. YRC 0003（`docs/yamai-protocol.md`）は Protocol Version の transport、message envelope、交渉、状態遷移、visibility、error、resume、適合性および組込み `riichi-4p` profile の全規範を規定する。
+2. `docs/riichi-4p-rules.md` は §7.6 の履歴的・派生文書であり、profile の役、役満、bonus、符、点数および精算について本書へ追加の要求を与えない。
+3. YRC 0003 の message Schema とその `$ref` 閉包、および profile の rules/result Schema は、本文を機械的に検査する派生成果物である。release manifest が対象ファイルを列挙するが、Schemaは本文と競合したとき本文へ従う。
+4. registry は、本文の profile、capability、message kind、event/action、error、rule、result reason および yaku/bonus の識別子と許可値を機械可読化する派生成果物である。
+5. 公式 test vector は、Schemaだけでは表現しにくい相互作用、境界条件、状態遷移、秘匿、再送、精算および資源制限を本文に照合する適合性補助である。
 6. Stateful trace Schemaとsemantic validatorは、sessionを通した前後条件、`seq` ledger、request/group、timeout、snapshot置換およびvisibility射影を実行検査する。
-7. YRC 0005 scoring oracleは、fixtureの期待値を入力として使用せず、手牌・rule・eventから役、符、点数、支払いおよびdeltaを再計算する。
+7. scoring oracleは、fixtureの期待値を入力として使用せず、本書の §7.6 に従って手牌・rule・eventから役、符、点数、支払いおよびdeltaを再計算する。
 8. Canonical Protocol Core Quintモデルと`refinement_mapping`は、明記された有限境界内で正準状態・並行request・clock・ledger・resumeの安全性を検査する。有限モデル検査を無制限状態または実装コードの完全証明とみなしてはならない。
 
 YRC 0001、YRC 0002 および YRC 0004 は Informational 文書であり、既存 MJAI の背景・欠陥・実装差を説明する。これらの記述は YAMAI 適合要件の代替にならない。
@@ -27,17 +27,17 @@ JSON Schema の検証だけでは、重複 JSON key、frame境界、`seq` の連
 
 `yamai`、`hello.versions`、`join.version` および各 message Schema の版は Protocol Version に属する。Protocol Version `1.0-draft.5` は、release manifest に列挙された YRC 0003 の message Schema 閉包を固定する。message Schema の変更は、互換性の有無に応じて draft revision または major version を更新しなければならない。
 
-`profile_revision` と `profile_hash` は `riichi-4p` など profile の同一性を表す。現在の `profile_hash` の計算対象は、YRC 0003 第6.2節および検証スクリプトに従い、次の RFC 8785 JSON Canonicalization Scheme (JCS) projection である。
+`profile_revision` と `profile_hash` は `riichi-4p` など profile の同一性を表す。現在の `profile_hash` の計算対象は、YRC 0003 第6.2節が定義する本文の7個の論理 objectを、RFC 8785 JSON Canonicalization Scheme (JCS) で projection したものである。
 
-- YRC 0003 の profile Schema
-- YRC 0005 の rules Schema
-- YRC 0005 の scoring-vectors Schema
-- profile hash 自身を除いた YRC 0003 registry
-- YRC 0005 registry
-- YRC 0003 official vectors（vector 内の `profile_hash`、`hello.profiles[].hashes` の各値、および`wire`文字列内の対応するhash literalはゼロ値へ正規化）
-- YRC 0005 scoring vectors
+- 本文 §7、§10.4、§12.2 の profile/event/error 制約を機械化した profile Schema
+- 本文 §7.1〜§7.6 の rules を機械化した rules Schema
+- 本文 §7.6 の scoring 入出力を機械化した scoring-vectors Schema
+- profile hash 自身を除いた Protocol registry
+- 本文の profile registry
+- 本文の message/state transition vector（vector 内の `profile_hash`、`hello.profiles[].hashes` の各値、および`wire`文字列内の対応するhash literalはゼロ値へ正規化）
+- 本文 §7.6 の scoring vector
 
-Protocol message Schema、release manifest および規範本文は `profile_hash` の入力ではない。前者は Protocol Version、後二者は release ID と同一 Git tag によって固定する。この責務境界を理由に、Protocol Version、profile revision、profile hash および release ID/tag を別の値として管理する。
+Protocol message Schema、release manifest および本文そのものは別の責務である。前者は Protocol Version、後者は release ID と同一 Git tag によって固定する。この責務境界を理由に、Protocol Version、profile revision、profile hash および release ID/tag を別の値として管理する。派生成果物の内容が本文と異なる場合は本文から再生成する。
 
 ## 4. Release ID、tag および互換性
 

@@ -14,15 +14,15 @@
     {
       "name": "riichi-4p",
       "revision": "1.0-draft.3",
-      "document": "docs/riichi-4p-rules.md",
+      "document": "docs/yamai-protocol.md",
       "profile_hash": "sha256:811182d20eb1d33304913f3f9a91cfc68d9304a08230affff0ffb4ba21bdf5d5"
     }
   ],
   "normative_documents": [
-    "docs/yamai-protocol.md",
-    "docs/riichi-4p-rules.md"
+    "docs/yamai-protocol.md"
   ],
   "informational_documents": [
+    "docs/riichi-4p-rules.md",
     "docs/mjai-protocol.md",
     "docs/mjai-problems.md",
     "docs/mjai-implementations.md"
