@@ -139,19 +139,22 @@ MJAI は `type` 名を Host → Player の状態イベントと Player → Host 
 
 原典の典型的な開始シーケンスを次に示す。
 
-```text
-Host   -> Player: hello
-Player -> Host:   join
-Host   -> Player: start_game
-Player -> Host:   none
-Host   -> Player: start_kyoku
-Player -> Host:   none
-...局内イベント...
-Host   -> Player: end_kyoku
-Player -> Host:   none
-...次局...
-Host   -> Player: end_game
-Player -> Host:   none または切断
+```mermaid
+sequenceDiagram
+  participant H as Host
+  participant P as Player
+  H->>P: hello
+  P->>H: join
+  H->>P: start_game
+  P->>H: none
+  H->>P: start_kyoku
+  P->>H: none
+  Note over H,P: ...局内イベント...
+  H->>P: end_kyoku
+  P->>H: none
+  Note over H,P: ...次局...
+  H->>P: end_game
+  P->>H: none または切断
 ```
 
 原典説明の `hello` は `protocol_version: 1` であるが [GIMITE-MJAI]、Gimite v3 実装は `protocol_version: 3` を送信する [GIMITE-CODE]。各番号が示す機能、互換性および交渉方法は、公開仕様として定義されていない。
@@ -201,14 +204,17 @@ Player -> Host:   none または切断
 
 ### 5.4 リーチ
 
-```text
-Host   -> Player: tsumo
-Player -> Host:   reach
-Host   -> Player: reach
-Player -> Host:   dahai
-Host   -> Player: dahai
-Player -> Host:   none  (他家からのロン・鳴きがない場合)
-Host   -> Player: reach_accepted
+```mermaid
+sequenceDiagram
+  participant H as Host
+  participant P as Player
+  H->>P: tsumo
+  P->>H: reach
+  H->>P: reach
+  P->>H: dahai
+  H->>P: dahai
+  P->>H: none（他家からのロン・鳴きがない場合）
+  H->>P: reach_accepted
 ```
 
 | `type` | フィールド | 説明 |

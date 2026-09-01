@@ -928,47 +928,51 @@ requestのlifecycle recordには、最初に確定した終端決定を一つだ
 
 ### 10.1 打牌と鳴き
 
-```text
-event dahai
-request(s) chi/pon/daiminkan/hora/none
-action(s)
-ack(s)
-event chi|pon|daiminkan と event dahai、または end_kyoku
-event tsumo                         if 全てnone
+```mermaid
+flowchart TD
+  A["event dahai"] --> B["request(s) chi/pon/daiminkan/hora/none"]
+  B --> C["action(s)"]
+  C --> D["ack(s)"]
+  D --> E{"全てnone？"}
+  E -->|はい| F["event tsumo"]
+  E -->|いいえ| G["event chi|pon|daiminkan と event dahai、または end_kyoku"]
 ```
 
 ### 10.2 加槓・暗槓と槍槓
 
-```text
-event kakan_declared
-request(s) hora/none to other seats
-action(s)
-ack(s)
-end_kyoku                     if hora accepted
-event kakan                    otherwise, commit the meld
+```mermaid
+flowchart TD
+  A["event kakan_declared"] --> B["request(s) hora/none to other seats"]
+  B --> C["action(s)"]
+  C --> D["ack(s)"]
+  D --> E{"hora accepted？"}
+  E -->|はい| F["end_kyoku"]
+  E -->|いいえ| G["event kakan（otherwise, commit the meld）"]
 ```
 
 `kakan_declared` を受信したプレイヤーに `hora` が合法なら、ホストは request を発行しなければならない（MUST）。`ankan_chankan` が `kokushi_only` なら、国士無双で和了可能なプレイヤーに限り `ankan_declared` 後の request を発行する。
 
 成立した槓の種別を `K` とし、`T = rules.kan_dora_timing[K]` とする。槍槓 `hora` が受理された場合は `ankan`／`kakan` の成立eventを送信せず、下記の分岐に従う `dora`（必要な場合）に続けて `end_kyoku` を送信する。`T == "before_rinshan"` の場合、ホストは次の順に送信しなければならない（MUST）。
 
-```text
-event ankan|daiminkan|kakan
-event dora
-event tsumo
-request/action/ack for rinshan turn
-end_kyoku                     if rinshan hora accepted
+```mermaid
+flowchart TD
+  A["event ankan|daiminkan|kakan"] --> B["event dora"]
+  B --> C["event tsumo"]
+  C --> D["request/action/ack for rinshan turn"]
+  D --> E{"rinshan hora accepted？"}
+  E -->|はい| F["end_kyoku"]
 ```
 
 `T == "after_rinshan_discard"` の場合、ホストは次の順に送信しなければならない（MUST）。
 
-```text
-event ankan|daiminkan|kakan
-event tsumo
-request/action/ack for rinshan turn
-event dora
-end_kyoku                     if rinshan hora accepted
-event dahai                    otherwise
+```mermaid
+flowchart TD
+  A["event ankan|daiminkan|kakan"] --> B["event tsumo"]
+  B --> C["request/action/ack for rinshan turn"]
+  C --> D["event dora"]
+  D --> E{"rinshan hora accepted？"}
+  E -->|はい| F["end_kyoku"]
+  E -->|いいえ| G["event dahai"]
 ```
 
 後者では、`dora` は選択された嶺上打牌の `dahai` eventより前に公開されるが、打牌actionの選択後である。嶺上和了の場合も `dora` を公開してから `end_kyoku` を送信し、`dahai`およびその反応requestは送信しない（MUST）。通常の嶺上打牌の場合は `dahai` の後に第10.1節の反応groupを開始する。槓種別に異なる `T` を使用できる。
@@ -977,13 +981,17 @@ event dahai                    otherwise
 
 複合 `reach` action を受理したホストは次の event を連続配信しなければならない（MUST）。
 
-```text
-event reach
-event dahai
-request(s) reactions to dahai
-ack(s)
-event reach_accepted  if the round continues and rules accept reach
-event chi|pon|daiminkan と event dahai、または event tsumo
+```mermaid
+flowchart TD
+  A["event reach"] --> B["event dahai"]
+  B --> C["request(s) reactions to dahai"]
+  C --> D["ack(s)"]
+  D --> E{"hora採用？"}
+  E -->|はい| F["end_kyoku"]
+  E -->|いいえ| G{"鳴きなし・局継続・rulesがreachを認める？"}
+  G -->|はい| H["event reach_accepted"]
+  G -->|いいえ| I["event chi|pon|daiminkan と event dahai、または event tsumo"]
+  H --> I
 ```
 
 `reach_accepted` はreaction groupを原子的に解決した後、`hora`、`chi`、`pon` または `daiminkan` が採用されず、かつrulesがreachを認める場合に限り、鳴きeventより先に送信する（MUST）。ロンまたは鳴きが採用された場合は `reach_accepted` を送信せず、`reach` eventは未成立の宣言として局終了時に破棄する。宣言時の供託を暗黙に点数へ反映してはならない。供託を適用する位置はprofileで固定する。`reach_accepted.deltas`、`scores` および `kyotaku` は、その適用と供託本数の増加を検証可能にしなければならない（MUST）。
@@ -1460,25 +1468,36 @@ chinroutou, ryuuiisou, chuuren_poutou, suukantsu, tenhou, chiihou
 
 ## Appendix A. セッション状態機械
 
-```text
-                    hello/join/welcome
-  SESSION_IDLE ------------------------------> SESSION_ACTIVE
-       ^                                             |
-       |          new hello on same transport        | end_game
-       +-------------------------------------- SESSION_ENDED
-                                                     ^
-                                                     |
-                         request group               |
-                  GROUP_OPEN --close--> GROUP_CLOSED
-                       |                         |
-                       +---- atomic resolve ----+
-
-  Any session state -- fatal error --> TRANSPORT_CLOSED
+```mermaid
+stateDiagram-v2
+  state "Session state" as SESSION {
+    [*] --> SESSION_IDLE
+    SESSION_IDLE --> SESSION_ACTIVE: hello/join/welcome
+    SESSION_ACTIVE --> SESSION_ENDED: end_game
+    SESSION_ENDED --> SESSION_IDLE: new hello on same transport
+  }
+  state "Decision-group state" as DECISION_GROUP {
+    [*] --> GROUP_OPEN
+    GROUP_OPEN --> GROUP_CLOSED: close
+    note right of GROUP_CLOSED: 全ack後に優先順位を評価し atomic resolve
+  }
+  SESSION --> TRANSPORT_CLOSED: fatal error
 ```
 
 transport stateとsession stateは独立である。`SESSION_IDLE` では `hello`、`join`、`welcome` および交渉用 `error` だけを送信できる。`SESSION_ACTIVE` では第3節のgame-scoped messageを送信できる。図の `GROUP_OPEN` と `GROUP_CLOSED` は複数応答を待つdecision groupにだけ適用し、単独decisionの未解決requestはgroup stateを作らずrequest単独のlifecycleで管理する。decision groupでは全memberのterminal化または共通deadlineで `GROUP_CLOSED` へ遷移し、GROUP_CLOSEDから全ackを送った後に、優先順位を一度だけ評価して採用eventを原子的に送信する。`end_game` はsessionを `SESSION_ENDED` にするが、transportを閉じる必要はない。ホストは同じtransportで新しい `hello` を送信して次sessionを開始するか、transportを正常終了できる（MAY）。
 
-canonical game phaseは `NOT_STARTED -> READY -> IN_KYOKU -> READY` を通常の局進行として使用し、`READY -> ENDED` は `end_game` commitだけで起きる。`SESSION_ENDED` では当該gameのledgerを凍結し、同一session_id/game_idへapplication messageを追加してはならない。新しいhelloは新しいsession_idを生成するため、過去sessionのseqを再利用しない（MUST）。
+canonical game phaseは次の局進行を使用する。
+
+```mermaid
+stateDiagram-v2
+  [*] --> NOT_STARTED
+  NOT_STARTED --> READY
+  READY --> IN_KYOKU
+  IN_KYOKU --> READY
+  READY --> ENDED: end_game commit
+```
+
+`SESSION_ENDED` では当該gameのledgerを凍結し、同一session_id/game_idへapplication messageを追加してはならない。新しいhelloは新しいsession_idを生成するため、過去sessionのseqを再利用しない（MUST）。
 
 未解決 `request` は session の部分状態である。`end_kyoku` または `end_game` を送信する前に、関連するすべての request を `accepted`、`passed`、`superseded`、`defaulted` または `stale` のいずれかで解決しなければならない（MUST）。`chombo` ではoffender以外を含む全ての未解決requestをterminal化してからpenaltyを確定する。
 
@@ -1486,15 +1505,18 @@ canonical game phaseは `NOT_STARTED -> READY -> IN_KYOKU -> READY` を通常の
 
 次の例は envelope の必須関係だけを示す。`rules` と配牌は説明のため省略しており、実際の message としては不適合である。
 
-```text
-H -> P  hello(versions=[1.0-draft.5], profiles=[{name:riichi-4p, revisions:[1.0-draft.3], hashes:{1.0-draft.3:sha256:...}}], capabilities={required:[],optional:[resume,snapshot]})
-P -> H  join(version=1.0-draft.5, mode=play, view=seat, profile=riichi-4p, profile_revision=1.0-draft.3, profile_hash=sha256:..., capabilities={required:[],optional:[resume,snapshot]})
-H -> P  welcome(seat=0, rules=...)
-H -> P  event(seq=1, start_game)
-H -> P  event(seq=2, start_kyoku)
-H -> P  event(seq=3, tsumo(actor=0,pai=3m))
-H -> P  request(seq=4, request_id=r1, legal_actions=[a0,a1])
-P -> H  action(request_id=r1, action_id=a1)
-H -> P  ack(seq=5, request_id=r1, action_id=a1, status=accepted)
-H -> P  event(seq=6, dahai(actor=0,pai=3m,tsumogiri=true))
+```mermaid
+sequenceDiagram
+  participant H as Host
+  participant P as Player
+  H->>P: hello(versions=[1.0-draft.5], profiles=[{name:riichi-4p, revisions:[1.0-draft.3], hashes:{1.0-draft.3:sha256:...}}], capabilities={required:[],optional:[resume,snapshot]})
+  P->>H: join(version=1.0-draft.5, mode=play, view=seat, profile=riichi-4p, profile_revision=1.0-draft.3, profile_hash=sha256:..., capabilities={required:[],optional:[resume,snapshot]})
+  H->>P: welcome(seat=0, rules=...)
+  H->>P: event(seq=1, start_game)
+  H->>P: event(seq=2, start_kyoku)
+  H->>P: event(seq=3, tsumo(actor=0,pai=3m))
+  H->>P: request(seq=4, request_id=r1, legal_actions=[a0,a1])
+  P->>H: action(request_id=r1, action_id=a1)
+  H->>P: ack(seq=5, request_id=r1, action_id=a1, status=accepted)
+  H->>P: event(seq=6, dahai(actor=0,pai=3m,tsumogiri=true))
 ```
