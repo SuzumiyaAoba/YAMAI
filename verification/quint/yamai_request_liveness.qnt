@@ -1,402 +1,260 @@
-// Exhaustive finite request/group model for liveness under a stable
-// connection.
-//
-// This deliberately removes negotiation, wire delivery, replay, and session
-// teardown from the state space.  `stable_connection` is fixed to true and
-// there is no disconnect action; consequently the temporal claims below are
-// conditional on the environment assumption that the real connection is
-// eventually stable.  The extended model checks the separate disconnect /
-// resume safety obligations.
-
+// Finite scheduler model for YRC 0003 draft.6 sections 8 and 9.
+// One single decision or one complete three-seat reaction group per run.
+// Each peer has its own relative host sequence; wire delivery is a separate model.
 module yamai_request_liveness {
-  type RequestKind = NoKind | SingleKind | GroupKind
-  type RequestState = NoRequest | RequestOpen | RequestAcked
-  type GroupState = NoGroup | GroupOpen | GroupClosed | GroupResolved
-  type AckStatus = AckNone | Accepted | Passed | Defaulted
-  type ActionId = NoAction | PassAction | ReachAction | CallAction | DefaultAction
+  type Phase = Idle | Open | Closed | Decided | Acked | Resolved
+  type Policy = Multiple | HeadBump | DoubleOnly
+  type Choice = NoChoice | Discard | Reach | Pass | Call | Hora
+  type AckStatus = AckNone | Accepted | Passed | Superseded | Defaulted
 
-  pure val SEATS: Set[int] = Set(0, 1, 2, 3)
-  pure val SINGLE_SEAT: int = 0
-  pure val GROUP_SEATS: Set[int] = Set(1, 2)
-  pure val ACTION_IDS: Set[ActionId] = Set(NoAction, PassAction, ReachAction, CallAction, DefaultAction)
+  pure val SEATS = Set(0, 1, 2, 3)
+  pure val GROUP = Set(1, 2, 3)
+  pure val EMPTY_CHOICES = Map(0 -> NoChoice, 1 -> NoChoice, 2 -> NoChoice, 3 -> NoChoice)
+  pure val EMPTY_ACKS = Map(0 -> AckNone, 1 -> AckNone, 2 -> AckNone, 3 -> AckNone)
+  pure val ZERO = Map(0 -> 0, 1 -> 0, 2 -> 0, 3 -> 0)
 
-  // The bounds are intentionally smaller than a real protocol.  A single
-  // request reserves open + ack/default + resolve; a group reserves the
-  // corresponding two-member path.  There is only one request per run, so
-  // both single and group initial branches are exhaustively finite.
-  pure val MAX_SEQ: int = 6
-  pure val MAX_TIMEOUT: int = 2
-  pure val MAX_REQUEST_ID: int = 2
-  pure val SINGLE_RESERVATION: int = 4
-  pure val GROUP_RESERVATION: int = 5
-
-  pure val EMPTY_REQUEST_IDS: int -> int = Map(0 -> 0, 1 -> 0, 2 -> 0, 3 -> 0)
-  pure val EMPTY_ACTIONS: int -> ActionId = Map(0 -> NoAction, 1 -> NoAction, 2 -> NoAction, 3 -> NoAction)
-  pure val EMPTY_ACKS: int -> AckStatus = Map(0 -> AckNone, 1 -> AckNone, 2 -> AckNone, 3 -> AckNone)
-
-  type RequestStateRecord = {
-    request_kind: RequestKind,
-    request_state: RequestState,
-    group_state: GroupState,
+  type State = {
+    phase: Phase,
+    policy: Policy,
+    initial_timeout: int,
     stable_connection: bool,
-    host_seq: int,
-    previous_host_seq: int,
-    applied_seq: int,
-    seq_reservation_end: int,
-    pending_members: Set[int],
-    responded_members: Set[int],
-    terminal_members: Set[int],
-    defaulted_members: Set[int],
-    request_ids: int -> int,
-    submitted_actions: int -> ActionId,
-    ack_statuses: int -> AckStatus,
-    deadline: int,
-    next_request_id: int,
+    members: Set[int],
+    choices: int -> Choice,
+    defaulted: Set[int],
+    chosen: Set[int],
+    acked: Set[int],
+    statuses: int -> AckStatus,
+    remaining: int -> int,
+    original_deadlines: int -> int,
+    elapsed: int,
+    selected_at: int -> int,
+    host_seq: int -> int,
+    previous_host_seq: int -> int,
+    published: Set[int],
+    publish_count: int,
     late_ack_acked: bool,
   }
 
-  var state: RequestStateRecord
+  var state: State
 
-  // ------------------------------------------------------------------------
-  // Safety predicates and reachability witnesses
-  // ------------------------------------------------------------------------
+  val selected = state.members.filter(seat => state.choices.get(seat) != NoChoice)
+  val hora_seats = state.members.filter(seat => state.choices.get(seat) == Hora)
+  val call_seats = state.members.filter(seat => state.choices.get(seat) == Call)
+  pure def nearest(seats: Set[int]): Set[int] =
+    seats.filter(seat => seats.forall(other => seat <= other))
+  val expected_chosen =
+    if (state.members == Set(0)) Set(0)
+    else if (hora_seats.size() > 0)
+      if (state.policy == DoubleOnly and hora_seats.size() == 3) Set()
+      else if (state.policy == HeadBump) nearest(hora_seats)
+      else hora_seats
+    else nearest(call_seats)
 
-  val type_ok: bool = and {
-    state.request_kind.in(Set(NoKind, SingleKind, GroupKind)),
-    state.request_state.in(Set(NoRequest, RequestOpen, RequestAcked)),
-    state.group_state.in(Set(NoGroup, GroupOpen, GroupClosed, GroupResolved)),
+  def expected_ack(seat: int): AckStatus =
+    if (state.defaulted.contains(seat)) Defaulted
+    else if (state.choices.get(seat) == Pass) Passed
+    else if (state.chosen.contains(seat)) Accepted
+    else Superseded
+
+  val type_ok = and {
+    state.phase.in(Set(Idle, Open, Closed, Decided, Acked, Resolved)),
+    state.policy.in(Set(Multiple, HeadBump, DoubleOnly)),
+    state.initial_timeout.in(Set(0, 2)),
     state.stable_connection,
-    state.host_seq.in(0.to(MAX_SEQ)),
-    state.previous_host_seq.in(0.to(MAX_SEQ)),
-    state.applied_seq.in(0.to(MAX_SEQ)),
-    state.applied_seq <= state.host_seq,
-    state.seq_reservation_end.in(0.to(MAX_SEQ)),
-    state.pending_members.subseteq(SEATS),
-    state.responded_members.subseteq(state.pending_members),
-    state.terminal_members.subseteq(state.responded_members),
-    state.defaulted_members.subseteq(state.terminal_members),
-    state.defaulted_members.subseteq(state.pending_members),
-    state.request_ids.keys() == SEATS,
-    state.submitted_actions.keys() == SEATS,
-    state.ack_statuses.keys() == SEATS,
-    state.request_ids.keys().forall(seat => state.request_ids.get(seat).in(0.to(MAX_REQUEST_ID))),
-    state.submitted_actions.keys().forall(seat => state.submitted_actions.get(seat).in(ACTION_IDS)),
-    state.ack_statuses.keys().forall(seat => state.ack_statuses.get(seat).in(Set(AckNone, Accepted, Passed, Defaulted))),
-    state.deadline.in(0.to(MAX_TIMEOUT)),
-    state.next_request_id.in(0.to(MAX_REQUEST_ID)),
+    state.members == Set() or state.members == Set(0) or state.members == GROUP,
+    state.choices.keys() == SEATS,
+    state.statuses.keys() == SEATS,
+    state.remaining.keys() == SEATS,
+    state.original_deadlines.keys() == SEATS,
+    state.selected_at.keys() == SEATS,
+    state.host_seq.keys() == SEATS,
+    state.previous_host_seq.keys() == SEATS,
+    SEATS.forall(seat => state.choices.get(seat).in(Set(NoChoice, Discard, Reach, Pass, Call, Hora))),
+    SEATS.forall(seat => state.statuses.get(seat).in(Set(AckNone, Accepted, Passed, Superseded, Defaulted))),
+    SEATS.forall(seat => state.remaining.get(seat).in(0.to(2))),
+    SEATS.forall(seat => state.original_deadlines.get(seat).in(0.to(2))),
+    SEATS.forall(seat => state.selected_at.get(seat).in(0.to(2))),
+    SEATS.forall(seat => state.host_seq.get(seat).in(0.to(3))),
+    SEATS.forall(seat => state.previous_host_seq.get(seat).in(0.to(3))),
+    state.elapsed.in(0.to(2)),
+    state.publish_count.in(0.to(1)),
+    state.defaulted.subseteq(selected),
+    state.acked.subseteq(selected),
+    state.chosen.subseteq(state.members),
+    state.published.subseteq(state.members),
   }
 
-  val host_seq_non_decreasing: bool = and {
-    state.host_seq >= state.previous_host_seq,
-    state.host_seq <= state.seq_reservation_end,
+  val host_seq_non_decreasing = SEATS.forall(seat =>
+    state.host_seq.get(seat) >= state.previous_host_seq.get(seat))
+
+  val capacity_invariant = SEATS.forall(seat => state.host_seq.get(seat) ==
+    (if (state.members.contains(seat)) 1 else 0)
+    + (if (state.acked.contains(seat)) 1 else 0)
+    + state.publish_count)
+
+  val request_lifecycle_invariant = and {
+    state.phase == Idle implies state.members == Set(),
+    state.phase == Open implies selected != state.members,
+    state.phase.in(Set(Closed, Decided, Acked, Resolved)) implies selected == state.members,
+    state.phase.in(Set(Idle, Open, Closed)) implies state.acked == Set(),
+    state.phase.in(Set(Idle, Open, Closed)) implies state.chosen == Set(),
+    state.phase == Decided implies state.acked != state.members,
+    state.phase.in(Set(Acked, Resolved)) implies state.acked == state.members,
+    state.phase == Resolved implies state.publish_count == 1,
+    state.phase != Resolved implies state.publish_count == 0,
   }
 
-  val capacity_invariant: bool =
-    state.request_state == NoRequest or state.host_seq < state.seq_reservation_end
-
-  val request_lifecycle_invariant: bool = and {
-    state.request_state == RequestOpen implies state.group_state == GroupOpen,
-    state.group_state == GroupOpen implies state.request_state == RequestOpen,
-    state.group_state == GroupClosed implies state.request_state == RequestAcked,
-    state.group_state == GroupResolved implies state.request_state == NoRequest,
-    state.request_state == NoRequest implies state.pending_members == Set(),
-    state.request_state == NoRequest implies state.responded_members == Set(),
-    state.request_state == NoRequest implies state.terminal_members == Set(),
-    state.group_state == GroupClosed implies state.terminal_members == state.pending_members,
-    state.group_state == GroupOpen implies state.pending_members.size() > 0,
+  val request_data_invariant = and {
+    state.phase.in(Set(Decided, Acked, Resolved)) implies state.chosen == expected_chosen,
+    state.acked.forall(seat => state.statuses.get(seat) == expected_ack(seat)),
+    SEATS.exclude(state.acked).forall(seat => state.statuses.get(seat) == AckNone),
+    state.members.exclude(selected).forall(seat => state.choices.get(seat) == NoChoice),
+    selected.exclude(state.defaulted).forall(seat => state.selected_at.get(seat) < state.original_deadlines.get(seat)),
+    state.defaulted.forall(seat => state.selected_at.get(seat) == state.original_deadlines.get(seat)),
+    state.defaulted.forall(seat => state.choices.get(seat) == (if (seat == 0) Discard else Pass)),
+    state.phase == Resolved implies state.published == state.chosen,
   }
 
-  val request_data_invariant: bool = and {
-    state.pending_members.forall(seat => state.request_ids.get(seat) > 0),
-    state.pending_members == GROUP_SEATS implies state.request_ids.get(1) != state.request_ids.get(2),
-    state.pending_members.exclude(state.responded_members).forall(seat => state.submitted_actions.get(seat) == NoAction),
-    state.responded_members.exclude(state.terminal_members).forall(seat =>
-      state.submitted_actions.get(seat).in(Set(PassAction, ReachAction, CallAction))
-    ),
-    state.defaulted_members.forall(seat => state.submitted_actions.get(seat) == DefaultAction),
-    state.terminal_members.forall(seat => state.ack_statuses.get(seat) != AckNone),
-    state.defaulted_members.forall(seat => state.ack_statuses.get(seat) == Defaulted),
-    state.pending_members.exclude(state.terminal_members).forall(seat => state.ack_statuses.get(seat) == AckNone),
-    state.late_ack_acked implies state.defaulted_members.size() > 0,
+  val protocol_invariant = and {
+    type_ok, host_seq_non_decreasing, capacity_invariant,
+    request_lifecycle_invariant, request_data_invariant,
   }
 
-  val protocol_invariant: bool = and {
-    type_ok,
-    host_seq_non_decreasing,
-    capacity_invariant,
-    request_lifecycle_invariant,
-    request_data_invariant,
+  val late_ack_pending = selected.exclude(state.defaulted).exclude(state.acked).exists(seat =>
+    state.elapsed >= state.original_deadlines.get(seat))
+
+  val witness_single_open = state.phase == Open and state.members == Set(0)
+  val witness_group_open = state.phase == Open and state.members == GROUP
+  val witness_group_closed = state.phase == Closed
+  val witness_timeout_boundary = state.phase == Open and state.members.exclude(selected).exists(seat => state.remaining.get(seat) == 0)
+  val witness_defaulted = state.defaulted.size() > 0
+  val witness_late_ack_pending = late_ack_pending
+  val witness_late_ack_acked = state.late_ack_acked
+  val witness_single_resolved = state.phase == Resolved and state.members == Set(0)
+  val witness_group_resolved = state.phase == Resolved and state.members == GROUP
+  val witness_hora_priority = state.phase == Decided and hora_seats.size() > 0 and call_seats.size() > 0
+  val witness_sanchaho = state.phase == Resolved and state.policy == DoubleOnly and hora_seats.size() == 3 and state.published == Set()
+  val witness_zero_deadline = state.phase == Resolved and state.initial_timeout == 0
+
+  action init_with(policy, timeout) = state' = {
+    phase: Idle, policy: policy, initial_timeout: timeout, stable_connection: true,
+    members: Set(), choices: EMPTY_CHOICES, defaulted: Set(), chosen: Set(),
+    acked: Set(), statuses: EMPTY_ACKS, remaining: ZERO, original_deadlines: ZERO,
+    elapsed: 0, selected_at: ZERO, host_seq: ZERO, previous_host_seq: ZERO,
+    published: Set(), publish_count: 0, late_ack_acked: false,
   }
 
-  val late_ack_pending: bool = and {
-    state.defaulted_members.size() > 0,
-    state.responded_members.exclude(state.terminal_members).size() > 0,
+  action init = {
+    nondet policy = Set(Multiple, HeadBump, DoubleOnly).oneOf()
+    nondet timeout = Set(0, 2).oneOf()
+    init_with(policy, timeout)
   }
 
-  // Witnesses are checked separately from invariants so that temporal
-  // antecedents cannot pass merely because their interesting states are
-  // unreachable.
-  val witness_single_open: bool = state.request_kind == SingleKind and state.group_state == GroupOpen
-  val witness_group_open: bool = state.request_kind == GroupKind and state.group_state == GroupOpen
-  val witness_group_closed: bool = state.group_state == GroupClosed
-  val witness_timeout_boundary: bool = state.request_state == RequestOpen and state.deadline == 0
-  val witness_defaulted: bool = state.defaulted_members.size() > 0
-  val witness_late_ack_pending: bool = late_ack_pending
-  val witness_late_ack_acked: bool = state.late_ack_acked
-  val witness_single_resolved: bool = state.request_kind == SingleKind and state.group_state == GroupResolved
-  val witness_group_resolved: bool = state.request_kind == GroupKind and state.group_state == GroupResolved
-
-  // ------------------------------------------------------------------------
-  // Initial state and request transitions
-  // ------------------------------------------------------------------------
-
-  action init = state' = {
-    request_kind: NoKind,
-    request_state: NoRequest,
-    group_state: NoGroup,
-    stable_connection: true,
-    host_seq: 0,
-    previous_host_seq: 0,
-    applied_seq: 0,
-    seq_reservation_end: 0,
-    pending_members: Set(),
-    responded_members: Set(),
-    terminal_members: Set(),
-    defaulted_members: Set(),
-    request_ids: EMPTY_REQUEST_IDS,
-    submitted_actions: EMPTY_ACTIONS,
-    ack_statuses: EMPTY_ACKS,
-    deadline: 0,
-    next_request_id: 0,
-    late_ack_acked: false,
-  }
-
-  action open_single_request = all {
-    state.request_kind == NoKind,
-    state.request_state == NoRequest,
-    state.group_state == NoGroup,
-    state.host_seq + SINGLE_RESERVATION <= MAX_SEQ,
-    state.next_request_id + 1 <= MAX_REQUEST_ID,
-    state' = {
-      request_kind: SingleKind,
-      request_state: RequestOpen,
-      group_state: GroupOpen,
-      host_seq: state.host_seq + 1,
-      previous_host_seq: state.host_seq,
-      applied_seq: state.applied_seq + 1,
-      seq_reservation_end: state.host_seq + SINGLE_RESERVATION,
-      pending_members: Set(SINGLE_SEAT),
-      responded_members: Set(),
-      terminal_members: Set(),
-      defaulted_members: Set(),
-      request_ids: EMPTY_REQUEST_IDS.set(SINGLE_SEAT, state.next_request_id + 1),
-      submitted_actions: EMPTY_ACTIONS,
-      ack_statuses: EMPTY_ACKS,
-      deadline: MAX_TIMEOUT,
-      next_request_id: state.next_request_id + 1,
-      late_ack_acked: false,
-      ...state,
-    },
-  }
-
-  action open_decision_group = all {
-    state.request_kind == NoKind,
-    state.request_state == NoRequest,
-    state.group_state == NoGroup,
-    state.host_seq + GROUP_RESERVATION <= MAX_SEQ,
-    state.next_request_id + 2 <= MAX_REQUEST_ID,
-    state' = {
-      request_kind: GroupKind,
-      request_state: RequestOpen,
-      group_state: GroupOpen,
-      host_seq: state.host_seq + 2,
-      previous_host_seq: state.host_seq,
-      applied_seq: state.applied_seq + 2,
-      seq_reservation_end: state.host_seq + GROUP_RESERVATION,
-      pending_members: GROUP_SEATS,
-      responded_members: Set(),
-      terminal_members: Set(),
-      defaulted_members: Set(),
-      request_ids: EMPTY_REQUEST_IDS.set(1, state.next_request_id + 1).set(2, state.next_request_id + 2),
-      submitted_actions: EMPTY_ACTIONS,
-      ack_statuses: EMPTY_ACKS,
-      deadline: MAX_TIMEOUT,
-      next_request_id: state.next_request_id + 2,
-      late_ack_acked: false,
-      ...state,
-    },
-  }
-
-  action submit_action(seat, action_id) = all {
-    state.request_state == RequestOpen,
-    state.group_state == GroupOpen,
-    state.stable_connection,
-    // deadline == 0 gives timeout/default priority; a new action is barred.
-    state.deadline > 0,
-    state.pending_members.contains(seat),
-    not(state.responded_members.contains(seat)),
-    action_id.in(Set(PassAction, ReachAction, CallAction)),
-    state' = {
-      responded_members: state.responded_members.union(Set(seat)),
-      submitted_actions: state.submitted_actions.set(seat, action_id),
-      previous_host_seq: state.host_seq,
-      ...state,
-    },
-  }
-
-  action submit_single_pass = submit_action(0, PassAction)
-  action submit_single_reach = submit_action(0, ReachAction)
-  action submit_group_one_pass = submit_action(1, PassAction)
-  action submit_group_one_call = submit_action(1, CallAction)
-  action submit_group_two_pass = submit_action(2, PassAction)
-  action submit_group_two_call = submit_action(2, CallAction)
-
-  action ack_member(seat) = all {
-    state.request_state == RequestOpen,
-    state.group_state == GroupOpen,
-    state.stable_connection,
-    state.pending_members.contains(seat),
-    state.responded_members.contains(seat),
-    not(state.terminal_members.contains(seat)),
-    state.host_seq < state.seq_reservation_end,
-    state' = {
-      host_seq: state.host_seq + 1,
-      previous_host_seq: state.host_seq,
-      applied_seq: state.applied_seq + 1,
-      terminal_members: state.terminal_members.union(Set(seat)),
-      ack_statuses: state.ack_statuses.set(seat,
-        if (state.submitted_actions.get(seat) == PassAction) Passed else Accepted
-      ),
-      late_ack_acked: state.late_ack_acked or state.defaulted_members.size() > 0,
-      request_state: if (state.terminal_members.union(Set(seat)) == state.pending_members) RequestAcked else RequestOpen,
-      group_state: if (state.terminal_members.union(Set(seat)) == state.pending_members) GroupClosed else GroupOpen,
-      ...state,
-    },
-  }
-
-  action ack_single = ack_member(0)
-  action ack_group_one = ack_member(1)
-  action ack_group_two = ack_member(2)
-
-  action tick = all {
-    state.request_state == RequestOpen,
-    state.stable_connection,
-    state.deadline > 0,
-    state' = { deadline: state.deadline - 1, previous_host_seq: state.host_seq, ...state },
-  }
-
-  action default_action = {
-    // Only unresponded members are defaulted.  An action received before the
-    // deadline remains in submitted_actions and can still be ACKed later.
-    val missing_members = state.pending_members.exclude(state.responded_members)
-    val next_actions_0 = if (missing_members.contains(0)) state.submitted_actions.set(0, DefaultAction) else state.submitted_actions
-    val next_actions_1 = if (missing_members.contains(1)) next_actions_0.set(1, DefaultAction) else next_actions_0
-    val next_actions_2 = if (missing_members.contains(2)) next_actions_1.set(2, DefaultAction) else next_actions_1
-    val next_actions = if (missing_members.contains(3)) next_actions_2.set(3, DefaultAction) else next_actions_2
-    val next_acks_0 = if (missing_members.contains(0)) state.ack_statuses.set(0, Defaulted) else state.ack_statuses
-    val next_acks_1 = if (missing_members.contains(1)) next_acks_0.set(1, Defaulted) else next_acks_0
-    val next_acks_2 = if (missing_members.contains(2)) next_acks_1.set(2, Defaulted) else next_acks_1
-    val next_acks = if (missing_members.contains(3)) next_acks_2.set(3, Defaulted) else next_acks_2
-    val next_terminal = state.terminal_members.union(missing_members)
+  action open_decision(members) = {
+    val deadlines = ZERO.set(0, state.initial_timeout)
+      .set(1, if (state.initial_timeout == 0) 0 else 1)
+      .set(2, state.initial_timeout).set(3, state.initial_timeout)
     all {
-      state.request_state == RequestOpen,
-      state.group_state == GroupOpen,
-      state.stable_connection,
-      state.deadline == 0,
-      missing_members.size() > 0,
-      state.host_seq + missing_members.size() <= state.seq_reservation_end,
-      state' = {
-        host_seq: state.host_seq + missing_members.size(),
-        previous_host_seq: state.host_seq,
-        applied_seq: state.applied_seq + missing_members.size(),
-        responded_members: state.responded_members.union(missing_members),
-        terminal_members: next_terminal,
-        defaulted_members: state.defaulted_members.union(missing_members),
-        submitted_actions: next_actions,
-        ack_statuses: next_acks,
-        request_state: if (next_terminal == state.pending_members) RequestAcked else RequestOpen,
-        group_state: if (next_terminal == state.pending_members) GroupClosed else GroupOpen,
-        ...state,
-      },
+      state.phase == Idle,
+      state' = { phase: Open, members: members, remaining: deadlines,
+        original_deadlines: deadlines,
+        host_seq: SEATS.mapBy(seat => if (members.contains(seat)) 1 else 0),
+        previous_host_seq: state.host_seq, ...state },
     }
   }
+  action open_single_request = open_decision(Set(0))
+  action open_decision_group = open_decision(GROUP)
 
-  action ack_or_default = any {
-    ack_single,
-    ack_group_one,
-    ack_group_two,
-    default_action,
+  action submit(seat, choice) = all {
+    state.phase == Open, state.members.contains(seat),
+    state.choices.get(seat) == NoChoice, state.remaining.get(seat) > 0,
+    if (seat == 0) choice.in(Set(Discard, Reach, Hora)) else choice.in(Set(Pass, Call, Hora)),
+    state' = {
+      choices: state.choices.set(seat, choice),
+      selected_at: state.selected_at.set(seat, state.elapsed),
+      phase: if (selected.union(Set(seat)) == state.members) Closed else Open,
+      previous_host_seq: state.host_seq, ...state,
+    },
+  }
+  action submit_any = {
+    nondet seat = SEATS.oneOf()
+    nondet choice = Set(Discard, Reach, Pass, Call, Hora).oneOf()
+    submit(seat, choice)
+  }
+
+  action tick = all {
+    state.phase == Open,
+    state.members.exclude(selected).exists(seat => state.remaining.get(seat) > 0),
+    state' = { elapsed: state.elapsed + 1,
+      remaining: SEATS.mapBy(seat => if (state.members.exclude(selected).contains(seat) and state.remaining.get(seat) > 0)
+        state.remaining.get(seat) - 1 else state.remaining.get(seat)),
+      previous_host_seq: state.host_seq, ...state },
+  }
+
+  action default_member(seat) = all {
+    state.phase == Open, state.members.contains(seat),
+    state.choices.get(seat) == NoChoice, state.remaining.get(seat) == 0,
+    state' = { choices: state.choices.set(seat, if (seat == 0) Discard else Pass),
+      selected_at: state.selected_at.set(seat, state.original_deadlines.get(seat)),
+      defaulted: state.defaulted.union(Set(seat)),
+      phase: if (selected.union(Set(seat)) == state.members) Closed else Open,
+      previous_host_seq: state.host_seq, ...state },
+  }
+
+  action decide = all {
+    state.phase == Closed,
+    state' = { phase: Decided, chosen: expected_chosen, previous_host_seq: state.host_seq, ...state },
+  }
+
+  action ack_member(seat) = all {
+    state.phase == Decided, state.members.contains(seat), not(state.acked.contains(seat)),
+    state' = {
+      phase: if (state.acked.union(Set(seat)) == state.members) Acked else Decided,
+      acked: state.acked.union(Set(seat)), statuses: state.statuses.set(seat, expected_ack(seat)),
+      host_seq: state.host_seq.set(seat, state.host_seq.get(seat) + 1),
+      previous_host_seq: state.host_seq,
+      late_ack_acked: state.late_ack_acked or (not(state.defaulted.contains(seat)) and state.elapsed >= state.original_deadlines.get(seat)),
+      ...state,
+    },
   }
 
   action resolve_group = all {
-    state.request_state == RequestAcked,
-    state.group_state == GroupClosed,
-    state.stable_connection,
-    state.terminal_members == state.pending_members,
-    state.host_seq < state.seq_reservation_end,
-    state' = {
-      request_state: NoRequest,
-      group_state: GroupResolved,
-      host_seq: state.host_seq + 1,
-      previous_host_seq: state.host_seq,
-      applied_seq: state.applied_seq + 1,
-      seq_reservation_end: state.host_seq + 1,
-      pending_members: Set(),
-      responded_members: Set(),
-      terminal_members: Set(),
-      defaulted_members: Set(),
-      request_ids: EMPTY_REQUEST_IDS,
-      submitted_actions: EMPTY_ACTIONS,
-      ack_statuses: EMPTY_ACKS,
-      deadline: 0,
-      late_ack_acked: false,
-      ...state,
-    },
+    state.phase == Acked,
+    state' = { phase: Resolved, published: state.chosen, publish_count: state.publish_count + 1,
+      host_seq: SEATS.mapBy(seat => state.host_seq.get(seat) + 1),
+      previous_host_seq: state.host_seq, ...state },
   }
 
-  // Stuttering is disallowed at the final reserved seq while a request is
-  // open, so a finite request cannot park before its ACK/default/resolve path.
-  action stutter = all {
-    state.request_state == NoRequest or state.host_seq + 1 < state.seq_reservation_end,
-    state' = { previous_host_seq: state.host_seq, ...state },
+  action progress = any {
+    default_member(0), default_member(1), default_member(2), default_member(3),
+    decide, ack_member(0), ack_member(1), ack_member(2), ack_member(3), resolve_group,
   }
+  action stutter = state' = {previous_host_seq: state.host_seq, ...state}
+  action step = any {open_single_request, open_decision_group, submit_any, tick, progress, stutter}
 
-  action step = any {
-    open_single_request,
-    open_decision_group,
-    submit_single_pass,
-    submit_single_reach,
-    submit_group_one_pass,
-    submit_group_one_call,
-    submit_group_two_pass,
-    submit_group_two_call,
-    ack_or_default,
-    tick,
-    resolve_group,
-    stutter,
-  }
+  temporal stable_connection_is_preserved = always(state.stable_connection)
+  temporal group_resolves_under_stable_connection =
+    (weakFair(tick, state) and weakFair(progress, state)).implies(
+      always(state.phase != Idle implies eventually(state.phase == Resolved)))
+  temporal timeout_closes_under_stable_connection =
+    (weakFair(tick, state) and weakFair(progress, state)).implies(always(witness_timeout_boundary implies eventually(state.phase != Open)))
+  temporal late_ack_survives_default_under_stable_connection =
+    (weakFair(tick, state) and weakFair(progress, state)).implies(always(late_ack_pending implies eventually(state.late_ack_acked)))
 
-  // ------------------------------------------------------------------------
-  // Temporal properties under the stable-connection assumption
-  // ------------------------------------------------------------------------
-
-  temporal stable_connection_is_preserved: bool = always(state.stable_connection)
-
-  temporal group_resolves_under_stable_connection: bool =
-    weakFair(resolve_group, state).implies(
-      always(state.group_state == GroupClosed implies eventually(state.group_state == GroupResolved))
-    )
-
-  temporal timeout_closes_under_stable_connection: bool =
-    weakFair(ack_or_default, state).implies(
-      always(
-        (state.request_state == RequestOpen and state.deadline == 0)
-          implies eventually(state.group_state == GroupClosed or state.group_state == GroupResolved)
-      )
-    )
-
-  temporal late_ack_survives_default_under_stable_connection: bool =
-    weakFair(ack_or_default, state).implies(
-      always(late_ack_pending implies eventually(state.late_ack_acked))
-    )
+  run sanchahoTest = init_with(DoubleOnly, 2).then(open_decision_group)
+    .then(submit(1, Hora)).then(submit(2, Hora)).then(submit(3, Hora)).then(decide)
+    .then(ack_member(1)).then(ack_member(2)).then(ack_member(3)).then(resolve_group)
+    .then(all {assert(witness_sanchaho), assert(protocol_invariant), state' = state})
+  run selectionBeforeAckTest = init_with(Multiple, 2).then(open_decision_group)
+    .then(submit(1, Call))
+    .then(submit(2, Hora)).then(submit(3, Pass)).then(decide)
+    .then(ack_member(1)).then(all {assert(state.statuses.get(1) == Superseded), assert(protocol_invariant), state' = state})
+  run earlyAckFailsTest = init_with(Multiple, 2).then(open_decision_group)
+    .then(submit(1, Call)).then(ack_member(1).fail())
+  run zeroDeadlineTest = init_with(Multiple, 0).then(open_decision_group)
+    .then(default_member(1)).then(default_member(2)).then(default_member(3)).then(decide)
+    .then(ack_member(1)).then(ack_member(2)).then(ack_member(3)).then(resolve_group)
+    .then(all {assert(witness_zero_deadline), assert(protocol_invariant), state' = state})
+  run zeroDeadlineRejectsActionTest = init_with(Multiple, 0).then(open_decision_group)
+    .then(submit(1, Hora).fail())
 }

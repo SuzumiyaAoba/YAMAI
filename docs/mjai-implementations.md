@@ -265,7 +265,7 @@ mjai-reviewerは対局ホストではなく、天鳳・Mahjong Soul等の牌譜�
 
 ### 9.2 Adapter設計で明示する事項（推奨）
 
-adapterの設計上、相互運用に必要な次の事項を明示することを推奨する。本書はadapterへ規範要件を課さず、YAMAI適合性は [YRC 0003] `1.0-draft.5` の規範文書で判断する。
+adapterの設計上、相互運用に必要な次の事項を明示することを推奨する。本書はadapterへ規範要件を課さず、YAMAI適合性は [YRC 0003] `1.0-draft.6` の規範文書で判断する。
 
 1. object streamからbatchを作るflush条件
 2. batchからobject streamへ展開した際のresponse抑制
@@ -276,7 +276,7 @@ adapterの設計上、相互運用に必要な次の事項を明示すること�
 7. 裏ドラ表示牌欄の名称変換（YAMAIでは `ura_dora_markers` へ正規化）
 8. 3人麻雀と未知eventの拒否規則
 
-情報を損失する変換は、黙って既定値を補わず、変換不能または推定したmemberを診断として記録することが望ましい。adapterの各変換規則と損失箇所は、[YRC 0003] `1.0-draft.5` 第16節のMJAI移行要件、および同第17節が要求する同一release tagのSchema、registry、公式test vectorへ追跡可能にすることを推奨する。
+情報を損失する変換は、黙って既定値を補わず、変換不能または推定したmemberを診断として記録することが望ましい。adapterの各変換規則と損失箇所は、[YRC 0003] `1.0-draft.6` 第16節のMJAI移行要件、および同第17節が要求する同一release tagのSchema、registry、公式test vectorへ追跡可能にすることを推奨する。
 
 ## 10. Security Considerations
 
@@ -320,7 +320,7 @@ stdio profileではstdoutをprotocol専用とし、診断をstderrへ分離す�
   https://github.com/Equim-chan/mjai-reviewer/blob/2dc5ec5c8b28517cfb45f57eb21536d9a8f67aa9/faq.md
 - [YRC 0001] YAMAI Project, “デファクト MJAI プロトコル記述仕様”.
 - [YRC 0002] YAMAI Project, “MJAI プロトコルの設計上の欠陥”.
-- [YRC 0003] YAMAI Project, “YAMAI Protocol Version 1 (1.0-draft.5)”.
+- [YRC 0003] YAMAI Project, “YAMAI Protocol Version 1 (1.0-draft.6)”.
 
 ## Appendix A. Machine-readable Profile Template
 

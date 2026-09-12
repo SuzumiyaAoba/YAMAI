@@ -1,3 +1,6 @@
+// Historical draft.5 abstraction retained from upstream.
+// Draft.6 uses the four current models listed in README.md; this is not a
+// refinement proof for its SELECTED/TERMINAL lifecycle or single decision group.
 // Executable protocol core for YAMAI 1.0-draft.5.
 //
 // Unlike the historical control-flow models, this model has one canonical

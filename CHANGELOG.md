@@ -2,6 +2,30 @@
 
 この変更履歴は、YAMAI の規範文書、機械可読成果物およびリリース管理上の変更を記録する。現在のすべての項目は Draft であり、安定版を意味しない。
 
+## 1.0-draft.6 / profile 1.0-draft.4 — 2026-09-12（仕様監査完了）
+
+- requestをOPEN、SELECTED、TERMINALへ分離し、全選択の固定後に競合判定、終端ACK、結果event列の順で処理する。group closeを`all_selected_or_deadline`へ変更した。
+- deadlineちょうどはtimeout、期限前の選択は後着ACKでも有効とした。不正actionの再試行でtime bankを二重控除せず、選択後の冪等性、後着stale、chomboでのoffender自身の取消しを固定した。
+- 牌山・嶺上補充・合法手・フリテン・リーチ後暗槓・喰い替えを明文化した。リーチ打牌が鳴かれてもリーチは成立し、一発だけを失う。暗槓の4枚は全viewで公開する。
+- 延長上限、親のアガリ止め、penaltyでの同局やり直し、本場・供託繰越を明文化した。nextは次局のbakaze/kyokuを含み、end_gameの場合もkyotakuを必須とする。
+- snapshotへ局外の供託・次局・終局順位・time bank、鳴かれた捨て牌、槓ドラ保留、選択済み行動と残り期限を追加した。公開viewと他家の自摸番に自分宛てpending requestを要求する矛盾を修正した。
+- welcomeへ有効capability集合と再開時のreplay_through_seqを追加した。観戦の途中参加と、replayの全application messageを含むseqを固定した。
+- Protocolの正負vectorを34組から270組へ増やし、要求処理の実行可能な検査と、JSONL・JSON・Schema・JCSの20件の回帰検査を追加した。validatorの補助ファイルをrelease manifestで管理する。
+
+- 上流mainの3コミットを統合し、Mermaid図・唯一の規範本文・stateful trace・scoring CLIを保持した。採点本文を§7.6へ同期し、stateful traceと任意seat割当をdraft.6へ移植した。旧Coreモデルはdraft.5の歴史的な回帰として区別する。
+
+draft.5/profile draft.3とは非互換である。実装は両方の版、Schema、registry、vectorおよびhashを一緒に更新する。旧版の資料はこのGit履歴から取得し、現行成果物と混在させない。
+
+- profile revisionごとのprotocol_versions行列とjoin-proposal Schemaを追加し、型違反と版・profile・機能・ルール拒否の優先順を固定した。errorの方向・段階・severityをregistryとSchemaで照合する。
+- session_contractでtokenの一回使用・失効・失敗時の保持、再送prefix、snapshotの元記録位置、同一transport上の次session、handshake/frame/backpressureの時計を検査する。初回観戦snapshotのlast_event_seqはnullとする。
+- private typeのSchema合成は有効capabilityのsession内に限定し、core識別子・所有seat・contextを維持する。hashでは広告・交渉messageのidentity hashだけを正規化し、Schemaのフィールド定義を失わない。
+- 全3seatの反応groupをSchemaと公式例へ同期し、完全な合法候補、捨て牌と手番の対応、牌136枚の保存、連続槓、鳴かれたリーチ、paoの挿入位置、局進行の優先順をgame_contractで検査する。四家立直・四風連打・四槓散了・通常流局の同時成立時の順序も固定した。
+- Schema validatorのanyOfの隣接制約、boolean Schema、Schemaとinstanceのキーの区別、深すぎるJSONの早期拒否を修正した。
+- 点数fixtureを、期待値を入力に含めないhora/ryukyoku/penaltyの明示的な形式へ変更した。全手牌分解と採点を独立に再計算し、76正例・28負例を追加・修正した。二盃口、清一色、門前自摸、複合役満、ドラ枚数などの期待値の誤りを訂正した。
+- 責任払いは該当役満の点数成分だけへ適用し、本場の端数順を固定した。供託はseat間paymentsから分離し、放銃者への二重請求を修正した。喰い下がり役のSchemaと、0点チョンボの空paymentsも本文へ同期した。
+
+4つの補助形式モデルを選択確定・配送分離・有限replay frontierへ同期し、Nixの型・安全性・時間的性質・run/witness検査を通過した。並列検証で共有されていたApalacheのportを呼出しごとに分離した。独立したDraft 2020-12検査でもSchema21件・instance524件が成功した。適合35項目と全12監査項目の確認を終え、Draft仕様の完成監査を完了した。検証範囲と証拠は[仕様完成監査](docs/specification-audit.md)を参照する。安定版には公開承認と独立相互運用試験が必要であり、publishedはfalseを維持する。
+
 ## 1.0-draft.5 / profile 1.0-draft.3 — 2026-08-30
 
 ### Changed

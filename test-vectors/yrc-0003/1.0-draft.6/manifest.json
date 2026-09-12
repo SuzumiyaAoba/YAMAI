@@ -1,0 +1,1647 @@
+{
+  "$schema": "urn:yamai:schema:yrc-0003:1.0-draft.6:vector-manifest",
+  "protocol_version": "1.0-draft.6",
+  "profile": "riichi-4p",
+  "profile_revision": "1.0-draft.4",
+  "profile_hash": "sha256:43bd887586659141bb0b0f5de65aa308548533cb1625e3ef7b1053f2c91a6d48",
+  "registry": [
+    "registry/yrc-0003/1.0-draft.6/registry.json",
+    "registry/yrc-0005/1.0-draft.4/registry.json"
+  ],
+  "schema_root": "schemas/yrc-0003/1.0-draft.6/message.schema.json",
+  "vectors": "test-vectors/yrc-0003/1.0-draft.6/vectors.json",
+  "scoring_vectors": "test-vectors/yrc-0005/1.0-draft.4/scoring.json",
+  "profile_hash_canonicalization": "RFC8785-JCS",
+  "profile_hash_inputs": [
+    "schemas/yrc-0003/1.0-draft.6/profile/riichi-4p.schema.json",
+    "schemas/yrc-0005/1.0-draft.4/riichi-4p-rules.schema.json",
+    "schemas/yrc-0005/1.0-draft.4/scoring-vectors.schema.json",
+    "registry/yrc-0003/1.0-draft.6/registry.json",
+    "registry/yrc-0005/1.0-draft.4/registry.json",
+    "test-vectors/yrc-0003/1.0-draft.6/vectors.json",
+    "test-vectors/yrc-0005/1.0-draft.4/scoring.json"
+  ],
+  "cases": [
+    {
+      "id": "V01_schema_null",
+      "area": "schema-null",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V02_json_strict",
+      "area": "duplicate-unicode-number",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_json"
+    },
+    {
+      "id": "V03_extension_namespace",
+      "area": "unknown-fields-types",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V04_version_profile",
+      "area": "version-profile",
+      "negative_profile_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "expect_positive": "valid",
+      "expect_negative": "profile_mismatch"
+    },
+    {
+      "id": "V05_capability_limits",
+      "area": "capability-limits",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V06_transport_frame",
+      "area": "jsonl-websocket",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_frame"
+    },
+    {
+      "id": "V07_backpressure",
+      "area": "backpressure-slowloris",
+      "expect_positive": "bounded",
+      "expect_negative": "resource_limit"
+    },
+    {
+      "id": "V08_decision_group",
+      "area": "group-atomicity",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V09_score_conservation",
+      "area": "score-integrity",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V10_ack_replay",
+      "area": "stale-conflict-chombo",
+      "expect_positive": "valid",
+      "expect_negative": "request_conflict"
+    },
+    {
+      "id": "V11_resume_snapshot",
+      "area": "resume-seq-deadline",
+      "expect_positive": "valid",
+      "expect_negative": "resume_unavailable"
+    },
+    {
+      "id": "V12_visibility_auth_log",
+      "area": "visibility-auth-redaction",
+      "expect_positive": "authorized",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V13_event_order",
+      "area": "state-machine-order",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V14_scoring_integrity",
+      "area": "scoring-fields",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V15_replay_original_seq",
+      "area": "replay-original-seq",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V16_welcome_resume",
+      "area": "welcome-resume",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V17_end_game_rankings",
+      "area": "multi-session-rankings",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V18_snapshot_state",
+      "area": "snapshot-state-machine",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V19_resume_pending_deadline",
+      "area": "resume-timeout",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V20_multi_ron_conservation",
+      "area": "multi-ron-settlement",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V21_state_machine",
+      "area": "game-lifecycle",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V22_ankan_projection",
+      "area": "ankan-visibility",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V23_scoring_vectors",
+      "area": "scoring-vector-coverage",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V24_capability_negotiation",
+      "area": "capability-negotiation",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V25_group_consistency",
+      "area": "group-consistency",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V26_penalty_terminal",
+      "area": "penalty-terminal",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V27_noten_payments",
+      "area": "noten-payments",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V28_replay_view",
+      "area": "replay-view",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V29_deadline_duplicate_request",
+      "area": "deadline-duplicate-request",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V30_conditional_mode",
+      "area": "conditional-constraints",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V31_group_grace_zero",
+      "area": "group-grace-zero",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V32_group_grace_variable",
+      "area": "group-grace-variable",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V33_group_grace_deadline",
+      "area": "group-grace-deadline",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V34_game_event_before_start",
+      "area": "state-machine-start-order",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V35_deadline_before_rounding",
+      "area": "deadline_before_rounding",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V36_exact_deadline_late_duplicate",
+      "area": "exact_deadline_late_duplicate",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V37_zero_deadline",
+      "area": "zero_deadline",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V38_chombo_cancels_offender",
+      "area": "chombo_cancels_offender",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V39_rejected_retry_bank_once",
+      "area": "rejected_retry_bank_once",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V40_select_before_terminal_ack",
+      "area": "select_before_terminal_ack",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V41_double_ron_explicit_pass",
+      "area": "double_ron_explicit_pass",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V42_head_bump_relative_seat",
+      "area": "head_bump_relative_seat",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V43_sanchaho_selected_hora",
+      "area": "sanchaho_selected_hora",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V44_individual_group_deadline",
+      "area": "individual_group_deadline",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V45_selected_and_terminal_retry",
+      "area": "selected_and_terminal_retry",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V46_invalid_default_then_late",
+      "area": "invalid_default_then_late",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V47_unknown_request_no_state",
+      "area": "unknown_request_no_state",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V48_multiple_ron_all_winners",
+      "area": "multiple_ron_all_winners",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V49_pon_over_chi",
+      "area": "pon_over_chi",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V50_delayed_timer_bounded_elapsed",
+      "area": "delayed_timer_bounded_elapsed",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V51_replay_seat_game_target",
+      "area": "replay-view-target",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V52_request_member_pair",
+      "area": "request-member-pair",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V53_public_snapshot_during_turn",
+      "area": "public_snapshot_during_turn",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V54_snapshot_other_players_turn",
+      "area": "snapshot_other_players_turn",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V55_snapshot_frozen_selection",
+      "area": "snapshot_frozen_selection",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V56_snapshot_pending_is_not_meld",
+      "area": "snapshot_pending_is_not_meld",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V57_snapshot_between_kyoku_deposits",
+      "area": "snapshot_between_kyoku_deposits",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V58_snapshot_ended_rankings",
+      "area": "snapshot_ended_rankings",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V59_snapshot_complete_cause_event",
+      "area": "snapshot_complete_cause_event",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V60_snapshot_group_clock",
+      "area": "snapshot_group_clock",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V61_snapshot_request_after_cause",
+      "area": "snapshot_request_after_cause",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V62_snapshot_full_remaining_budget",
+      "area": "snapshot_full_remaining_budget",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V63_version_refusal",
+      "area": "version-refusal",
+      "expect_positive": "valid",
+      "expect_negative": "unsupported_version"
+    },
+    {
+      "id": "V64_shape_before_version",
+      "area": "shape-before-version",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V65_profile_refusal",
+      "area": "profile-refusal",
+      "expect_positive": "valid",
+      "expect_negative": "unsupported_profile"
+    },
+    {
+      "id": "V66_revision_refusal",
+      "area": "revision-refusal",
+      "expect_positive": "valid",
+      "expect_negative": "profile_mismatch"
+    },
+    {
+      "id": "V67_advertised_hash_refusal",
+      "area": "advertised-hash-refusal",
+      "expect_positive": "valid",
+      "expect_negative": "profile_mismatch"
+    },
+    {
+      "id": "V68_required_capability_intersection",
+      "area": "required-capability-intersection",
+      "expect_positive": "valid",
+      "expect_negative": "unsupported_capability"
+    },
+    {
+      "id": "V69_capability_duplicate",
+      "area": "capability-duplicate",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V70_optional_unknown_ignored",
+      "area": "optional-unknown-ignored",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V71_host_profile_receive_limit",
+      "area": "host-profile-receive-limit",
+      "expect_positive": "valid",
+      "expect_negative": "unsupported_limit"
+    },
+    {
+      "id": "V72_player_profile_receive_limit",
+      "area": "player-profile-receive-limit",
+      "expect_positive": "valid",
+      "expect_negative": "unsupported_limit"
+    },
+    {
+      "id": "V73_unimplemented_rule_value",
+      "area": "unimplemented-rule-value",
+      "expect_positive": "valid",
+      "expect_negative": "unsupported_rules"
+    },
+    {
+      "id": "V74_unknown_local_yaku",
+      "area": "unknown-local-yaku",
+      "expect_positive": "valid",
+      "expect_negative": "unsupported_rules"
+    },
+    {
+      "id": "V75_player_order",
+      "area": "player-order",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V76_new_session_id_not_reused",
+      "area": "new-session-id-not-reused",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V77_new_game_id_not_reused",
+      "area": "new-game-id-not-reused",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V78_unsupported_mode",
+      "area": "unsupported-mode",
+      "expect_positive": "valid",
+      "expect_negative": "unsupported_profile"
+    },
+    {
+      "id": "V79_spectate_requires_snapshot",
+      "area": "spectate-requires-snapshot",
+      "expect_positive": "valid",
+      "expect_negative": "unsupported_capability"
+    },
+    {
+      "id": "V80_spectate_cannot_require_resume",
+      "area": "spectate-cannot-require-resume",
+      "expect_positive": "valid",
+      "expect_negative": "unsupported_capability"
+    },
+    {
+      "id": "V81_unavailable_target",
+      "area": "unavailable-target",
+      "expect_positive": "valid",
+      "expect_negative": "resume_unavailable"
+    },
+    {
+      "id": "V82_replay_recording_target",
+      "area": "replay-recording-target",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V83_malformed_capability_namespace",
+      "area": "malformed-capability-namespace",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V84_namespaced_nested_annotation",
+      "area": "namespaced-nested-annotation",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V85_resume_token_rotation",
+      "area": "resume-token-rotation",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V86_resume_expiry_boundary",
+      "area": "resume-expiry-boundary",
+      "expect_positive": "valid",
+      "expect_negative": "resume_unavailable"
+    },
+    {
+      "id": "V87_resume_future_sequence",
+      "area": "resume-future-sequence",
+      "expect_positive": "valid",
+      "expect_negative": "resume_unavailable"
+    },
+    {
+      "id": "V88_resume_secure_transport",
+      "area": "resume-secure-transport",
+      "expect_positive": "valid",
+      "expect_negative": "resume_unavailable"
+    },
+    {
+      "id": "V89_resume_preserves_rules",
+      "area": "resume-preserves-rules",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V90_resume_preserves_seat",
+      "area": "resume-preserves-seat",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V91_resume_frontier",
+      "area": "resume-frontier",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V92_resume_empty_range",
+      "area": "resume-empty-range",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V93_one_use_token_single_owner",
+      "area": "one-use-token-single-owner",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V94_host_error_requires_seq",
+      "area": "host-error-requires-seq",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V95_player_error_forbids_seq",
+      "area": "player-error-forbids-seq",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V96_gap_error_requires_range",
+      "area": "gap-error-requires-range",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V97_player_invalid_message_is_fatal",
+      "area": "player-invalid-message-is-fatal",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V98_unknown_error_code",
+      "area": "unknown-error-code",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V99_error_severity",
+      "area": "error-severity",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V100_known_request_bad_shape_recoverable",
+      "area": "known-request-bad-shape-recoverable",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V101_identity_error_is_fatal",
+      "area": "identity-error-is-fatal",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V102_unknown_request_is_recoverable",
+      "area": "unknown-request-is-recoverable",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V103_retired_session_action_ignored",
+      "area": "retired-session-action-ignored",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V104_wire_complete_game",
+      "area": "wire-complete-game",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V105_gap_does_not_apply_future",
+      "area": "gap-does-not-apply-future",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V106_duplicate_is_not_reapplied",
+      "area": "duplicate-is-not-reapplied",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V107_same_seq_different_bytes",
+      "area": "same-seq-different-bytes",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V108_invalid_event_is_atomic",
+      "area": "invalid-event-is-atomic",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V109_resume_waits_for_finite_prefix",
+      "area": "resume-waits-for-finite-prefix",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V110_lost_state_replay_uses_initial_scores",
+      "area": "lost-state-replay-uses-initial-scores",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V111_initial_observer_has_no_prior_seq",
+      "area": "initial-observer-has-no-prior-seq",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V112_observer_bootstrap_authorization",
+      "area": "observer-bootstrap-authorization",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V113_snapshot_floor_ignores_covered_history",
+      "area": "snapshot-floor-ignores-covered-history",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V114_replay_frontier_is_immutable",
+      "area": "replay-frontier-is-immutable",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V115_missing_history_needs_snapshot",
+      "area": "missing-history-needs-snapshot",
+      "expect_positive": "valid",
+      "expect_negative": "resume_unavailable"
+    },
+    {
+      "id": "V116_frame_timer_not_reset",
+      "area": "frame-timer-not-reset",
+      "expect_positive": "valid",
+      "expect_negative": "resource_limit"
+    },
+    {
+      "id": "V117_hello_deadline",
+      "area": "hello-deadline",
+      "expect_positive": "valid",
+      "expect_negative": "resource_limit"
+    },
+    {
+      "id": "V118_join_deadline",
+      "area": "join-deadline",
+      "expect_positive": "valid",
+      "expect_negative": "resource_limit"
+    },
+    {
+      "id": "V119_exact_frame_limit",
+      "area": "exact-frame-limit",
+      "expect_positive": "valid",
+      "expect_negative": "resource_limit"
+    },
+    {
+      "id": "V120_reserved_output_survives_backpressure",
+      "area": "reserved-output-survives-backpressure",
+      "expect_positive": "valid",
+      "expect_negative": "resource_limit"
+    },
+    {
+      "id": "V121_unresolved_request_limit",
+      "area": "unresolved-request-limit",
+      "expect_positive": "valid",
+      "expect_negative": "resource_limit"
+    },
+    {
+      "id": "V122_message_count_backpressure",
+      "area": "message-count-backpressure",
+      "expect_positive": "valid",
+      "expect_negative": "resource_limit"
+    },
+    {
+      "id": "V123_transport_reused_after_game_end",
+      "area": "transport-reused-after-game-end",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V124_snapshot_restores_recording_cursor",
+      "area": "snapshot-restores-recording-cursor",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V125_fatal_error_stops_buffered_messages",
+      "area": "fatal-error-stops-buffered-messages",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V126_rejected_ack_keeps_request_open",
+      "area": "rejected-ack-keeps-request-open",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V127_private_event_requires_negotiation",
+      "area": "private-event-requires-negotiation",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V128_private_event_schema_is_enforced",
+      "area": "private-event-schema-is-enforced",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V129_extension_cannot_override_core",
+      "area": "extension-cannot-override-core",
+      "expect_positive": "valid",
+      "expect_negative": "unsupported_capability"
+    },
+    {
+      "id": "V130_active_extension_needs_schema",
+      "area": "active-extension-needs-schema",
+      "expect_positive": "valid",
+      "expect_negative": "unsupported_capability"
+    },
+    {
+      "id": "V131_private_action_preserves_owner_binding",
+      "area": "private-action-preserves-owner-binding",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V132_private_action_context_is_enforced",
+      "area": "private-action-context-is-enforced",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V133_version_profile_pair_is_required",
+      "area": "version-profile-pair-is-required",
+      "expect_positive": "valid",
+      "expect_negative": "profile_mismatch"
+    },
+    {
+      "id": "V134_profile_matrix_uses_advertised_versions",
+      "area": "profile-matrix-uses-advertised-versions",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V135_fatal_session_cannot_resume",
+      "area": "fatal-session-cannot-resume",
+      "expect_positive": "valid",
+      "expect_negative": "resume_unavailable"
+    },
+    {
+      "id": "V136_resume_cannot_override_room",
+      "area": "resume-cannot-override-room",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V137_extension_reference_must_be_installed",
+      "area": "extension-reference-must-be-installed",
+      "expect_positive": "valid",
+      "expect_negative": "unsupported_capability"
+    },
+    {
+      "id": "V138_extension_schema_type_must_be_known",
+      "area": "extension-schema-type-must-be-known",
+      "expect_positive": "valid",
+      "expect_negative": "unsupported_capability"
+    },
+    {
+      "id": "V139_welcome_deadline",
+      "area": "welcome-deadline",
+      "expect_positive": "valid",
+      "expect_negative": "resource_limit"
+    },
+    {
+      "id": "V140_failed_join_does_not_consume_token",
+      "area": "failed-join-does-not-consume-token",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V141_logical_event_limit_excludes_recovery",
+      "area": "logical-event-limit",
+      "expect_positive": "valid",
+      "expect_negative": "resource_limit"
+    },
+    {
+      "id": "V142_local_yaku_requires_enabled_owner",
+      "area": "local-yaku-capability",
+      "expect_positive": "valid",
+      "expect_negative": "unsupported_rules"
+    },
+    {
+      "id": "V143_visibility_play_self",
+      "area": "visibility-play_self",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V144_visibility_spectate_public",
+      "area": "visibility-spectate_public",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V145_visibility_replay_public",
+      "area": "visibility-replay_public",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V146_visibility_replay_full",
+      "area": "visibility-replay_full",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V147_visibility_replay_seat_0",
+      "area": "visibility-replay_seat_0",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V148_visibility_replay_seat_1",
+      "area": "visibility-replay_seat_1",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V149_visibility_replay_seat_2",
+      "area": "visibility-replay_seat_2",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V150_visibility_replay_seat_3",
+      "area": "visibility-replay_seat_3",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V151_dealer_win_renchan",
+      "area": "game-next_kyoku",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V152_nondealer_win_resets_honba",
+      "area": "game-next_kyoku",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V153_threshold_equal_continues",
+      "area": "game-next_kyoku",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V154_threshold_below_ends",
+      "area": "game-next_kyoku",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V155_bankruptcy_continue_rule",
+      "area": "game-next_kyoku",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V156_ordinary_draw_dealer_tenpai",
+      "area": "game-next_kyoku",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V157_ordinary_draw_rotates_with_honba",
+      "area": "game-next_kyoku",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V158_dealer_continuation_disabled",
+      "area": "game-next_kyoku",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V159_abortive_draw_continuation_disabled",
+      "area": "game-next_kyoku",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V160_scheduled_final_target_reached",
+      "area": "game-next_kyoku",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V161_scheduled_final_enters_extension",
+      "area": "game-next_kyoku",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V162_no_extension_ends_below_target",
+      "area": "game-next_kyoku",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V163_agariyame_top_dealer",
+      "area": "game-next_kyoku",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V164_agariyame_tie_uses_initial_seat",
+      "area": "game-next_kyoku",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V165_agariyame_requires_target",
+      "area": "game-next_kyoku",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V166_agariyame_disabled",
+      "area": "game-next_kyoku",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V167_tenpai_is_not_agariyame",
+      "area": "game-next_kyoku",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V168_penalty_preserves_honba",
+      "area": "game-next_kyoku",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V169_penalty_bankruptcy_precedes_retry",
+      "area": "game-next_kyoku",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V170_extension_cap_precedes_renchan",
+      "area": "game-next_kyoku",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V171_extension_target_precedes_renchan",
+      "area": "game-next_kyoku",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V172_extension_renchan_consumes_round",
+      "area": "game-next_kyoku",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V173_extension_penalty_consumes_round",
+      "area": "game-next_kyoku",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V174_extension_wind_wrap_preserves_counter",
+      "area": "game-next_kyoku",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V175_ended_deposits_are_retained",
+      "area": "game-next_kyoku",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V176_riichi_ankan_preserves_all_decompositions",
+      "area": "game-legal_actions",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V177_kan_forbidden_with_empty_live_wall",
+      "area": "game-legal_actions",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V178_kan_allowed_with_one_live_tile",
+      "area": "game-legal_actions",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V179_fifth_table_kan_forbidden",
+      "area": "game-legal_actions",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V180_riichi_ankan_cannot_remove_a_wait",
+      "area": "game-legal_actions",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V181_riichi_ankan_same_wait_different_interpretation",
+      "area": "game-legal_actions",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V182_riichi_ankan_must_use_current_draw",
+      "area": "game-legal_actions",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V183_furiten_does_not_forbid_tsumo",
+      "area": "game-legal_actions",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V184_ron_complete_candidates",
+      "area": "game-legal_actions",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V185_temporary_furiten_forbids_all_ron",
+      "area": "game-legal_actions",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V186_riichi_furiten_forbids_all_ron",
+      "area": "game-legal_actions",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V187_called_own_discard_still_furiten",
+      "area": "game-legal_actions",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V188_shape_without_yaku_has_no_hora",
+      "area": "game-legal_actions",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V189_kakan_chankan_supplies_yaku",
+      "area": "game-legal_actions",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V190_ankan_chankan_kokushi_only",
+      "area": "game-legal_actions",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V191_ankan_chankan_never",
+      "area": "game-legal_actions",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V192_red_called_tile_and_compound_discard",
+      "area": "game-legal_actions",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V193_red_consumed_tile_and_compound_discard",
+      "area": "game-legal_actions",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V194_chi_only_from_previous_seat",
+      "area": "game-legal_actions",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V195_last_discard_forbids_all_calls",
+      "area": "game-legal_actions",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V196_suji_kuikae_excludes_both_ends",
+      "area": "game-legal_actions",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V197_riichi_exact_deposit_and_four_tiles",
+      "area": "game-legal_actions",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V198_riichi_requires_full_deposit",
+      "area": "game-legal_actions",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V199_riichi_requires_four_live_tiles",
+      "area": "game-legal_actions",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V200_furiten_riichi_is_allowed",
+      "area": "game-legal_actions",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V201_kyushukyuhai_first_draw",
+      "area": "game-legal_actions",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V202_kyushukyuhai_interrupted_by_call",
+      "area": "game-legal_actions",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V203_eight_orphans_not_nine",
+      "area": "game-legal_actions",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V204_no_yaku_pass_still_temporary_furiten",
+      "area": "game-furiten_step",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V205_superseded_hora_is_not_a_pass",
+      "area": "game-furiten_step",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V206_nonwinning_discard_is_not_a_pass",
+      "area": "game-furiten_step",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V207_riichi_pass_lasts_until_round_end",
+      "area": "game-furiten_step",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V208_furiten_draw_transition",
+      "area": "game-furiten_step",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V209_furiten_call_transition",
+      "area": "game-furiten_step",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V210_furiten_discard_transition",
+      "area": "game-furiten_step",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V211_ankan_before_rinshan_dahai",
+      "area": "game-kan_sequence",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V212_ankan_before_rinshan_hora",
+      "area": "game-kan_sequence",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V213_ankan_after_rinshan_discard_dahai",
+      "area": "game-kan_sequence",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V214_ankan_after_rinshan_discard_hora",
+      "area": "game-kan_sequence",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V215_daiminkan_before_rinshan_dahai",
+      "area": "game-kan_sequence",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V216_daiminkan_before_rinshan_hora",
+      "area": "game-kan_sequence",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V217_daiminkan_after_rinshan_discard_dahai",
+      "area": "game-kan_sequence",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V218_daiminkan_after_rinshan_discard_hora",
+      "area": "game-kan_sequence",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V219_kakan_before_rinshan_dahai",
+      "area": "game-kan_sequence",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V220_kakan_before_rinshan_hora",
+      "area": "game-kan_sequence",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V221_kakan_after_rinshan_discard_dahai",
+      "area": "game-kan_sequence",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V222_kakan_after_rinshan_discard_hora",
+      "area": "game-kan_sequence",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V223_deferred_dora_before_next_kan_declaration",
+      "area": "game-kan_sequence",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V224_robbed_kan_has_no_marker_or_draw",
+      "area": "game-kan_sequence",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V225_penalty_discards_only_unrevealed_marker",
+      "area": "game-kan_sequence",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V226_pao_before_kan_dora",
+      "area": "game-kan_sequence",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V227_four_winds_after_no_ron",
+      "area": "game-abortive_reason",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V228_call_cancels_four_winds",
+      "area": "game-abortive_reason",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V229_ron_precedes_abortive_draw",
+      "area": "game-abortive_reason",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V230_four_riichi_precedes_four_winds",
+      "area": "game-abortive_reason",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V231_three_ron_is_sanchaho",
+      "area": "game-abortive_reason",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V232_four_kans_precede_exhaustive_draw",
+      "area": "game-abortive_reason",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V233_one_players_four_kans_do_not_abort",
+      "area": "game-abortive_reason",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V234_empty_wall_exhaustive_draw",
+      "area": "game-abortive_reason",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V235_first_draw_consumes_one_live_tile",
+      "area": "event-state",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V236_cannot_restart_active_round",
+      "area": "event-state",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V237_kan_declaration_keeps_hand_and_wall",
+      "area": "event-state",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V238_kan_commit_consumes_replacement_once",
+      "area": "event-state",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V239_rinshan_does_not_consume_live_tile",
+      "area": "event-state",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V240_before_rinshan_marker_is_mandatory",
+      "area": "event-state",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V241_consecutive_kan_reveals_previous_marker",
+      "area": "event-state",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V242_robbed_second_kan_clears_pending",
+      "area": "event-state",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V243_four_own_kans_have_four_replacements",
+      "area": "event-state",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V244_fifth_kan_declaration_rejected",
+      "area": "event-state",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V245_mixed_four_kans_wait_for_final_discard",
+      "area": "event-state",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V246_mixed_four_kans_abort_after_discard",
+      "area": "event-state",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V247_called_reach_still_pays_deposit",
+      "area": "event-state",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V248_compound_pon_has_no_extra_draw",
+      "area": "event-state",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V249_reach_deposit_is_atomic",
+      "area": "event-state",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V250_pao_between_third_pon_and_discard",
+      "area": "event-state",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V251_pao_uses_third_call_source",
+      "area": "event-state",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V252_pao_before_daiminkan_marker_and_draw",
+      "area": "event-state",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V253_kakan_keeps_pon_position_and_pao",
+      "area": "event-state",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V254_reaction_group_cannot_include_discarder",
+      "area": "request-cause",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V255_reaction_group_cannot_omit_third_player",
+      "area": "request-cause",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V256_consumed_permutation_is_not_another_choice",
+      "area": "request-cause",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V257_fourth_kan_final_discard_forbids_calls",
+      "area": "request-cause",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V258_daiminkan_and_all_red_call_variants",
+      "area": "complete-legal-actions",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V259_kakan_names_original_red_pon",
+      "area": "complete-legal-actions",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V260_drawn_and_held_identical_tile_are_distinct",
+      "area": "complete-legal-actions",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V261_session_immutable_wire_ledger",
+      "area": "stateful-session",
+      "expect_positive": "valid",
+      "expect_negative": "sequence_conflict"
+    },
+    {
+      "id": "V262_session_transaction_cannot_interleave",
+      "area": "stateful-session",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V263_session_timeout_keeps_original_deadline",
+      "area": "stateful-session",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V264_session_observer_snapshot_bootstrap",
+      "area": "stateful-session",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V265_session_snapshot_recursive_projection",
+      "area": "stateful-session",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V266_session_replay_game_target",
+      "area": "stateful-session",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V267_session_three_member_group_is_atomic",
+      "area": "stateful-session",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V268_explicit_join_seat",
+      "area": "seat-assignment",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V269_lowest_available_join_seat",
+      "area": "seat-assignment",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V270_occupied_join_seat_refused",
+      "area": "seat-assignment",
+      "expect_positive": "valid",
+      "expect_negative": "resource_limit"
+    }
+  ]
+}

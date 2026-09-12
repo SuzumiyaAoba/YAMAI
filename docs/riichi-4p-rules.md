@@ -5,23 +5,21 @@
 | 文書系列 | YAMAI Request for Comments (YRC) |
 | 文書番号 | YRC 0005 |
 | 表題 | YAMAI Riichi Mahjong Four-Player Scoring Rules |
-| 分類 | Derived / Historical |
-| 状態 | Derived（規範本文は YRC 0003 §7.6） |
-| 版 | 1.0-draft.3 |
-| 発行日 | 2026-08-30 |
-| 対応Protocol Version | YRC 0003 `1.0-draft.5` |
-| 更新対象 | YRC 0003 `1.0-draft.5` の `riichi-4p` profile |
+| 分類 | Derived |
+| 状態 | Derived（規範本文はYRC 0003 §7.6） |
+| 版 | 1.0-draft.4 |
+| 発行日 | 2026-09-12 |
+| 対応Protocol Version | YRC 0003 `1.0-draft.6` |
+| 更新対象 | YRC 0003 `1.0-draft.6` の `riichi-4p` profile |
 | 廃止対象 | なし |
 
 ## Abstract
 
-本書は、YAMAI Protocolの `riichi-4p` profileが使用する標準役ID、役満condition、ドラbonus、符計算および点数計算を整理した履歴的・派生文書である。現行の規範定義は YRC 0003 `docs/yamai-protocol.md` §7.6 に閉じて存在し、本書はそれに新しい要求を追加しない。
+本書はYRC 0003 §7.6の採点定義を、従来の節番号で参照できるように保持した派生資料である。
 
 ## Status of This Memo
 
-本書はYAMAI Projectが管理する履歴的・派生文書であり、IETF Internet StandardでもYAMAIの現行規範文書でもない。本書の配布に制限はない。
-
-本書は [YRC 0003] Protocol Version `1.0-draft.5` の §7.6 から生成された派生文書であり、単独で規範性を持たない。本書と [YRC 0003] に矛盾がある場合は常に [YRC 0003] 本文を優先し、矛盾は次の派生成果物更新で修正する。
+YRC 0003 Protocol 1.0-draft.6本文だけが規範であり、本書は追加の要求を持たない。競合があればYRC 0003本文を優先する。
 
 ## Table of Contents
 
@@ -60,7 +58,9 @@ Appendix A. 計算例
 
 通常形は4面子1雀頭である。面子は順子、刻子または槓子、雀頭は同一牌2枚である。例外形は七対子および国士無双である。
 
-本書でいう評価対象は、YRC 0003 のevent/stateから復元した次の正規化された和了局面である（MUST）。`concealed_tiles` は暗面子に含まれない手牌、`melds` は面子ごとの種別（順子、刻子、槓子）・牌種・門前/副露状態、`winning_tile` は和了牌、`win_method` は `tsumo` または `ron`、`oya`、`bakaze`、`kyoku`、`wall_remaining`、`rinshan`、`reach_accepted` および和了までのevent列を含む。これらはwire上の追加memberを要求するものではなく、ホストがYRC 0003のstateから導出する意味論上の入力である。
+評価対象はYRC 0003のevent/stateから復元した正規化局面である。`concealed_tiles` は和了牌と確定済みの副露・暗槓を除いた手牌であり、`melds` は成立順に保持したchi、pon、daiminkan、ankan、kakanだけを含む（MUST）。未公開の暗刻や順子を探索前に固定してmeldsへ移してはならない（MUST NOT）。kakanは元のponの成立位置と供給元sourceを保持し、公開面子はsourceを必須とし、ankanにはsourceを付けない。
+
+`winning_tile` は別に保持して評価時に1回だけ加え、ron/tsumoのどちらでも `len(concealed_tiles) + 3 * len(melds) == 13` とする。親の第一自摸も同じ規則である。`win_method`、actor、target、oya、bakaze、kyoku、wall_remaining、公開済みdora/uraの列、リーチ・一発・第一巡・最終牌・フリテン・槓・供託・点数の現在値を明示する（MUST）。これは評価用の入力であり、wireへ同じmemberを追加する要求ではない。
 
 通常形は論理面子4個と雀頭1個、七対子は異なる牌種7組、国士無双は么九牌13種とそのうち1種の重複でなければならない（MUST）。槓子は論理面子1個として数えるが、物理牌は4枚として保持する。完成した和了形は、特殊形を除き論理上14枚であり、任意の牌種が物理的に4枚を超えてはならない（MUST）。
 
@@ -88,7 +88,7 @@ Appendix A. 計算例
 
 待ちは選択した評価候補における和了直前の13枚（論理面子・副露を含む）から判定する。和了牌をどの面子または雀頭へ割り当てたかで待ちが変わる場合、候補ごとに別の待ちとして評価する。両面・嵌張・辺張は順子を完成する候補、双碰は刻子を完成する候補、単騎は雀頭を完成する候補に限る（MUST）。七対子および国士無双には通常形の待ち符を加算しない。
 
-同じ和了牌に複数の解釈がある場合、最終的な `hand_points` が最大となる合法な解釈を採用する。`hand_points` が同じ場合は `han` が大きい解釈、次に `fu` が大きい解釈を採用し、それでも同じ場合は成立役IDをASCII昇順に並べた配列の辞書順が小さい解釈を採用する（MUST）。
+同じ和了牌に複数の解釈がある場合、hand_points、真の役満value合計、han、fuの順に大きい候補を採用し、それでも同じなら成立役IDをASCII昇順に並べた配列の辞書順が小さい候補を採用する（MUST）。真の役満がない候補の役満valueは0である。この比較により、支払額が同じ真の役満と数え役満では真の役満を優先する。本場・供託や責任seatへの移し替えで分解の選択を変えない。
 
 候補比較の「合法」とは、2.1節の牌数・面子数・特殊形の条件を満たし、各物理牌を1回だけ使用し、和了牌を1回だけ追加した候補をいう。成立しない候補の役・符・点数を比較対象へ含めてはならない（MUST NOT）。
 
@@ -203,7 +203,9 @@ wireへ出力する通常役IDは重複してはならず、各IDの `value` は
 
 `dora_markers` は表ドラ表示牌の、`ura_dora_markers` は裏ドラ表示牌の、公開順に並んだ物理的な表示牌列である。`dora_markers` は当該 `win` の和了確定直前に公開済みの列を、`ura_dora_markers` は当該 `win` の和了者に有効な `reach_accepted` がある場合に和了確定時点で公開する列を用いる（MUST）。槍槓で和了した場合は未成立の槓に対応する表示牌を含めず、嶺上和了ではYRC 0003の `kan_dora_timing` に従ってその時点までに公開済みの表示牌だけを含める。その他の和了では `ura_dora_markers` は空配列でなければならない（MUST）。複数和了では同じ局の裏ドラ表示牌列を各該当 `win` に記録する。裏ドラ表示牌は、和了が確定するまで `play` viewへ送信してはならない（MUST NOT）。
 
-ホストは和了結果を確定する前に、各表示牌の次牌を和了手牌（手牌・和了牌・副露）と照合し、`dora`、`uradora` および `akadora` のbonus値を再計算しなければならない（MUST）。同一物理牌を手牌と副露の両方へ重複計上してはならない。`win.ura_dora_markers` から再計算した `uradora` の値と `bonuses` の値が一致しない結果を送信してはならず（MUST NOT）、受信者は不一致を検出した場合に結果を不正として扱わなければならない（MUST）。
+ホストは和了結果の確定前に、各表示牌の次牌を手牌・和了牌・副露と照合してdora、uradora、akadoraを再計算する（MUST）。同じ表示牌が複数位置にあれば位置ごとに数えるが、同じ手牌の実体を手牌と副露の両方へ重複計上しない。点数確定時の表表示牌数は `1 + 成立槓数`、有効リーチ和了の裏表示牌数は同数、それ以外は0とする（MUST）。嶺上和了で公開を延期していた表表示牌も、YRC 0003の順序で公開してから計算する。
+
+真の役満ではbonusとhanを0にするが、有効リーチのura_dora_markersは省略しない。複数ロンは同じ1枚の捨て牌を各手で仮想評価するため、卓全体の物理牌数では和了牌を1回だけ数える（MUST）。同じ局の表・裏表示牌を和了者ごとに別の物理牌として重複させない。手牌から計算したbonusと結果が異なれば不正として扱う。
 
 ## 6. 符
 
@@ -265,19 +267,37 @@ wireへ出力する通常役IDは重複してはならず、各IDの `value` は
 
 ### 7.3 責任払い
 
-`rules.pao.yakus` に含まれる役だけが責任払いの対象となる。責任払いの成立seatは役ごとに次で決定し、成立後はその局の和了まで保持する（MUST）。
+`rules.pao.yakus` に含まれる役だけが責任払いの対象となる。既に公知である成立済み副露・暗槓だけを数え、非公開手牌中の暗刻を根拠に責任seatを公開してはならない（MUST NOT）。責任seatは次で決定し、その局の間保持する。
 
 - `daisangen`: 既に異なる三元牌の刻子・槓子を2組持つプレイヤーが、3組目の三元牌を `pon` または `daiminkan` したとき、その鳴きの `target`（捨て牌を供給したseat）を `daisangen` の責任seatとする。
 - `daisuushii`: 既に異なる風牌の刻子・槓子を3組持つプレイヤーが、4組目の風牌を `pon` または `daiminkan` したとき、その鳴きの `target` を `daisuushii` の責任seatとする。
 
-`ankan`、`kakan` または自摸で成立した刻子・槓子は責任払いの成立契機にならない。対象役が設定されていない場合、上記の鳴きがあっても責任払いを適用してはならない（MUST）。複数の対象役が同時に成立する場合、役ごとの責任seatを独立に保持し、単一seatへ暗黙に統合してはならない。責任seatと支払方式の対応、およびこの役ごとの対応を表すwire memberは [YRC 0003] 第7.2節で定義しなければならない（MUST）。
+新しいankan、kakanまたは手牌中の暗刻は責任払いの成立契機にならない。kakanは元のponで既に成立した責任を保持する。対象役が設定されていない場合は責任払いを適用しない。複数の対象役を拡張で許す場合、役ごとの責任seatを独立に保持する（MUST）。
 現行registryの対象役（`daisangen` および `daisuushii`）は、4面子の同一和了候補で同時成立しない。将来のregistry拡張で同一候補に複数の責任払い対象役を許す場合、その拡張仕様は役ごとの点数寄与、複数責任seatへの配分および丸めを追加定義しなければならない（MUST）。
+
+#### 対象役満の点数だけを移す
+
+対象役のvalueをvとすると、基本点 `8000 × v` に対応する通常支払いだけを責任払いへ移す。複合した他の役満の基本支払いは通常どおり残す（MUST）。数え役満に責任払いを適用してはならない。
+
+ronのliable_allはその成分の全額を責任seatへ移す。splitでは成分の総支払額の半分を100点単位へ切り上げて責任seatへ、残りを放銃seatへ割り当てる。同じseatなら全額をそのseatが払う。tsumoのliable_allは当該成分の全額を責任seatへ移し、normalなら移さない。移し替え後もhand_pointsは変わらない（MUST）。
+
+例えば子の大四喜2倍と字一色1倍の96,000点ロンで、放銃seatと責任seatが異なりsplitなら、大四喜の64,000点だけを半分に分ける。責任seatは32,000点、放銃seatは残りの大四喜32,000点と字一色32,000点の合計64,000点を払う。
+
+#### 本場の100点単位配分
+
+責任払いで基本支払いを移した場合、本場の総額Hも、移し替え後の各支払者の基本支払額b_iに比例して配る。Hはronなら `honba × honba_ron_value`、tsumoなら `honba × 3 × honba_tsumo_value_per_payer` とする。Bをb_iの総和、UをH/100とし、基本支払いが正のseatだけへ `floor(U × b_i / B)` 単位を配る。残りの100点単位は `(U × b_i) mod B` が大きい順、同値なら責任seatを優先し、それでも同値なら小さい絶対seatの順に1単位ずつ配る（MUST）。
+
+純粋な責任払いのsplitで1本場300点なら、責任seatへ200点、放銃seatへ100点を加算する。tsumo=normalなど基本支払いを移さない場合は通常の本場規則を維持し、各支払者へ同額を加える。供託はこの配分に含めない。
 
 ## 8. 局精算との関係
 
 ホストは各winについて、本書で計算した `fu`、`han`、`yakus`、`bonuses`、`hand_points` を [YRC 0003] の `end_kyoku.result.wins[]` へ格納しなければならない（MUST）。
 
-`deltas` は基本支払いへ本場、供託、複数ロン配分および責任払いを適用した結果である。`scores` は直前点数との加算で検証可能でなければならない（MUST）。`hand_points` は本場・供託を含まないため、fixtureでこれらの局精算を検証する場合は `state.honba` および `state.kyotaku` を入力し、`payments` と `deltas` には適用後の点数を記録する。省略時はどちらも0とする。
+`deltas` は基本支払いへ本場・責任払い・供託配分を適用した結果であり、scoresは直前点数と加算して検証する。供託はリーチ成立時に既に控除されているため、和了時に放銃者へ再請求してはならない（MUST NOT）。
+
+fixtureのpaymentsはseat間の支払いだけを表し、本場と責任払いを含み、供託を含めない。供託から当該winへの受取額をkyotaku_pointsとして別記し、`win.deltas = paymentsからの差額 + 和了seatへのkyotaku_points` とする（MUST）。horaの供託残本数は0である。各winの差額の和はその供託受取額となり、局全体で `sum(deltas) + (new_kyotaku - old_kyotaku) × riichi_stick_value == 0` を満たす。
+
+出力のyakusとbonusesはidのASCII昇順、paoはyaku_idのASCII昇順、fixtureのpaymentsはfrom・toの順に整列する（MUST）。0点のpaymentを省略し、支払いが0なら空配列とする。winsはYRC 0003に従いactorの昇順である。
 
 ### 8.1 通常流局のノーテン精算
 
@@ -306,10 +326,31 @@ wireへ出力する通常役IDは重複してはならず、各IDの `value` は
 
 ## 11. Registry Considerations
 
-Yaku ID、Bonus ID、Double Yakuman Conditionの登録は [YRC 0003] 第19節に従う。新しい役は門前・副露飜数、成立条件、既存役との重複、符・役満との関係および最低2個のtest vectorを指定しなければならない（MUST）。本版の実行可能な点数fixtureは `test-vectors/yrc-0005/1.0-draft.3/scoring.json` に収録し、その形式は `schemas/yrc-0005/1.0-draft.3/scoring-vectors.schema.json` に従う。各fixtureは正規化手牌、和了方法、局面state、適用ruleおよび期待する役、bonus、符、飜、基本点、支払明細、seat別 `deltas` の全てを持たなければならない（MUST）。
-fixtureファイルの `rules` がbase ruleであり、各fixtureの `rule_overrides` はbase ruleをmember単位で置換して適用する。fixtureの `state` は列挙した `state.events` 適用後の状態であり、`honba` と `kyotaku` は精算入力時点の本場数と供託本数を表す（省略時は0）。直前状態が境界判定に必要な場合は `state.pre_state` に記録する。`haitei` と `houtei` のfixtureでは `pre_state.wall_remaining=1`、自摸event適用後の `state.wall_remaining=0` を必須とする。
+Yaku ID、Bonus ID、Double Yakuman Conditionの登録はYRC 0003第19節に従う。新しい役は門前・副露飜数、成立条件、既存役との重複、符・役満との関係および最低2個のtest vectorを指定する（MUST）。本版の実行可能fixtureは `test-vectors/yrc-0005/1.0-draft.4/scoring.json`、その形式は `schemas/yrc-0005/1.0-draft.4/scoring-vectors.schema.json` で固定する。
 
-本版のfixture集合は、registryに登録された全通常役・全役満、通常形・七対子・国士無双、符の20/25/30符境界、3飜60符の切り上げ満貫境界、12飜三倍満・13飜数え役満境界、赤五・表ドラ・裏ドラ、役満value、親ツモ、複数ロン、本場・供託、責任払い、チョンボおよび通常流局の聴牌者数0～4を少なくとも1件ずつ含む。fixtureの `state.events` はYRC 0003のevent typeと同じ意味で解釈し、fixtureの期待値は単なる表示ラベルではなく、入力から再計算できる規範値である（MUST）。
+fixtureファイルのrulesをbase ruleとし、rule_overridesを最上位member単位で置換する。置換後の完全なrulesをrules Schemaでも検証する（MUST）。expectedから入力・役・係数を取得してはならず、fixtureのidも計算条件として使用してはならない（MUST NOT）。
+
+先頭のvectorsは計算・網羅範囲の索引である。符・飜からの算術例は明示したrule_overridesを適用して再計算し、複数ロン・責任払い・ノーテン・bonusなどの索引はfixture_idsで実行可能fixtureへ結び付ける。政策値、人数、配分単位、bonus一覧と保存則もリンク先に一致させ、名前だけの項目を適合試験として数えてはならない（MUST NOT）。
+
+| input.type | 必須の評価入力 |
+|---|---|
+| hora | hand、winning_tile、win_method、actor、target、dora_markers、ura_dora_markers。複数ロンではother_winnersへ他の和了入力と各seatのstateを記録し、expectedを入力内へ埋め込まない |
+| ryukyoku | reason=fanpai、4seatの和了前の完全なhands。tenpaiはこれらから2.7節で計算する |
+| penalty | offender。invalid_action_policy=chomboが必要。和了牌や和了手を仮に付けてはならない |
+
+stateは場・局・親、本場・供託、scores、live wall残数、kan_counts、pending_kan、リーチ成立、double_riichi、ippatsu、first_turn、last_tile、rinshan、furitenを明示する。省略による暗黙の0/falseを許さない（MUST NOT）。first_turnは評価seatの第一巡資格、last_tileは和了の原因が最後のlive wall自摸またはその直後の打牌であること、furitenはYRC 0003の3種のフリテンの論理和である。真の役満に通常役を付けるためのフラグではない。
+
+state.pre_stateは採点に関連するイベント投影の前の完全な状態、state.eventsはその後の関連event列とする。投影はtsumo、dahai、reach、reach_accepted、chi、pon、daiminkan、ankan_declared、ankan、kakan_declared、kakanを順に保持する。actorと、必要なpai等の採点用memberを保持し、envelope、request、ACK、点数へ影響しないmemberを省略する。暗槓のpaiはconsumedの牌種を赤五正規化した値であり、wire上のankan eventへpaiを追加するものではない。
+
+この投影から、live wall、槓数、pending kan、リーチ成立、宣言時の第一巡資格、一発、最終牌、供託控除とscoresを更新し、stateの値と一致させる（MUST）。非空の和了用投影は、和了牌の原因となった自摸・打牌・槓宣言で終わり、actor/target/paiも和了入力と一致しなければならない。first_turnの自摸は親からの順にlive wall残69、68、67、66の第一自摸を表す。海底/河底の投影は残1から0への通常自摸を含む。
+
+furitenは行動選択・全捨て牌履歴・現在の待ち集合も必要とするため、当該event投影では更新せず、最終stateの明示的な入力とする。pre_stateには含めない。牌の所有・合法手・フリテン状態遷移そのものはYRC 0003の状態vectorで検査する。状態を変える投影が不要な牌姿・配分fixtureはeventsを空配列とし、必要な事実をpre_stateとstateへ同じ値で固定できる。これは完全なwireログの省略値を推測する許可ではない。
+
+expectedは全役、bonus、符、飜、基本点、hand_points、pao、裏表示牌、seat間payments、供託受取kyotaku_points、deltas、確定scores、供託残本数を記録する。複数ロンは全和了入力の物理牌と共有和了牌・表示牌が同じ136枚の集合へ収まることも検証する（MUST）。通常流局は4人の手牌からtenpaiとノーテン罰符を計算する。penaltyはruleから配分を計算する。入力時・出力時の `sum(scores) + kyotaku × riichi_stick_value` はゲーム開始時の `4 × starting_points` と一致する。
+
+negative_fixturesは入力、state、rule_overrides、expected_errorを持つ。invalid_messageはSchema違反、invalid_handは牌数・牌形・物理牌在庫の不正、invalid_contextは状況や精算の不一致、no_yakuは形があっても有効な役がないことを表す。これらはfixtureの検査分類であり、新しいwire error codeではない。
+
+fixture集合はregistryの全通常役・全役満、通常形・七対子・国士無双、20/25/30/140符、切り上げ満貫、12/13飜、赤牌・表裏ドラ、複合役満、親ツモ、複数ロン、本場・供託、責任払い、chombo、聴牌者数0～4を含む。各期待値は表示ラベルではなく入力から再計算する規範値である（MUST）。
 
 ## 12. References
 
@@ -317,7 +358,7 @@ fixtureファイルの `rules` がbase ruleであり、各fixtureの `rule_overr
 
 - [BCP 14] Bradner, S. and B. Leiba, BCP 14, RFC 2119 and RFC 8174.  
   https://www.rfc-editor.org/info/bcp14
-- [YRC 0003] YAMAI Project, “YAMAI Protocol Version 1 (1.0-draft.5)”.
+- [YRC 0003] YAMAI Project, “YAMAI Protocol Version 1 (1.0-draft.6)”.
 
 ## Appendix A. 計算例
 
@@ -343,8 +384,8 @@ fixtureファイルの `rules` がbase ruleであり、各fixtureの `rule_overr
 
 ### A.6 複数分解の選択
 
-門前13枚 `1122334455667m` に `7m` をロンし、ドラがない場合、`11m` を雀頭、`234m`×2および`567m`×2とする通常形は、両面待ちの `pinfu` と `iipeikou` の2飜30符である。同じ物理牌は七対子の2飜25符にも解釈できる。通常形の子ロンは2,000点、七対子の子ロンは1,600点なので、2.4節の候補比較により通常形を採用する。
+門前13枚 `1122334455667m` に `7m` をロンし、ドラや状況役がない場合、`11m` を雀頭、`234m`×2および`567m`×2とする通常形は、`chinitsu` 6飜、`ryanpeikou` 3飜、両面待ちの `pinfu` 1飜で10飜30符となる。同じ物理牌の七対子解釈は `chinitsu` 6飜と `chiitoitsu` 2飜の8飜25符である。子ロンはどちらも倍満16,000点なので、2.4節の同点時の飜数比較により通常形を採用する。
 
 ### A.7 役なし形の聴牌
 
-`123m 456m 789m 234p 5s` は `5s` 待ちであり、`5s` を加えると合法な通常形になる。完成形は役を持たなくても、2.7節の形の聴牌を満たすため、通常流局の `tenpai` はtrueである。和了の可否（2.1節）とノーテン精算用の聴牌判定（2.7節）を混同してはならない。
+`123m 456m 789p 234s E` は `E` 待ちであり、`E` を加えると通常形が完成する。リーチなどの状況役がないロンでは役を持たないが、2.7節の形の聴牌を満たすため、通常流局の `tenpai` はtrueである。和了の可否（2.1節）とノーテン精算用の聴牌判定（2.7節）を混同してはならない。

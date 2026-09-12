@@ -1,3 +1,5 @@
+// Historical draft.5 bounded regression, retained for comparison.
+// The four concurrent independent decisions are outside draft.6 semantics.
 // Deterministic, finite conformance projection of yamai_protocol_core.qnt.
 //
 // This is deliberately not a second canonical model.  It is one complete,

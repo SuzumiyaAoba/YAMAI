@@ -7,7 +7,7 @@
 | 表題 | Design Defects in the MJAI Protocol |
 | 分類 | Informational |
 | 状態 | Draft |
-| 版 | 1.0-draft.3 |
+| 版 | 1.0-draft.4 |
 | 発行日 | 2026-08-30 |
 | 更新対象 | なし |
 | 廃止対象 | なし |
@@ -16,13 +16,13 @@
 
 MJAI はリーチ麻雀 AI と牌譜処理系の相互運用に大きく貢献した。一方、MJAI の仕様は、通信境界、版交渉、要求と応答の対応、ルール記述、終局精算、エラー復旧および資源上限を規範的に定義していない。これらの不足は、互換性のない方言、遅延応答の誤適用、複数和了の不正精算、非公開情報の漏洩および入力起因のサービス不能を生じさせる。
 
-本書は、公開仕様、公開実装および報告済みの運用障害を根拠として、12個のプロトコル設計欠陥を識別する。各欠陥について、観測事実、失敗条件、影響および後継仕様の設計目標を整理し、[YRC 0003] `1.0-draft.5` と、同文書がprofileの規範参照として指定するStandards Track文書（現在の `riichi-4p` では [YRC 0005] `1.0-draft.3`）との参照関係を記録する。
+本書は、公開仕様、公開実装および報告済みの運用障害を根拠として、12個のプロトコル設計欠陥を識別する。各欠陥について、観測事実、失敗条件、影響および後継仕様の設計目標を整理し、[YRC 0003] `1.0-draft.6` と、同文書がprofileの規範参照として指定するStandards Track文書（現在の `riichi-4p` では [YRC 0005] `1.0-draft.4`）との参照関係を記録する。
 
 ## Status of This Memo
 
 本書は YAMAI Project が管理する Informational 文書であり、IETF Internet Standard ではない。本書は MJAI 実装に新しい適合要件を課さない。
 
-本書中の「後継仕様の設計目標」は、欠陥を解消する仕様に望ましい性質を表す。本書はMJAI実装またはYAMAI実装へ規範要件を課さない。`MUST`、`SHOULD` および `MAY` を用いる規範要件は [YRC 0003] `1.0-draft.5` と、同文書がprofileの規範参照として指定するStandards Track文書（現在の `riichi-4p` では [YRC 0005] `1.0-draft.3`）だけが定義する。
+本書中の「後継仕様の設計目標」は、欠陥を解消する仕様に望ましい性質を表す。本書はMJAI実装またはYAMAI実装へ規範要件を課さない。`MUST`、`SHOULD` および `MAY` を用いる規範要件は [YRC 0003] `1.0-draft.6` と、同文書がprofileの規範参照として指定するStandards Track文書（現在の `riichi-4p` では [YRC 0005] `1.0-draft.4`）だけが定義する。
 
 ## Table of Contents
 
@@ -204,7 +204,7 @@ Gimite 実装のダブルロンは複数の `hora` を逐次配信し、後の `
 
 ## 4. YAMAIに対する設計要求候補
 
-以下はYAMAIへ提案する設計要求候補であり、本書自身の規範要件ではない。実装適合性に関する規範効果は [YRC 0003] `1.0-draft.5` と同文書が指定するprofile文書に限られる。
+以下はYAMAIへ提案する設計要求候補であり、本書自身の規範要件ではない。実装適合性に関する規範効果は [YRC 0003] `1.0-draft.6` と同文書が指定するprofile文書に限られる。
 
 | 提案ID | 設計要求候補 |
 |---|---|
@@ -222,9 +222,9 @@ Gimite 実装のダブルロンは複数の `hora` を逐次配信し、後の `
 | Y-12 | フレーム・JSON・キューの資源上限 |
 | Y-13 | MJAI との損失箇所を明示した変換規則 |
 
-これらを具体化した規範仕様は、本書ではなく [YRC 0003] `1.0-draft.5` と、同文書がprofileの規範参照として指定するStandards Track文書（現在の `riichi-4p` では [YRC 0005] `1.0-draft.3`）からなる。
+これらを具体化した規範仕様は、本書ではなく [YRC 0003] `1.0-draft.6` と、同文書がprofileの規範参照として指定するStandards Track文書（現在の `riichi-4p` では [YRC 0005] `1.0-draft.4`）からなる。
 
-Y-10およびY-13については、[YRC 0003] `1.0-draft.5` が要求する同一release tagの規範Schema、registryおよび公式test vector（profileの[YRC 0005] `1.0-draft.3` scoring vectorを含む）まで追跡可能にすることをYAMAIへ提案する。本書自体はその追跡可能性を保証せず、YAMAI実装の適合要件も定義しない。
+Y-10およびY-13については、[YRC 0003] `1.0-draft.6` が要求する同一release tagの規範Schema、registryおよび公式test vector（profileの[YRC 0005] `1.0-draft.4` scoring vectorを含む）まで追跡可能にすることをYAMAIへ提案する。本書自体はその追跡可能性を保証せず、YAMAI実装の適合要件も定義しない。
 
 → [YAMAI Protocol 1.0 Draft 5](yamai-protocol.md)
 
@@ -242,14 +242,14 @@ MJAI を loopback 以外へ公開することは、transport authentication と 
 
 ## 6. Registry Considerations
 
-本書は registry を新設せず、新しい protocol value を割り当てない。P-01、P-07 および P-11 を解消するため、[YRC 0003] `1.0-draft.5` は version、profile、capability、rule、event、action、error および result reason の registry を定義する。
+本書は registry を新設せず、新しい protocol value を割り当てない。P-01、P-07 および P-11 を解消するため、[YRC 0003] `1.0-draft.6` は version、profile、capability、rule、event、action、error および result reason の registry を定義する。
 
 ## 7. References
 
 ### 7.1 Informative References
 
 - [YRC 0001] YAMAI Project, “デファクト MJAI プロトコル記述仕様”.
-- [YRC 0003] YAMAI Project, “YAMAI Protocol Version 1 (1.0-draft.5)”.
+- [YRC 0003] YAMAI Project, “YAMAI Protocol Version 1 (1.0-draft.6)”.
 - [GIMITE-MJAI] Gimite, “Mjai 麻雀AI対戦サーバ”, 2017-06-07.  
   https://gimite.net/pukiwiki/index.php?Mjai+%E9%BA%BB%E9%9B%80AI%E5%AF%BE%E6%88%A6%E3%82%B5%E3%83%BC%E3%83%90=
 - [GIMITE-CODE] Gimite, “mjai”, source repository.  
@@ -269,11 +269,11 @@ MJAI を loopback 以外へ公開することは、transport authentication と 
 - [RFC 8259] Bray, T., Ed., “The JavaScript Object Notation (JSON) Data Interchange Format”, STD 90, RFC 8259, December 2017.  
   https://www.rfc-editor.org/rfc/rfc8259
 - [YRC 0004] YAMAI Project, “代表的 MJAI 実装プロファイル”.
-- [YRC 0005] YAMAI Project, “YAMAI `riichi-4p` 役・符・点数規則 (1.0-draft.3)”.
+- [YRC 0005] YAMAI Project, “YAMAI `riichi-4p` 役・符・点数規則 (1.0-draft.4)”.
 
 ## Appendix A. 設計目標追跡表
 
-| 欠陥 | 導出設計目標 | Standards Track文書の主節（YRC 0003 `1.0-draft.5` / profile規範参照 YRC 0005 `1.0-draft.3`） |
+| 欠陥 | 導出設計目標 | Standards Track文書の主節（YRC 0003 `1.0-draft.6` / profile規範参照 YRC 0005 `1.0-draft.4`） |
 |---|---|---|
 | P-01 | Y-01 | 6. 版・機能交渉、17. 適合性 |
 | P-02 | Y-02, Y-06 | 3. プロトコルモデル、4. JSON と transport |
@@ -281,7 +281,7 @@ MJAI を loopback 以外へ公開することは、transport authentication と 
 | P-04 | Y-06 | 3. プロトコルモデル |
 | P-05 | Y-05 | 8. 行動要求 |
 | P-06 | Y-10 | 4. JSON、7. profile、17. 適合性 |
-| P-07 | Y-07 | 6.3 `welcome`、7.2 必須ルール、[YRC 0005] `1.0-draft.3` |
+| P-07 | Y-07 | 6.3 `welcome`、7.2 必須ルール、[YRC 0005] `1.0-draft.4` |
 | P-08 | Y-09 | 11. visibility と mode |
 | P-09 | Y-08 | 7.5 `end_kyoku` |
 | P-10 | Y-03, Y-04, Y-11 | 9. ACK、12. エラー、13. 再接続 |
