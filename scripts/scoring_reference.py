@@ -1,4 +1,4 @@
-"""YRC 0005 executable scoring reference, independent of expected fixtures.
+"""YRC 0003 section 7.6 scoring reference, independent of expected fixtures.
 
 All uncommitted concealed tiles are decomposed; only actual calls and ankan
 are fixed melds. The normalized context carries history-dependent facts.

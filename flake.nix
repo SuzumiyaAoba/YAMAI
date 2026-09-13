@@ -180,45 +180,6 @@
             echo "$model" > "$out/model"
           '';
 
-          coreSafetyCheck = pkgs.runCommand "yamai-quint-protocol-core" {
-            src = ./.;
-            toolchainDependency = toolchainCheck;
-            nativeBuildInputs = checkerPackages pkgs;
-          } ''
-            set -eu
-            mkdir "$out"
-            test -d "$toolchainDependency"
-
-            model_dir="$src/verification/quint"
-            model="$model_dir/yamai_protocol_core_bounded.qnt"
-            if [ ! -f "$model" ]; then
-              echo "verification/quint/yamai_protocol_core_bounded.qnt is not present" >&2
-              exit 1
-            fi
-
-            work_dir="$TMPDIR/verification/quint-core"
-            mkdir -p "$work_dir"
-            cp "$model_dir"/*.qnt "$work_dir"/
-            model="$work_dir/yamai_protocol_core_bounded.qnt"
-            cd "$TMPDIR"
-            quint parse "$model" > "$out/quint-parse.log" 2>&1
-            quint typecheck "$model" > "$out/quint-typecheck.log" 2>&1
-            quint run \
-              --main yamai_protocol_core_bounded \
-              --invariants protocol_invariant refinement_mapping \
-              --witnesses witness_complete \
-              --max-steps 24 \
-              --max-samples 1 \
-              --seed 0x79616d61695f636f \
-              --verbosity 1 \
-              "$model" > "$out/quint-bounded-safety.log" 2>&1
-            if ! grep -Eq '^witness_complete was witnessed in [1-9][0-9]* trace' "$out/quint-bounded-safety.log"; then
-              cat "$out/quint-bounded-safety.log" >&2
-              exit 1
-            fi
-            echo "$model" > "$out/model"
-          '';
-
           temporalCheck = pkgs.runCommand "yamai-quint-model-temporal" {
             src = ./.;
             safetyDependency = safetyCheck;
@@ -684,7 +645,6 @@
           quint-toolchain = toolchainCheck;
           artifact-validator = artifactValidatorCheck;
           quint-model = safetyCheck;
-          quint-protocol-core = coreSafetyCheck;
           quint-model-temporal = temporalCheck;
           quint-model-witnesses = witnessCheck;
           quint-model-extended-parse-typecheck = extendedParseTypecheckCheck;

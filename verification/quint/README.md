@@ -1,6 +1,6 @@
 # YAMAI の Quint 検証モデル
 
-このディレクトリはYRC 0003 draft.6の制御フローを有限状態へ射影した4モデルを収録する。JSON parser、麻雀の合法手・点数エンジン、認証実装を置き換えるものではない。実際のwireと採点の検査範囲は[仕様完成監査](../../docs/specification-audit.md)および公式vectorを併せて確認する。
+このディレクトリはYRC 0003 draft.6の制御フローを有限状態へ射影した4モデルを収録する。JSON parser、麻雀の合法手・点数エンジン、認証実装を置き換えるものではない。実際のwireと採点の検査範囲は[検証ガイド](../README.md)および公式vectorを併せて確認する。
 
 ## 4モデルの範囲
 
@@ -28,32 +28,32 @@ baseline/extendedの2反応者は実対局の2人groupを許可する意味で�
 | snapshotで選択済み要求を保持 | deliveryのsnapshot_phase/snapshot_choice、extendedのsnapshot_saved_*、具体的runテスト | YRC 0003 §13.3 |
 | 終了済みsessionへ未配送結果を届ける | baselineのendedReplayTest、extendedのendedResumeTest | YRC 0003 §13.2 |
 | 局結果・終局前に要求を解決 | extendedのround_result_available、end_kyoku/end_game、terminalization_invariant | YRC 0003 §7.5・Appendix A |
-| 供託を含む全体の点数保存 | baseline/extendedのscore_conservation、reach控除とsettle_kyotaku | YRC 0003 §7、[YRC 0005](../../docs/riichi-4p-rules.md) §8 |
+| 供託を含む全体の点数保存 | baseline/extendedのscore_conservation、reach控除とsettle_kyotaku | YRC 0003 §7.2・§7.6.8 |
 
-## 実行と公開する証拠
+## 実行方法と検査結果
 
-環境はrootのflake.nix/flake.lockで固定する。作業ツリー内の追加ファイルを含めた全gateは次で実行する。
+環境はrootの[flake.nix](../../flake.nix)と[flake.lock](../../flake.lock)で固定する。リポジトリのルートで全検査を実行する。
 
 ```sh
-rtk proxy nix flake check path:.
+nix flake check path:. --no-update-lock-file
 ```
 
 各モデルは独立に検査できる。各gateはartifact validatorとtoolchainに依存し、そのモデルのparse/typecheck、安全性、必要な時間的性質、run/witnessを順に実行する。モデル間に任意の成功依存を作らない。aarch64-darwin以外ではsystem名を環境に合わせる。
 
 ```sh
-rtk proxy nix build path:.#checks.aarch64-darwin.quint-model-witnesses --no-link
-rtk proxy nix build path:.#checks.aarch64-darwin.quint-model-extended-witnesses --no-link
-rtk proxy nix build path:.#checks.aarch64-darwin.quint-request-liveness-witnesses --no-link
-rtk proxy nix build path:.#checks.aarch64-darwin.quint-resume-delivery-witnesses --no-link
+nix build path:.#checks.aarch64-darwin.quint-model-witnesses --no-link
+nix build path:.#checks.aarch64-darwin.quint-model-extended-witnesses --no-link
+nix build path:.#checks.aarch64-darwin.quint-request-liveness-witnesses --no-link
+nix build path:.#checks.aarch64-darwin.quint-resume-delivery-witnesses --no-link
 ```
 
 個別の安全性検査と具体的操作列は次のように実行する。他モデルもファイル名を置き換える。
 
 ```sh
-rtk proxy nix develop --command quint parse verification/quint/yamai_resume_delivery.qnt
-rtk proxy nix develop --command quint typecheck verification/quint/yamai_resume_delivery.qnt
-rtk proxy nix develop --command quint verify --backend tlc verification/quint/yamai_resume_delivery.qnt --invariant protocol_invariant
-rtk proxy nix develop --command quint test verification/quint/yamai_resume_delivery.qnt
+nix develop --command quint parse verification/quint/yamai_resume_delivery.qnt
+nix develop --command quint typecheck verification/quint/yamai_resume_delivery.qnt
+nix develop --command quint verify --backend tlc verification/quint/yamai_resume_delivery.qnt --invariant protocol_invariant
+nix develop --command quint test verification/quint/yamai_resume_delivery.qnt
 ```
 
 Nixの各出力にはquint-verify.log、時間的性質がある場合はquint-verify-temporal.log、quint-tests.log、quint-witness.logを残す。checkの正確なコマンドと不変条件一覧は[flake.nix](../../flake.nix)に固定する。
@@ -70,7 +70,7 @@ TLC backendはq_init/q_stepの有限到達状態を検査する。CLIのmax-step
 
 hostの内部進行は公平なschedulerを、期限の進行は公平なtickを前提とする。deliveryの配送保証はさらに `eventually(always(transport == Connected))` を仮定する。恒久切断、host停止、時計停止、scheduler starvationでの配送は主張しない。host処理とpeer配送は別の義務であり、切断中も前者は進む。
 
-TLCだけで前提状態の到達性は保証されないため、witnessと具体的runを併用する。ランダム探索で希少な三家和が0件だった実行を到達不能の証拠とせず、requestのsanchahoTestで具体的な操作列を確認する。deliveryのfrozenFrontierTailTestは空のreplay範囲を確定した後にACK/結果を生成し、その追加分を後から正常配送できることを確認する。
+TLCだけで前提状態の到達性は保証されないため、witnessと具体的runを併用する。requestのsanchahoTestは三家和へ至る操作列を検査する。deliveryのfrozenFrontierTailTestは空のreplay範囲を確定した後にACK/結果を生成し、その追加分を後から正常配送できることを確認する。
 
 ## 検証の限界
 
@@ -82,8 +82,4 @@ TLCだけで前提状態の到達性は保証されないため、witnessと具�
 
 ## 並列実行時の検証サーバー
 
-Nix環境のquint wrapperは、verify/compileごとに未使用のloopback portを選び、Apalacheのserver-endpointを分離する。Quint 0.32.0は既定のlocalhost:8822上のserverを再利用し、serverを起動した親processの終了時に停止するため、複数gateで既定portを共有すると他のcompileがRPC CANCELLEDで失敗し得る。明示した--server-endpointは尊重する。モデル・探索条件・不変条件は変更しない。
-
-## 旧draft.5のProtocol Core
-
-上流のyamai_protocol_core.qntとyamai_protocol_core_bounded.qntは比較用に保持する。4件の独立decisionを同時に扱う旧抽象化であり、draft.6の単独requestまたは全3seat反応group、SELECTED→TERMINALのrefinement証明ではない。quint-protocol-core gateは旧bounded traceの回帰検査を維持し、現行の4モデルの検証を置き換えない。
+Nix環境のquint wrapperは、verify/compileごとに未使用のloopback portを選び、Apalacheのserver-endpointを分離する。複数の検査が同じサーバーを共有することを防ぐためであり、明示した `--server-endpoint` は尊重する。

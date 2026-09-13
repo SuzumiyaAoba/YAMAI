@@ -85,11 +85,11 @@ Akochan、Mortalの学習データ形式、Mahjong Soul・天鳳の原生 wire p
 
 ### 2.1 Source snapshots and evidence
 
-本書のprofile記述はInformationalな観測記録であり、下表のrevisionに対してだけ再現可能性を主張する。`未固定`は、公式URLと対象ファイルは確認できたが、commit履歴を確認できなかったことを表す。確認日は2026-08-30である。外部profileのrevisionはYAMAIの適合要件ではない。
+本書のprofile記述は、下表のprotocol revision、source revisionおよび対象ファイルに基づく。実装の比較はこの版を対象とし、外部profileのrevisionはYAMAIの適合要件には含めない。
 
-| profile | protocol revision | 公式source revision／確認結果 | 対象ファイルまたは仕様 |
+| profile | protocol revision | 公式source revision | 対象ファイルまたは仕様 |
 |---|---|---|---|
-| Gimite `mjai` | `mjsonp`, 原典 `protocol_version=1`／現行コード `3` | `master`。公式GitHubのcommit履歴は2026-08-30に取得不能でcommit未固定 | [`lib/mjai/tcp_game_server.rb`](https://github.com/gimite/mjai/blob/master/lib/mjai/tcp_game_server.rb)、[`lib/mjai/game.rb`](https://github.com/gimite/mjai/blob/master/lib/mjai/game.rb)、[`lib/mjai/tcp_player.rb`](https://github.com/gimite/mjai/blob/master/lib/mjai/tcp_player.rb)、[`lib/mjai/action.rb`](https://github.com/gimite/mjai/blob/master/lib/mjai/action.rb) |
+| Gimite `mjai` | `mjsonp`, 原典 `protocol_version=1`／実装 `3` | `312c0c6f8446ca69ecc58e246840bffdad656541` | [`lib/mjai/tcp_game_server.rb`](https://github.com/gimite/mjai/blob/312c0c6f8446ca69ecc58e246840bffdad656541/lib/mjai/tcp_game_server.rb)、[`lib/mjai/game.rb`](https://github.com/gimite/mjai/blob/312c0c6f8446ca69ecc58e246840bffdad656541/lib/mjai/game.rb)、[`lib/mjai/tcp_player.rb`](https://github.com/gimite/mjai/blob/312c0c6f8446ca69ecc58e246840bffdad656541/lib/mjai/tcp_player.rb)、[`lib/mjai/action.rb`](https://github.com/gimite/mjai/blob/312c0c6f8446ca69ecc58e246840bffdad656541/lib/mjai/action.rb) |
 | Mortal | MJAI event stream（protocol version fieldなし） | `main@0cff2b52982be5b1163aa9a62fb01f03ce91e0d2` | [`mortal/mortal.py`](https://github.com/Equim-chan/Mortal/blob/0cff2b52982be5b1163aa9a62fb01f03ce91e0d2/mortal/mortal.py)、[`libriichi/src/mjai/event.rs`](https://github.com/Equim-chan/Mortal/blob/0cff2b52982be5b1163aa9a62fb01f03ce91e0d2/libriichi/src/mjai/event.rs) |
 | mjai.app | `mjai-client:v3`, event-array batch | `main@cc24bace09673d1d38b4315031a1ce63fb1b5abf`（shutdown noticeを含む最終確認commit） | [`README.md`](https://github.com/smly/mjai.app/blob/cc24bace09673d1d38b4315031a1ce63fb1b5abf/README.md) |
 | Akagi | `v3.7.0` | `v3.7.0@a7565de28037c3759647d1d6327e5be42d11e924` | [`README.md`](https://github.com/shinkuan/Akagi/blob/v3.7.0/README.md)、[`mjai_bot/README.md`](https://github.com/shinkuan/Akagi/blob/v3.7.0/mjai_bot/README.md) |
@@ -295,11 +295,11 @@ stdio profileではstdoutをprotocol専用とし、診断をstderrへ分離す�
 - [GIMITE-MJAI] Gimite, “Mjai 麻雀AI対戦サーバ”.  
   https://gimite.net/pukiwiki/index.php?Mjai+%E9%BA%BB%E9%9B%80AI%E5%AF%BE%E6%88%A6%E3%82%B5%E3%83%BC%E3%83%90=
 - [GIMITE-SERVER] Gimite, `tcp_game_server.rb`.  
-  https://github.com/gimite/mjai/blob/master/lib/mjai/tcp_game_server.rb
+  https://github.com/gimite/mjai/blob/312c0c6f8446ca69ecc58e246840bffdad656541/lib/mjai/tcp_game_server.rb
 - [GIMITE-GAME] Gimite, `game.rb`.  
-  https://github.com/gimite/mjai/blob/master/lib/mjai/game.rb
+  https://github.com/gimite/mjai/blob/312c0c6f8446ca69ecc58e246840bffdad656541/lib/mjai/game.rb
 - [GIMITE-PLAYER] Gimite, `tcp_player.rb`.  
-  https://github.com/gimite/mjai/blob/master/lib/mjai/tcp_player.rb
+  https://github.com/gimite/mjai/blob/312c0c6f8446ca69ecc58e246840bffdad656541/lib/mjai/tcp_player.rb
 - [MORTAL-ENGINE] Equim-chan, Mortal `mortal.py`（`main@0cff2b52982be5b1163aa9a62fb01f03ce91e0d2`）。
   https://github.com/Equim-chan/Mortal/blob/0cff2b52982be5b1163aa9a62fb01f03ce91e0d2/mortal/mortal.py
 - [MORTAL-EVENT] Equim-chan, Mortal MJAI Event（`main@0cff2b52982be5b1163aa9a62fb01f03ce91e0d2`）。

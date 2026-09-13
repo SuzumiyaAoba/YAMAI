@@ -807,7 +807,7 @@ def check_release_manifest(manifest: Dict[str, Any], p: Dict[str, Any], r: Dict[
         raise ArtifactError("release_error", "release protocol version pin mismatch")
 
     validator = release.get("validator")
-    if not isinstance(validator, Mapping) or validator.get("path") != "scripts/validate_artifacts.py" or validator.get("command") != "rtk python3 scripts/validate_artifacts.py":
+    if not isinstance(validator, Mapping) or validator.get("path") != "scripts/validate_artifacts.py" or validator.get("command") != "python3 scripts/validate_artifacts.py":
         raise ArtifactError("release_error", "release validator metadata mismatch")
     _repo_file(validator.get("path"), "validator.path")
     if validator.get("support_files") != ["scripts/request_contract.py", "scripts/scoring_reference.py", "scripts/session_contract.py", "scripts/game_contract.py", "scripts/test_scoring_reference.py", "scripts/test_session_contract.py", "scripts/test_game_contract.py", "scripts/test_validator.py", "scripts/check_jsonschema.py", "scripts/score_oracle.py"]:
@@ -2266,7 +2266,7 @@ def check_scoring(schemas: SchemaSet, rules_registry: Mapping[str, Any]) -> Tupl
 def check_document_examples(schemas: SchemaSet, expected_hash: str) -> int:
     count = 0
     urn = f"urn:yamai:schema:yrc-0003:{PROTOCOL}:"
-    for path in (ROOT / "docs/yamai-protocol.md", ROOT / "docs/riichi-4p-rules.md"):
+    for path in (ROOT / "docs/yamai-protocol.md",):
         for match in re.finditer(r"```json\n(.*?)\n```", path.read_text(), re.S):
             line = path.read_text()[:match.start()].count("\n") + 1
             context = f"{path.name}:{line}"

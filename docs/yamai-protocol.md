@@ -25,35 +25,36 @@ YAMAI は JSON ベースのイベント語彙を MJAI から継承する一方�
 
 本書は YAMAI Project が管理する Standards Track Draft であり、IETF Internet Standard ではない。本書の配布に制限はない。
 
-本書は組込みriichi-4pの第7.6節を含む唯一の規範本文である。Schema、registry、vector、検査実装およびYRC 0005は派生成果物であり、競合時は本書を優先する。
+本書は組込みriichi-4pの第7.6節を含む唯一の規範本文である。Schema、registry、vectorおよび検査実装は派生成果物であり、競合時は本書を優先する。
 
 本書は実装および相互運用試験を目的とする Draft である。wire上のProtocol Versionは文書版と同じ `1.0-draft.6` とする。異なるdraft版は互換とみなしてはならない（MUST NOT）。安定版 `1.0` の割当ては、本文と整合したJSON Schema、registry、test vectorおよび2つ以上の独立した相互運用実装が公開された後に限る。
 
 ## Table of Contents
 
-1. 状態、規約および要件語
-2. 目的
-3. プロトコルモデル
-4. JSON と transport
-5. 共通 envelope
-6. 版・機能交渉
-7. `riichi-4p` profile
-8. 行動要求
-9. `ack` と timeout
-10. イベント順序
-11. visibility と mode
-12. エラー
-13. 再接続と snapshot
-14. 拡張
-15. 資源・安全要件
-16. MJAI からの移行
-17. 適合性
-18. Security Considerations
-19. Registry Considerations
-20. Normative References
-21. Informative References
-Appendix A. セッション状態機械
-Appendix B. 最小交換例
+1. [状態、規約および要件語](#1-状態規約および要件語)
+2. [目的](#2-目的)
+3. [プロトコルモデル](#3-プロトコルモデル)
+4. [JSON と transport](#4-json-と-transport)
+5. [共通 envelope](#5-共通-envelope)
+6. [版・機能交渉](#6-版機能交渉)
+7. [`riichi-4p` profile](#7-riichi-4p-profile)
+8. [行動要求](#8-行動要求)
+9. [`ack` と timeout](#9-ack-と-timeout)
+10. [イベント順序](#10-イベント順序)
+11. [visibility と mode](#11-visibility-と-mode)
+12. [エラー](#12-エラー)
+13. [再接続と snapshot](#13-再接続と-snapshot)
+14. [拡張](#14-拡張)
+15. [資源・安全要件](#15-資源安全要件)
+16. [MJAI からの移行](#16-mjai-からの移行)
+17. [適合性](#17-適合性)
+18. [Security Considerations](#18-security-considerations)
+19. [Registry Considerations](#19-registry-considerations)
+20. [Normative References](#20-normative-references)
+21. [Informative References](#21-informative-references)
+
+- [Appendix A. セッション状態機械](#appendix-a-セッション状態機械)
+- [Appendix B. 最小交換例](#appendix-b-最小交換例)
 
 ## 1. 状態、規約および要件語
 
@@ -604,7 +605,7 @@ IDの一意性は同一hostの運用・記録系列を範囲とし、新しいse
 
 ## 7. `riichi-4p` profile
 
-本節および §7.6 が `riichi-4p` の役、役満条件、ドラ bonus、符、基本点、支払、責任払い、流局および精算を完全に定義する。`docs/riichi-4p-rules.md` やその Schema/Oracle はこの節から生成される派生成果物であり、実装が別文書を参照しなければ意味を確定できない状態にしてはならない（MUST NOT）。
+本節および §7.6 が `riichi-4p` の役、役満条件、ドラ bonus、符、基本点、支払、責任払い、流局および精算を完全に定義する。採点のSchema、registry、vectorおよび検査実装はこの節に従う派生成果物であり、実装が別文書を参照しなければ意味を確定できない状態にしてはならない（MUST NOT）。
 
 ### 7.1 座席
 
@@ -1007,7 +1008,7 @@ chi/ponの複合打牌では `tsumogiri:false` とする。喰い替えは、鳴
 
 ### 7.6 `riichi-4p` の採点規範（完全定義）
 
-本節がprofile revision 1.0-draft.4の全採点規則を定める。YRC 0005は本節の派生資料であり、追加の規範を持たない。
+本節がprofile revision 1.0-draft.4の全採点規則を定める。
 
 #### 7.6.1. 要件語と適用範囲
 
@@ -2379,7 +2380,6 @@ chinroutou, ryuuiisou, chuuren_poutou, suukantsu, tenhou, chiihou
 
 ## 20. Normative References
 
-- [YRC 0005] YAMAI Project, “YAMAI `riichi-4p` 役・符・点数規則 (1.0-draft.4)”.
 - [JSON-SCHEMA-2020-12] JSON Schema Draft 2020-12, Core and Validation vocabularies.
   https://json-schema.org/draft/2020-12/json-schema-core
   https://json-schema.org/draft/2020-12/json-schema-validation
