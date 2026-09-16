@@ -7,9 +7,9 @@
 | 表題 | YAMAI Protocol Version 1 |
 | 分類 | Standards Track |
 | 状態 | Draft |
-| Protocol Version | 1.0-draft.5 |
-| 文書版 | 1.0-draft.5 |
-| 発行日 | 2026-08-30 |
+| Protocol Version | 1.0-draft.6 |
+| 文書版 | 1.0-draft.6 |
+| 発行日 | 2026-09-16 |
 | 更新対象 | なし |
 | 廃止対象 | なし |
 
@@ -25,7 +25,7 @@ YAMAI は JSON ベースのイベント語彙を MJAI から継承する一方�
 
 本書は YAMAI Project が管理する Standards Track Draft であり、IETF Internet Standard ではない。本書の配布に制限はない。
 
-本書は実装および相互運用試験を目的とする Draft である。wire上のProtocol Versionは文書版と同じ `1.0-draft.5` とする。異なるdraft版は互換とみなしてはならない（MUST NOT）。本書自身が Protocol と組込み `riichi-4p` profile の規範仕様であり、JSON Schema、registry、test vector、oracle、Quint model、validator は本書から生成・検証される派生成果物である。派生成果物との不一致がある場合は常に本書が優先され、成果物を修正して本書に追随させる。安定版 `1.0` の割当ては、独立した相互運用実装が公開された後に限る。
+本書は実装および相互運用試験を目的とする Draft である。wire上のProtocol Versionは文書版と同じ `1.0-draft.6` とする。異なるdraft版は互換とみなしてはならない（MUST NOT）。本書自身が Protocol と組込み `riichi-4p` profile の規範仕様であり、JSON Schema、registry、test vector、oracle、Quint model、validator は本書から生成・検証される派生成果物である。派生成果物との不一致がある場合は常に本書が優先され、成果物を修正して本書に追随させる。安定版 `1.0` の割当ては、独立した相互運用実装が公開された後に限る。
 
 ## Table of Contents
 
@@ -56,8 +56,8 @@ Appendix B. 最小交換例
 ## 1. 状態、規約および要件語
 
 - Protocol name: `yamai`
-- Version: `1.0-draft.5`
-- Date: 2026-08-30
+- Version: `1.0-draft.6`
+- Date: 2026-09-16
 - Initial profile: `riichi-4p`
 - Serialization: JSON
 - Transports: JSON Lines, WebSocket text frame
@@ -169,7 +169,7 @@ DecisionGroup = {
 
 TerminalRequest = {
   request_id, selected_action_id: action_id | null,
-  status: accepted | passed | superseded | defaulted,
+  status: accepted | passed | superseded | defaulted | cancelled,
   terminal_ack_seq, terminal_ack_wire_bytes
 }
 
@@ -180,7 +180,7 @@ StaleAttempt = {
 
 `issued_at`、`individual_deadline`、`group_start`、`common_deadline` はhostの同じmonotonic clock上の値であり、wall-clockまたはpeerが申告する時刻へ変換してはならない（MUST NOT）。`prior_time_bank_ms` はrequest発行時に一度だけ固定し、同一seatの別request、再送またはsnapshot受理で再計算してはならない。`first_arrival_ticket` は期限内の最初のactionだけに割り当て、以後のactionはcandidateを置換しない。
 
-`stale` は元requestのterminal recordに含めない。解決済みrequestへ後着したaction attemptだけを `StaleAttempt` として記録し、そのattemptに対する `stale` ACKを発行する。したがって、元requestの終端statusは `accepted`、`passed`、`superseded` または `defaulted` のいずれか一つであり、`stale` ACKによって置換・再解決してはならない（MUST NOT）。
+`stale` は元requestのterminal recordに含めない。解決済みrequestへ後着したaction attemptだけを `StaleAttempt` として記録し、そのattemptに対する `stale` ACKを発行する。したがって、元requestの終端statusは `accepted`、`passed`、`superseded`、`defaulted` または `cancelled` のいずれか一つであり、`stale` ACKによって置換・再解決してはならない（MUST NOT）。
 
 `KyokuState` は少なくとも `bakaze`、`kyoku`、`honba`、`kyotaku`、`oya`、`extension_round`、`hands`、`rivers`、`melds`、`dora_markers`、`wall_remaining`、`turn`、`reach_status`、`first_turn_eligible`、`kan_counts`、`rinshan`、`haitei` および `pending_kan` を持つ状態であり、第13.3節の `snapshot.state.kyoku` と同じ意味を持つ。`pending_requests` はwire上の投影であり、正準状態の `requests.active` は全seat分を保持する。`self_state` は正準状態の各seat別秘密状態であり、viewへ投影するまで共有してはならない（MUST NOT）。
 
@@ -205,6 +205,8 @@ errorを返す場合、gameの正準state、requestのactive/terminal record、g
 
 ### 3.2 Wire ledger と transaction
 
+`S` のgame/局/request/group/clockは卓全体で共有するが、negotiation/mode/view/seatおよびledger/head_seqはsessionごとに保持する。同じ卓の異なるseatは異なる `session_id` を持つ（MUST）。各sessionのledgerはそのviewへ実際に配信するmessageだけで構成し、非配信messageにseqを消費してはならない（MUST NOT）。game全体のevent順はhost内部の `game_event_index` で管理し、各sessionの `caused_by_seq` はその原因eventを当該sessionへ投影したseqへ写像する。`game_event_index` はwire memberではない。
+
 hostは、`welcome` より後に送信する全てのenveloped host message（`event`、`request`、`ack`、`error`、`snapshot`）を、送信キューへ渡す前に `ledger` へ登録しなければならない（MUST）。`MessageRecord` は少なくとも次を保持する。
 
 | field | 意味 |
@@ -219,13 +221,13 @@ hostは、`welcome` より後に送信する全てのenveloped host message（`e
 
 resume の ledger source は、対象 session に紐づく不変の host message ledger である。live の現在状態、別 transport の送信バッファ、Player が保存した表示状態を source としてはならない（MUST NOT）。game を跨ぐ replay は game_id ごとの不変 event/ack 記録から同じ projection を作り、対象 session の ledger と混同してはならない。snapshot は ledger prefix の正準状態を圧縮した投影であり、snapshot の後に ledger の同じ seq を再生成してはならない。ledger が失われた場合、host は推測で再送せず `resume_unavailable` を返して新規 snapshot または新規 session を要求する。
 
-同一transaction内のmessageには同じ `transaction_id` を付与する。次の範囲だけが一つのtransactionになれる（MUST）。
+同一game transaction内のledger entryには同じ内部 `transaction_id` を付与する。これはwire memberではない。複数sessionのledger予約とgame state更新を一括commitし、各sessionにはそのseatのACKだけを、続いて採用event列を送る。各session内のseq連続性とACK→event順を保ち、他seatのACKを連番埋めのために公開してはならない（MUST NOT）。次の範囲だけが一つのtransactionになれる（MUST）。
 
 | operation | 送信順（seq順） | commit条件 |
 |---|---|---|
 | 単独action | `ack`、必要なら後続event | ackの終端決定とevent適用 |
 | decision group | memberごとの全terminal `ack`、採用eventまたは`end_kyoku` | groupのlinearization point |
-| chombo | offender の不正 attempt に対する `rejected`（非終端）、その offender request の `defaulted` を含む全 request の terminal ack、penalty `end_kyoku` | 全request terminal化。`rejected` は診断であり、chombo transaction の終端は各requestの `defaulted`/`stale` ack である |
+| chombo | offender の不正 attempt に対する `rejected`（非終端）、全未解決requestの `cancelled` ack、penalty `end_kyoku` | 全requestを取消し。候補/defaultを実行しない |
 | resume | `welcome`（seqなし）、ledgerの再送 | 指定範囲を送信可能な状態 |
 | snapshot | `snapshot` | snapshot stateと置換範囲をledgerへ登録 |
 
@@ -239,13 +241,13 @@ transaction内のackとeventの間に別transactionのhost messageを挿入し�
 |---|---|---|---|
 | `hello` | 新しい transport/session が接続され、まだ `hello` を送っていない | Host が negotiation context を作成して `hello` を **最初の application message として送信**し、Player の `join` を待つ。Player は `hello` を送信してはならない | `invalid_frame`/`invalid_json`/`invalid_message`、対応版がない場合は`unsupported_version` |
 | `join` | `hello`受信後、未確定session。version/profile/hash/capability/limit/mode/view/targetが一致 | seatを予約または割当て、session/game contextを作り、`welcome`（seqなし）を一度だけ送る | `unsupported_version`、`unsupported_profile`、`profile_mismatch`、`unsupported_capability`、`unsupported_limit`、`resource_limit`（requested seat不可）、`resume_unavailable` |
-| `welcome` | 有効な`join`を受理済み。まだapplication messageを送っていない | sessionを`ACTIVE`にし、`game`を`NOT_STARTED`にする。新規playなら次のhost messageを`start_game(seq=1)`にする | hostがこの前提を満たさない出力は`invalid_message`（受信側はfatal） |
+| `welcome` | 有効な`join`を受理済み。まだapplication messageを送っていない | 新規sessionは`ACTIVE`とし、新規play/replayの受信側game projectionだけを`NOT_STARTED`にする。新規playはgame開始前に参加し、次のhost messageを`start_game(seq=1)`とする。spectateは初期snapshotで現在stateを導入する。hostの既存gameおよびresumeの局・時計・request・適用済みprefixはwelcomeで初期化しない | hostがこの前提を満たさない出力は`invalid_message`（受信側はfatal） |
 | `event` | session ACTIVE、eventの前後条件（第10.4節）を満たす。seqがledgerの次である | event payloadを正準stateへ適用し、ledgerへ登録する | `sequence_gap`、`sequence_conflict`、状態・Schema違反は`invalid_message` |
 | `request` | session ACTIVE、gameが継続中、原因eventが適用済み、active request数/seat/group制約を満たす | requestをactiveへ登録し時計を開始またはgroupへ予約し、ledgerへ登録する | `resource_limit`、`invalid_message`、原因seq不明なら`invalid_message` |
 | `action` | Player → Host の application envelope（`yamai`/`kind`/`session_id`/`game_id`/`request_id`/`action_id`）。対象requestがactiveまたはterminal historyにあり、action_idがcandidateに対応 | attemptを記録。単独ならackと適用event、groupならlinearizationまでack/eventを保留 | 未知requestまたは候補不一致は`invalid_action`。同一requestの異なる再送は`request_conflict`。Schema/ID/session違反は第12節の`invalid_message` |
-| `ack` | hostがaction/default/競合を一度だけ決定済み。requestがactiveまたは既存terminalの再送 | activeをterminalへ移し、ledgerへ登録。`accepted`/`defaulted`のstate eventは同transactionの後続で適用 | request不明、status遷移不正、seq不正は`invalid_message` |
+| `ack` | hostがaction/default/取消しまたはattemptへの応答を決定済み | `accepted/passed/superseded/defaulted/cancelled` はactiveをterminalへ移し、ledgerへ登録。`rejected/stale` は元requestの終端決定を変更しない。`accepted`/`defaulted`のstate eventは同transactionの後続で適用 | request不明、status遷移不正、seq不正は`invalid_message` |
 | `error` | error codeとseverityが送信方向・状態に適合 | recoverableはgame stateを変えず診断履歴だけを残す。ただし`sequence_gap`にはledgerの完全範囲replayまたは許可されたsnapshotを返す。fatalはsessionをENDED相当の停止状態へ移す。host errorはledgerへ登録 | error自身のSchema/方向違反は相手へ適用せずtransportを終了 |
-| `snapshot` | resume/sequence gapの応答として許可された置換。stateが同じprofile/viewの完全射影 | snapshotをledgerへ登録し、受信側はstate、active requestおよび適用済みseqを置換 | 置換関係、visibility、pending requestまたはseq違反は`invalid_message`。復旧不能は`resume_unavailable` |
+| `snapshot` | resume/sequence gapの応答、または新規spectateの初期同期として許可された置換。stateが同じprofile/viewの完全射影 | snapshotをledgerへ登録し、受信側はstate、active requestおよび適用済みseqを置換 | 置換関係、visibility、pending requestまたはseq違反は`invalid_message`。復旧不能は`resume_unavailable` |
 
 hostがrecoverable errorを返す場合、そのerror message自体には新しいseqを割り当て、ledgerに登録しなければならない（MUST）。playerが送るerrorにはseqを割り当ててはならない。受信側は不正なhost messageを部分適用せず、どのerrorが選択されたかを決定的に記録できなければならない（MUST）。
 
@@ -292,7 +294,7 @@ TCP と標準入出力は同じフレーミングを使用できる（MAY）。T
 
 ### 4.3 WebSocket transport
 
-- endpoint はWebSocket subprotocol `yamai.1.draft5` を交渉する（MUST）
+- endpoint はWebSocket subprotocol `yamai.1.draft6` を交渉する（MUST）
 - 1 text message は1個の YAMAI message だけを含む（MUST）
 - 送信者は [RFC 6455] に従って text message を複数 frame へ分割できる（MAY）
 - 受信者は分割された frame を完全な text message へ再構成してから JSON を解析する（MUST）
@@ -309,7 +311,7 @@ transport は message の意味を変更してはならない（MUST NOT）。ba
 
 ```json
 {
-  "yamai": "1.0-draft.5",
+  "yamai": "1.0-draft.6",
   "kind": "event",
   "session_id": "s_01J6...",
   "game_id": "g_01J6...",
@@ -325,7 +327,7 @@ transport は message の意味を変更してはならない（MUST NOT）。ba
 | `session_id` | 必須 | 接続を越えて再開可能なセッションID |
 | `game_id` | 必須 | 一意なゲームID |
 | `seq` | 必須 | セッション内で1から単調に1増加する番号 |
-| `original_seq` | replay eventでは必須、それ以外は禁止 | replay元記録のhost message seq。replay sessionの振り直し前の番号 |
+| `original_seq` | replay eventでは必須、それ以外は禁止 | replay元記録のseq（game記録はgame_event_index）。replay sessionの振り直し前の番号 |
 
 ID は64文字以下の ASCII `[A-Za-z0-9._:-]` でなければならない（MUST）。ID の内部構造を受信側が解釈してはならない（MUST NOT）。
 
@@ -363,18 +365,18 @@ hostは同一 `seq` の再送、resume replayおよびrange replayに、ledger e
 
 ### 6.1 `hello`
 
-接続を確立した Host が最初の YAMAI application message として `hello` を送信する。Player は `hello` を送信してはならず（MUST NOT）、`hello` 受信前の `join`、`error` 以外の message も送信してはならない。Host は同一 transport/session へ `hello` を二度送ってはならず、再交渉は新しい session で行う。
+接続を確立した Host が最初の YAMAI application message として `hello` を送信する。Player は `hello` を送信してはならず（MUST NOT）、`hello` 受信前の `join`、`error` 以外の message も送信してはならない。Host は同一transport接続へ `hello` を二度送ってはならない。新しい接続では再度 `hello`/`join`/`welcome` を行い、resume成功時は既存session IDと状態を引き継ぐ。
 
 ```json
 {
   "kind": "hello",
   "protocol": "yamai",
-  "versions": ["1.0-draft.5"],
+  "versions": ["1.0-draft.6"],
   "profiles": [
     {
       "name": "riichi-4p",
-      "revisions": ["1.0-draft.3"],
-      "hashes": {"1.0-draft.3": "sha256:811182d20eb1d33304913f3f9a91cfc68d9304a08230affff0ffb4ba21bdf5d5"}
+      "revisions": ["1.0-draft.4"],
+      "hashes": {"1.0-draft.4": "sha256:ec1cc41fbea385eccd88a5020c62e6f5e523669d5e2c42ac2f55847dca7f0726"}
     }
   ],
   "capabilities": {"required": [], "optional": ["resume", "snapshot"]},
@@ -387,13 +389,13 @@ hostは同一 `seq` の再送、resume replayおよびrange replayに、ledger e
 ```json
 {
   "kind": "join",
-  "version": "1.0-draft.5",
+  "version": "1.0-draft.6",
   "mode": "play",
   "view": "seat",
   "seat": 0,
   "profile": "riichi-4p",
-  "profile_revision": "1.0-draft.3",
-  "profile_hash": "sha256:811182d20eb1d33304913f3f9a91cfc68d9304a08230affff0ffb4ba21bdf5d5",
+  "profile_revision": "1.0-draft.4",
+  "profile_hash": "sha256:ec1cc41fbea385eccd88a5020c62e6f5e523669d5e2c42ac2f55847dca7f0726",
   "client": {"name": "ExampleAI", "version": "2.3.0"},
   "capabilities": {"required": [], "optional": ["resume", "snapshot"]},
   "receive_limits": {"max_message_bytes": 1048576, "max_json_depth": 64, "max_unresolved_requests": 4},
@@ -406,8 +408,8 @@ hostは同一 `seq` の再送、resume replayおよびrange replayに、ledger e
 `hello.profiles` は profile 名ごとの対応revisionと、そのrevisionに対応する `sha256:` 付き64桁小文字hexのhashを提示する。`revisions` と `hashes` のキー集合は一致しなければならない（MUST）。`riichi-4p` の現行固定 hash は次の値である。
 
 ```text
-profile_revision = 1.0-draft.3
-profile_hash     = sha256:811182d20eb1d33304913f3f9a91cfc68d9304a08230affff0ffb4ba21bdf5d5
+profile_revision = 1.0-draft.4
+profile_hash     = sha256:ec1cc41fbea385eccd88a5020c62e6f5e523669d5e2c42ac2f55847dca7f0726
 ```
 
 hash の計算入力は、本書の規範表を機械可読化した次の **7個の論理 JSON object** であり、ファイルの所在や外部 registry を参照しない。object のキー名は固定し、順序は意味を持たない。
@@ -424,7 +426,7 @@ hash の計算入力は、本書の規範表を機械可読化した次の **7�
 
 `join.profile_revision` と `join.profile_hash` は同じ広告済み組を選択し、`hello` に存在しなければならない（MUST）。`welcome` は選択結果をそのまま返さなければならない（MUST）。revisionまたはhashが一致しない場合、hostは `profile_mismatch` で拒否しなければならない（MUST）。固定 hash を変更する場合は profile_revision を上げ、本文・派生成果物・vectorを同一releaseで更新する。
 
-`capabilities` は `required` と `optional` の2配列を持たなければならない（MUST）。重複および両配列への同一値の記載は禁止する（MUST NOT）。`required` はpeerが理解しない場合に交渉を拒否する機能、`optional` は両者が提示した場合だけ有効になる機能である。両者の `required` はpeerの `required` または `optional` に含まれなければならず（MUST）、満たせない場合は `unsupported_capability` で拒否する。未知のexperimental capabilityは `optional` なら無視できるが、`required` なら拒否しなければならない。安定 capability は小文字 snake case、実験用 capability は `x-<owner>-<name>` とする。`resume` capabilityは `play` modeでだけ有効であり、`spectate` または `replay` modeでは交渉済みoptional一覧に双方が含めても有効化してはならない（MUST NOT）。
+`capabilities` は `required` と `optional` の2配列を持たなければならない（MUST）。重複および両配列への同一値の記載は禁止する（MUST NOT）。`required` はpeerが理解しない場合に交渉を拒否する機能、`optional` は両者が提示した場合だけ有効になる機能である。両者の `required` はpeerの `required` または `optional` に含まれなければならず（MUST）、満たせない場合は `unsupported_capability` で拒否する。未知のexperimental capabilityは `optional` なら無視できるが、`required` なら拒否しなければならない。安定 capability は小文字 snake case、実験用 capability は `x-<owner>-<name>` とする。`spectate` は `snapshot` capabilityを双方が提示した場合にだけ成立し、未交渉なら `unsupported_capability` で拒否する（MUST）。`resume` capabilityは `play` modeでだけ有効であり、`spectate` または `replay` modeでは交渉済みoptional一覧に双方が含めても有効化してはならない（MUST NOT）。
 
 新規sessionを要求する `join` は `resume` memberを省略する。`play` の新規joinでは `seat` memberを省略してもよく（MAY）、その場合hostは空いているseatのうち最小のseatを割り当てる。`seat` memberを指定した場合、hostはそのseatを割り当てなければならず（MUST）、既に予約済み・参加済みまたはprofile上割り当て不能なら `resource_limit` で拒否しなければならない（MUST）。hostはjoinの到着順以外の隠れた規則でseatを変更してはならず（MUST NOT）、assignment結果を `welcome.seat` に記録する。従って `welcome.seat == join.seat` は `join.seat` が存在する場合だけ要求され、省略時は `welcome.seat` がhostの最小空席割当と一致しなければならない（MUST）。seat割当は `welcome`送信前にsession stateへcommitされ、失敗時に別seatへ暗黙にfallbackしてはならない（MUST NOT）。
 
@@ -433,16 +435,16 @@ hash の計算入力は、本書の規範表を機械可読化した次の **7�
 ```json
 {
   "kind": "join",
-  "version": "1.0-draft.5",
+  "version": "1.0-draft.6",
   "mode": "play",
   "view": "seat",
   "profile": "riichi-4p",
-  "profile_revision": "1.0-draft.3",
-  "profile_hash": "sha256:811182d20eb1d33304913f3f9a91cfc68d9304a08230affff0ffb4ba21bdf5d5",
+  "profile_revision": "1.0-draft.4",
+  "profile_hash": "sha256:ec1cc41fbea385eccd88a5020c62e6f5e523669d5e2c42ac2f55847dca7f0726",
   "client": {"name": "ExampleAI", "version": "2.3.0"},
   "capabilities": {"required": [], "optional": ["resume", "snapshot"]},
   "receive_limits": {"max_message_bytes": 1048576, "max_json_depth": 64, "max_unresolved_requests": 4},
-  "resume": {"token": "rt_01J6...", "last_seq": 120}
+  "resume": {"token": "rt_example_0123456789abcdef", "last_seq": 120}
 }
 ```
 
@@ -452,18 +454,18 @@ hash の計算入力は、本書の規範表を機械可読化した次の **7�
 
 ```json
 {
-  "yamai": "1.0-draft.5",
+  "yamai": "1.0-draft.6",
   "kind": "welcome",
   "session_id": "s_01J6...",
   "game_id": "g_01J6...",
   "resumed": false,
-  "resume": {"token": "rt_01J6...", "expires_in_ms": 600000},
+  "resume": {"token": "rt_example_0123456789abcdef", "expires_in_ms": 600000},
   "seat": 0,
   "mode": "play",
   "view": "seat",
   "profile": "riichi-4p",
-  "profile_revision": "1.0-draft.3",
-  "profile_hash": "sha256:811182d20eb1d33304913f3f9a91cfc68d9304a08230affff0ffb4ba21bdf5d5",
+  "profile_revision": "1.0-draft.4",
+  "profile_hash": "sha256:ec1cc41fbea385eccd88a5020c62e6f5e523669d5e2c42ac2f55847dca7f0726",
   "players": [
     {"seat": 0, "name": "ExampleAI"},
     {"seat": 1, "name": "BotB"},
@@ -577,17 +579,19 @@ extension_available(S) =
   S.kyoku.extension_round < rules.extension.max_extra_rounds
 ```
 
-`extension_round` は「現在のgameで開始した延長局の通し番号」であり、通常局は0、最初の延長局は1である。同じ親の連荘を含め、延長局を1局終了するたびに番号を1増加させる。従って `start_kyoku.extension_round` は1から `max_extra_rounds` までの範囲に限られ、`max_extra_rounds` が4なら延長局は最大4局であり、4局目の終了後に5局目を開始してはならない（MUST NOT）。`renchan` であっても番号を再利用または据え置きしてはならない。
+`extension_round` は「現在のgameで開始した延長局の通し番号」であり、通常局は0、最初の延長局は1である。同じ親の連荘を含め、延長局を1局終了するたびに番号を1増加させる。従って延長局の `start_kyoku.extension_round` は1から `max_extra_rounds` までの範囲に限られ、`max_extra_rounds` が4なら延長局は最大4局であり、4局目の終了後に5局目を開始してはならない（MUST NOT）。`renchan` であっても番号を再利用または据え置きしてはならない。
 
-通常最終局（`base_final(S)` が真）の `end_kyoku` で最高scoreが `target_points` 以上なら `next.type = "end_game"` とする。target未満なら、`extension_available(S)` が真の場合に限り `next.extension_round = 1` として延長局を開始し、偽なら `next.type = "end_game"` とする。通常最終局でない通常局（`extension_round == 0` かつ `base_final(S)` が偽）では延長判定をせず、連荘または親流れを通常どおり選択して `next.extension_round = 0` とする。延長局（`extension_active(S)` が真）では、各 `end_kyoku` 後に最高scoreがtarget以上なら直ちに `next.type = "end_game"` とし、target未満なら `extension_available(S)` が真の場合だけ `next.extension_round = S.kyoku.extension_round + 1` を設定して続行し、偽なら `end_game` とする。通常局の `extension_round == 0` を延長局の `next` へコピーしてはならず、延長局の番号を0へ戻してはならない（MUST NOT）。
+通常最終局（`base_final(S)` が真）では、下記の `agariyame` が成立した場合だけ親継続より先に終了する。それ以外で `dealer_continues` が真なら通常局のまま `renchan` とし、`next.extension_round=0` を維持する。親流れの場合だけ最高scoreをtargetと比較し、target以上なら `end_game`、target未満かつ `extension_available(S)` が真なら `rotate, next.extension_round=1`、それ以外は `end_game` とする。通常最終局でない通常局では延長判定せず `extension_round=0` を維持する。延長局では各局終了時にtarget以上なら終了し、未到達なら上限未満の場合だけ継続して番号を1増加する（MUST）。
 
-`agariyame` の判定は `base_final(S)` でだけ行う。親が連荘し、`agariyame` が有効で、親の順位が1位かつ親scoreがtarget以上の場合は、延長判定より先に `next.type = "end_game"` とする。延長局で同じ条件を再適用して局数を増減させてはならない。`next.type == "renchan"` なら `next.oya` は現在のoya、`rotate` なら `(oya + 1) mod 4` とし、いずれの場合も上記の延長番号更新を同時に適用する。未使用の延長局があるという理由だけで、target到達後に追加局を開始してはならない（MUST NOT）。同点順位は常に `ranking_policy` で決定し、`end_game.rankings` はその結果と一致しなければならない（MUST）。
+`agariyame` の判定は `base_final(S)` でだけ行う。親が和了して連荘し、`agariyame` が有効で、親の順位が1位かつ親scoreがtarget以上の場合は、延長判定より先に `next.type = "end_game"` とする。延長局で同じ条件を再適用して局数を増減させてはならない。`next.type == "renchan"` なら `next.oya` は現在のoya、`rotate` なら `(oya + 1) mod 4` とし、いずれの場合も上記の延長番号更新を同時に適用する。延長局では未使用の局数だけを理由にtarget到達後の追加局を開始してはならない（MUST NOT）。通常最終局の親継続はこの延長終了規則の対象外である。同点順位は常に `ranking_policy` で決定し、`end_game.rankings` はその結果と一致しなければならない（MUST）。
 
 `ron_policy == "head_bump"` では、候補のうち `(actor - target + 4) mod 4` が最小の和了者だけを採用する。`multiple` では全和了者を採用する。`double_only` では二家和まで採用し、三家和は `sanchaho` として流局にする。`double_only` では `abortive_draws` に `sanchaho` を含め、それ以外では含めてはならない（MUST）。
 
 複数ロンの `first_winner` は `(actor - target + 4) mod 4` が最小の和了者とする。`multiple_ron_settlement.honba` は `each_winner` または `first_winner` である。前者は各winへ本場を加算し、後者はfirst winnerだけへ加算する。`kyotaku` は `first_winner` または `equal_split` である。`kyotaku` は供託本数で表し、点数は `kyotaku × riichi_stick_value` とする。`equal_split` では供託点を100点単位で等分し、除算の余りをfirst winnerへ加算する。未配分の供託本数はなく、`next.kyotaku` は配分後の本数でなければならない（MUST）。各winの `deltas` はこの配分と一致しなければならない（MUST）。
 
-`pao.yakus` は責任払いの対象役を列挙する。責任seatが決定された時点で、ホストは `pao` eventを記録しなければならない（MUST）。`pao.ron == "liable_all"` では責任seatが全額を支払う。`split` では責任seatの支払額を `ceil(hand_points / 2, 100)`、放銃seatの支払額を `hand_points - 責任seat支払額` とする。両seatが同じなら全額をそのseatが支払う。`pao.tsumo == "liable_all"` では責任seatが全額を支払い、`normal` では通常のツモ支払いとする。本場は和了点と同じ比率で同じ支払者へ配分し、供託は支払者と独立して和了者へ付与する。複数winでは各winの支払を独立に展開し、同一支払者の合算後もtop-level `deltas` と一致させる。ここで `ceil(x,100)` はx以上の最小の100の倍数である。
+`pao.yakus` は責任払いの対象役を列挙する。責任seatが決定された時点で、ホストは `pao` eventを記録しなければならない（MUST）。責任払いは対象役の役満値に対応する点数寄与へだけ適用し、複合する他の役満分は通常支払いとする。対象役の基本点を `8000 × value` として通常の個別丸め後支払総額 `liable_points` を求め、`pao.ron == "liable_all"` では責任seatがこの全額、`split` では責任seatが `ceil(liable_points / 2,100)`、放銃seatが残額を支払う。両seatが同じなら全額をそのseatが支払う。`pao.tsumo == "liable_all"` では責任seatが対象役分の全額を支払い、`normal` では通常のツモ支払いとする。役ごとの支払をpayer別に合算してから本場を加算する。
+
+通常ツモの本場は各支払者へ `honba_tsumo_value_per_payer × honba` を加算する。ロン、または責任払いで支払者を変更したツモでは、加算総額（ロンは `honba_ron_value × honba`、ツモは `3 × honba_tsumo_value_per_payer × honba`）を和了点のpayer別負担比率で配分する。100点単位へ切り捨て、残る100点単位を小数残余が大きいpayerから1単位ずつ加算する。同じ残余ならseat昇順を優先する。供託は卓の供託残高から和了者へ付与し、放銃者・責任seat・他のplayerへ二重に請求してはならない（MUST NOT）。複数winでは各winを独立に展開し、合算後の点差をtop-level `deltas` と一致させる。ここで `ceil(x,100)` はx以上の最小の100の倍数である。
 
 `noten_payment.total_points` は通常流局で授受する総点数である。聴牌者数を `t` とし、`total_points` は600の倍数でなければならない（MUST）。`0 < t < 4` の場合、各seatの純差額は、`t==1` なら聴牌者 `+total_points`・各不聴者 `-total_points/3`、`t==2` なら各聴牌者 `+total_points/2`・各不聴者 `-total_points/2`、`t==3` なら各聴牌者 `+total_points/3`・不聴者 `-total_points` とする。`t==0` または `t==4` の場合は全seatの差額を0とする。配分はseat単位の純差額で表し、個別seat間の支払明細を要求してはならない（MUST）。
 
@@ -599,8 +603,8 @@ extension_available(S) =
 2. `bankruptcy == "end_game"` かついずれかのscoreが `bankruptcy_threshold` 未満なら、他の条件に優先して `next.type = "end_game"` とする。
 3. 親が和了し `dealer_continuation.win` がtrue、通常流局で親が聴牌し `tenpai_draw` がtrue、または途中流局で `abortive_draw_continuation` がtrueなら `dealer_continues = true` とする。
 4. `S.kyoku.extension_round == 0` かつ `base_final(S)` が偽なら、`dealer_continues` なら `renchan`、それ以外なら `rotate` とする。この通常局では `next.extension_round = 0` を維持する（MUST）。
-5. `base_final(S)` が真なら、`agariyame`、`dealer_continues`、親rank 1および親scoreが `extension.target_points` 以上の全条件を満たす場合に `end_game` とする。そうでなくても最高scoreがtarget以上なら `end_game` とする。
-6. `base_final(S)` でtarget未満なら、`extension_available(S)` が真の場合だけ `renchan` または `rotate` を選び `next.extension_round = 1` とする。偽の場合は `end_game` とする。`extension_active(S)` では、target以上なら常に `end_game`、target未満なら `extension_available(S)` が真の場合だけ `dealer_continues` に応じた `renchan`/`rotate` と `next.extension_round = S.kyoku.extension_round + 1` を設定し、偽なら `end_game` とする。
+5. `base_final(S)` が真なら、親和了、`agariyame`、`dealer_continues`、親rank 1および親scoreがtarget以上の全条件を満たす場合に `end_game` とする。それ以外で親継続なら `renchan, extension_round=0` とし、target到達を理由に終了しない。親流れの場合だけ、最高scoreがtarget以上なら `end_game` とする。
+6. `base_final(S)` で親流れかつtarget未満なら、`extension_available(S)` が真の場合だけ `rotate` を選び `next.extension_round = 1` とする。偽の場合は `end_game` とする。`extension_active(S)` では、target以上なら常に `end_game`、target未満なら `extension_available(S)` が真の場合だけ `dealer_continues` に応じた `renchan`/`rotate` と `next.extension_round = S.kyoku.extension_round + 1` を設定し、偽なら `end_game` とする。
 
 `game_length == "tonpu"` の規定最終局は東4局、`tonnan` は南4局である。途中流局では本場を1増加する。通常流局は親の聴牌にかかわらず本場を1増加する。和了時は連荘なら本場を1増加し、親流れなら0へ戻す。
 
@@ -649,7 +653,7 @@ action 内の牌は公開牌文字列でなければならない（MUST）。赤
 
 `event` は状態を1回だけ変更する。プレイヤーは `seq` 順に event を適用しなければならない（MUST）。
 
-新規gameでは、`welcome` 完了後の最初のenveloped host `event`を `start_game` としなければならない（MUST）。そのmessageの `seq` は1であり、`start_game` より前に同じgameの `request`、`event` または `ack` を送信してはならない（MUST NOT）。
+新規play/replay sessionでは、`welcome` 完了後の最初のenveloped host `event`を `start_game` としなければならない（MUST）。そのmessageの `seq` は1であり、`start_game` より前に同じgameの `request`、`event` または `ack` を送信してはならない（MUST NOT）。
 
 本節の event 表および例は、共通 envelope の `event` member の値を示す。wire message は第5節の envelope で包まなければならない（MUST）。
 
@@ -703,7 +707,7 @@ action 内の牌は公開牌文字列でなければならない（MUST）。赤
         "pai": "7s",
         "fu": 40,
         "han": 4,
-        "yakus": [{"id": "reach", "value": 1, "unit": "han"}],
+        "yakus": [{"id": "riichi", "value": 1, "unit": "han"}],
         "bonuses": [{"id": "dora", "han": 2}, {"id": "uradora", "han": 1}],
         "ura_dora_markers": ["4p"],
         "pao": [],
@@ -855,7 +859,7 @@ action 内の牌は公開牌文字列でなければならない（MUST）。赤
 | `daisuushii` | 風牌の刻子/槓子4組 |
 | `tsuuiisou` | 字牌のみ |
 | `chinroutou` | 么九牌のみ |
-| `ryuuiisou` | `2s,3s,4s,6s,8s,S,F` のみ |
+| `ryuuiisou` | `2s,3s,4s,6s,8s,F` のみ |
 | `chuuren_poutou` | 門前で一色の `1112345678999` + 同一色任意1枚 |
 | `suukantsu` | 槓子4組 |
 | `tenhou` | 親の最初の自摸和了（それ以前に鳴きがない） |
@@ -894,7 +898,7 @@ bonus ID は `dora`、`uradora`、`akadora` の3種類である。ドラ表示�
 
 #### 7.6.8 責任払い（pao）
 
-責任払い対象は `rules.pao.yakus` にある役IDだけである。`daisangen` は既に異なる三元牌2組を成立させた後の3組目を `pon` または `daiminkan` したとき、そのcallの `target` を責任seatとして確定する。`daisuushii` は既に異なる風牌3組を成立させた後の4組目を `pon` または `daiminkan` したとき、そのcallの `target` を責任seatとして確定する。暗槓、加槓、自摸だけでは責任seatを新たに発生させない。役ごとの責任seatは `pao` event および `wins[].pao` に保存し、別役の責任を統合してはならない。ロン時の責任払いが `split` なら責任seatが和了点の半分を100点単位で切り上げた額、放銃seatが残額を支払う。`liable_all` は責任seatが全額を支払う。ツモ時の `liable_all` は責任seatが全額、`normal` は通常支払とする。本場も同じ支払者へ割り当て、供託は和了者へ独立に付与する。
+責任払い対象は `rules.pao.yakus` にある役IDだけである。`daisangen` は既に異なる三元牌2組を成立させた後の3組目を `pon` または `daiminkan` したとき、そのcallの `target` を責任seatとして確定する。`daisuushii` は既に異なる風牌3組を成立させた後の4組目を `pon` または `daiminkan` したとき、そのcallの `target` を責任seatとして確定する。暗槓、加槓、自摸だけでは責任seatを新たに発生させない。役ごとの責任seatは `pao` event および `wins[].pao` に保存し、別役の責任を統合してはならない。対象役の役満点数寄与だけを責任払いへ変更する。対象外の役満との複合、payer別合算、本場の100点単位の配分および供託は §7.2 の計算手順に従う。
 
 #### 7.6.9 流局・チョンボ精算
 
@@ -908,13 +912,17 @@ bonus ID は `dora`、`uradora`、`akadora` の3種類である。ドラ表示�
 
 採点検証fixtureを作成する場合、fixtureは正規化手牌、和了方法、局面state、適用ruleおよび期待する役、bonus、符、飜、基本点、支払明細、seat別 `deltas` を持つ。fixtureの `rules` はbase rule、`rule_overrides` はmember単位でbase ruleを置換する。`state.events` は本書のeventを適用した後の局面を表し、`honba` と `kyotaku` は精算入力時点の値（省略時は0）、直前状態が必要な `haitei`/`houtei` では `pre_state.wall_remaining=1`、自摸後の `state.wall_remaining=0` を用いる。公式fixture集合は、全通常役・全役満、通常形・七対子・国士無双、符の20/25/30符境界、切り上げ満貫、数え役満の12/13飜境界、赤五・表/裏ドラ、役満倍数、親ツモ、複数ロン、本場・供託、責任払い、チョンボおよび聴牌者数0〜4を少なくとも一件ずつ含み、期待値は入力から再計算可能でなければならない（MUST）。fixtureは仕様の追加定義ではなく、本節の検証入力である。
 
+採点入力の `input.result_type` は `hora`、`ryukyoku`、`penalty` を明示する。和了では `hand` に和了牌を加える前の手牌と副露、`winning_tile`、`win_method`、`actor`、`target`、表/裏ドラ表示牌を持つ。通常流局では4人分の `hands` から聴牌を計算し、チョンボでは `offender` を指定する。fixture ID、description、期待値から役・待ち・聴牌・精算方法を推測してはならない（MUST NOT）。`state.reach_accepted`、`double_riichi`、`ippatsu`、`first_turn` は和了者についての確定済み条件である。`events` が `start_kyoku` から始まる完全履歴なら、これらの条件を履歴から検証する。途中からの履歴では省略された過去を推測せず、明示された条件を使う。表/裏ドラは入力の表示牌配列を一度だけ数え、同じ牌の表示牌が複数あるときはその枚数分を加算する。
+
+採点fixture専用出力 `payments` はplayer間の支払、`kyotaku_points` は卓の供託から当該和了者への付与額を表す。`deltas` は `payments` の差額へ和了者の `kyotaku_points` を加算する。両memberはwireの `wins[]` へ追加せず、wireでは既定の `deltas` に集約する。役・bonusの重複をなくし、複数の分解および和了牌の配置を全て採点して §7.6.1 の最大点候補を選択する。
+
 ## 8. 行動要求
 
 ### 8.1 `request`
 
 ```json
 {
-  "yamai": "1.0-draft.5",
+  "yamai": "1.0-draft.6",
   "kind": "request",
   "session_id": "s_01J6...",
   "game_id": "g_01J6...",
@@ -947,7 +955,7 @@ bonus ID は `dora`、`uradora`、`akadora` の3種類である。ドラ表示�
 
 同じ打牌または加槓に複数プレイヤーが反応する request は、同じ `decision_group_id` を持たなければならない（MUST）。`decision_group_members` は当該groupに属する全requestの `{request_id,seat}` の配列であり、group内の全requestで同一でなければならない（MUST）。`decision_group_deadline_ms` は millisecond 単位の期間であり、group内の全memberのrequest messageを送信キューへ渡し終えた直後の最初の時刻を `group_start` としたとき、`group_start` から共通期限までの長さを表す。group内の各requestの個別時計は `group_start` より前に開始してはならず、個別deadlineは `group_start + rules.time_control.grace_ms + timeout_ms_i + time_bank_ms_i` とする。共通期限 `group_start + decision_group_deadline_ms` は全memberの個別deadline以上でなければならない（MUST）。`decision_group_deadline_ms` の上限は1,200,000msであるため、groupを発行するhostは全memberの個別deadlineがこの上限内へ収まる値を選ばなければならず（MUST）、収まらない組み合わせをgroupとして送信してはならない（MUST NOT）。例えば `rules.time_control.grace_ms == 3000`、各memberの `timeout_ms_i == 1000`、`time_bank_ms_i == 1000` のgroupでは、`decision_group_deadline_ms` は少なくとも5000でなければならない（MUST）。`decision_group_close` は本版では `all_resolved_or_deadline` 固定とする。ホストは当該 request を並列に発行できる（MAY）が、groupの全memberがterminalになるか共通期限へ達するまでstate eventを送信してはならない（MUST）。
 
-ここで `terminal` は、requestが `accepted`、`passed`、`superseded`、`defaulted` または `stale` のいずれかの終端ACKで解決済みであることをいう。`rejected` ACKはterminalではない。
+ここで `terminal` は、requestが `accepted`、`passed`、`superseded`、`defaulted` または `cancelled` のいずれかの終端ACKで解決済みであることをいう。`rejected` ACKはterminalではない。
 
 同一seatに同時に存在できる未解決requestは1個だけであり（MUST）、1個の `decision_group_members` に同じseatを2回以上含めてはならない（MUST NOT）。これによりtime bankはseatごとの共有残量から一度だけ消費される。
 
@@ -956,7 +964,7 @@ bonus ID は `dora`、`uradora`、`akadora` の3種類である。ドラ表示�
 requestの並行性はtransportの並行workerではなく、hostの単一state machineが決める。hostは次の順序でrequestを発行しなければならない（MUST）。
 
 1. 原因eventの適用後、全request ID、candidate、defaultおよびgroup descriptorを生成し、active requestへ予約する。
-2. 同一groupのrequestを `seat` の昇順（同一seatは不可）で並べ、その順序で `seq` を連続予約する。他のtransactionのmessageをgroup memberの間へ挿入してはならない（MUST NOT）。
+2. 同一groupのrequestを `seat` の昇順（同一seatは不可）で並べ、その順序で対象sessionそれぞれの `head_seq + 1` を予約する。異なるsession間のseqの大小・連続性は要求しない。他のtransactionのmessageをgroup memberの間へ挿入してはならない（MUST NOT）。
 3. 各requestのpayloadを一度だけwire bytesへ確定し、ledgerへ登録してから送信キューへ渡す。最後のmember payloadを送信キューへ渡し終えた後のhost単調時計の最初の時点を `group_start` とする。
 4. 全memberへ同じ `decision_group_members`、`decision_group_deadline_ms` および `decision_group_close` を設定する。descriptorの配列順は意味を持たないが、正準化・監査時はseat昇順とする。
 
@@ -975,17 +983,17 @@ groupの `D_G` は全 `D_i` 以上でなければならない（MUST）。時計
 
 hostはaction ingressとtimer expiryを同じstate-machine lockでlinearizeし、各操作へ単調時計の `arrival_ticket` を割り当てる。`elapsed_ms <= grace_ms + timeout_ms + time_bank_ms` のaction ingressは期限内候補になり得るが、deadlineと同じtimestampでexpiry ticketが先に、または同値のexpiry優先規則で処理された場合、そのactionは候補にならない。従って `elapsed_ms` の丸めやtransport workerの実行順で結果を変えてはならない（MUST NOT）。
 
-groupの `linearization point` は、全memberがterminal candidate（応答またはdefault）になった時点、または `D_G` のexpiry処理時点に、state-machine lock内で一度だけ記録する。linearization pointまでは候補を外部へ `accepted`/`passed`/`superseded` として確定してはならず、同groupを再評価してはならない（MUST NOT）。複数のopen operationが存在する実装では、`operation_key = (min(caused_by_seq), decision_group_id または request_id)` の辞書順で最小のoperationだけを次にlinearizeする。先行operationが未解決の間、後続operationのstate eventをcommitしてはならない（MUST）。
+groupの `linearization point` は、全memberがterminal candidate（応答またはdefault）になった時点、または `D_G` のexpiry処理時点に、state-machine lock内で一度だけ記録する。linearization pointまでは候補を外部へ `accepted`/`passed`/`superseded` として確定してはならず、同groupを再評価してはならない（MUST NOT）。複数のopen operationが存在する実装では、`operation_key = (原因eventのgame_event_index, decision_group_id または request_id)` の辞書順で最小のoperationだけを次にlinearizeする。先行operationが未解決の間、後続operationのstate eventをcommitしてはならない（MUST）。
 
 requestの最初の期限内action ingressまたは個別deadlineによるdefault固定時に、`elapsed_ms` を一度だけ確定し、`consumed_ms = min(max(0, elapsed_ms - grace_ms - timeout_ms), prior_time_bank_ms)` をそのseatのbankから控除する。候補固定後にgroup closeを待つ時間は同じrequestのbankを追加消費しない。ACKの `time_bank_ms` はこの控除後の値であり、group内の他requestとの待ち時間を二重に差し引いてはならない（MUST NOT）。
 
-linearization後のackはmemberの `seat` 昇順、同seat不可、の順で生成する。各ackのseqを連続予約し、全memberのackをcommitしてから採用eventまたは `end_kyoku` を同じtransactionで送信する。採用eventの内容はlinearization pointで凍結したcandidate集合からだけ計算し、後着action・後着timeout・再接続を結果へ混在させてはならない（MUST NOT）。
+linearization後のackはmemberの `seat` 昇順、同seat不可、の順で生成する。各ackのseqを対象sessionのledgerへ予約し、全sessionの更新を一つのgame transactionとしてcommitしてから採用eventまたは `end_kyoku` を同じtransactionで送信する。採用eventの内容はlinearization pointで凍結したcandidate集合からだけ計算し、後着action・後着timeout・再接続を結果へ混在させてはならない（MUST NOT）。
 
 ### 8.2 `action`
 
 ```json
 {
-  "yamai": "1.0-draft.5",
+  "yamai": "1.0-draft.6",
   "kind": "action",
   "session_id": "s_01J6...",
   "game_id": "g_01J6...",
@@ -1044,7 +1052,7 @@ group close transactionでは、応答済みで採用されたcandidateのstatus
 3. `chi`: 複数候補は同じ距離式の最小の1人を採用する。
 4. 採用候補がない場合は全ての `none` を受理し、次のtsumoへ進む。
 
-`hora` が1個以上採用された場合、副露候補は全て `superseded` とし、1個の `end_kyoku` を送る。副露候補を採用した場合、同groupの他候補を `superseded` とし、全ackを送信してから採用eventを1個だけ送る。全memberのackと採用eventは同一groupのtransactionに属し、group解決中に別のstate eventまたは次groupのrequestを送信してはならない（MUST NOT）。
+`hora` が1個以上採用された場合、副露候補は全て `superseded` とし、1個の `end_kyoku` を送る。副露候補を採用した場合、同groupの他候補を `superseded` とし、各sessionの全ackを送信してから採用event列（chi/ponは鳴きとdahaiの2個、daiminkanは1個）を送る。全memberのackと採用eventは同一groupのtransactionに属し、group解決中に別のstate eventまたは次groupのrequestを送信してはならない（MUST NOT）。
 
 合法であったが他家の優先行動に負けた action の status は `rejected` ではなく `superseded` とする（MUST）。当該 action をチョンボ等の違法行動として扱ってはならない（MUST NOT）。
 
@@ -1064,13 +1072,13 @@ JSON 構文違反、message Schema 違反または `session_id` 不一致は、�
 
 構文とenvelopeが正しいが、現在の未解決requestにも終端履歴にも存在しない `request_id` を持つ `action` は、recoverable `invalid_action` errorとして扱わなければならない（MUST）。この場合、request、stateおよび終端履歴を新たに作成または変更してはならない（MUST NOT）。
 
-`chombo` が発生した場合、offenderの不正actionにはまず `rejected` ack（非終端）を送信する。その後、offender request自身には `defaulted`、同じgroupおよび他のgroupに残る全未解決requestには `stale` ackを発行し、全requestをterminal化してから `result.type == "penalty"` の `end_kyoku` を送信しなければならない（MUST）。既に確定したactionのackを後から `stale` へ変更してはならない。新しいactionを受理してpenaltyへ混在させてはならない（MUST NOT）。`end_kyoku` の `result.reason` は `illegal_action`、`result.penalty.payments` と `deltas` は `rules.chombo` の配分へ一致させ、`next` は通常の局進行規則で決定する。これにより `end_kyoku` 送信時に未解決requestを残してはならない。
+`chombo` が発生した場合、offenderの不正actionにはまず `rejected` ack（非終端）を送信する。その後、offender自身を含む全未解決requestには `cancelled` ack（`action_id=null`）を発行し、全requestをterminal化してから `result.type == "penalty"` の `end_kyoku` を送信しなければならない（MUST）。既に終端化したrequestのackを後から `cancelled` へ変更してはならない。新しいactionを受理してpenaltyへ混在させてはならない（MUST NOT）。`end_kyoku` の `result.reason` は `illegal_action`、`result.penalty.payments` と `deltas` は `rules.chombo` の配分へ一致させ、`next` は通常の局進行規則で決定する。これにより `end_kyoku` 送信時に未解決requestを残してはならない。
 
 ## 9. `ack` と timeout
 
 ```json
 {
-  "yamai": "1.0-draft.5",
+  "yamai": "1.0-draft.6",
   "kind": "ack",
   "session_id": "s_01J6...",
   "game_id": "g_01J6...",
@@ -1091,20 +1099,21 @@ JSON 構文違反、message Schema 違反または `session_id` 不一致は、�
 | `passed` | `none` が受理された | 変更なし |
 | `superseded` | 合法だが優先行動に負けた | 変更なし |
 | `defaulted` | 期限切れで既定行動を採用 | 後続 event で適用 |
-| `stale` | 古い・解決済み request への応答 | 変更なし |
-| `rejected` | request/action の組が不正 | 常に非終端。`invalid_action_policy == reject` では recoverable `invalid_action` errorを伴って元requestを期限まで維持し、`default`/`chombo` では第8.5節の処理に従い直後に `defaulted` または `stale`/`superseded` の終端ackを送る |
+| `cancelled` | チョンボで未解決requestを取り消した | 候補/defaultを適用しない。`action_id=null` |
+| `stale` | 古い・解決済み request への応答 | 元requestの終端状態は変更しない |
+| `rejected` | request/action の組が不正 | 常に非終端。`invalid_action_policy == reject` では recoverable `invalid_action` errorを伴って元requestを期限まで維持し、`default`/`chombo` では第8.5節の処理に従い `defaulted` または `cancelled` の終端ackを送る |
 
-requestのlifecycle recordには、最初に確定した終端決定を一つだけ保存する。`accepted`、`passed`、`superseded`、`defaulted` は、そのrequestの候補を確定する終端statusであり、ackと同じtransaction内の後続event（必要な場合）へ一度だけ反映する。`stale` は解決済みrequestへ後着した一つのaction attemptに対する応答であり、wire上は終端statusであっても、元requestのterminal recordを置換・追加せず、元の選択、元のstatusおよび元のack seqを保持する。従って、元requestの正準terminal ackは一つだけであり、`stale` ackを理由にstate event、点数、groupの再解決を行ってはならない（MUST NOT）。
+requestのlifecycle recordには、最初に確定した終端決定を一つだけ保存する。`cancelled` はチョンボによる取消しを記録する終端statusで、候補を実行しない。取消し時、既に固定済みのelapsed/bankは維持し、未固定なら取消し時点の経過時間で一度だけbankを精算する。`accepted`、`passed`、`superseded`、`defaulted` は、そのrequestの候補を確定する終端statusであり、ackと同じtransaction内の後続event（必要な場合）へ一度だけ反映する。`stale` は解決済みrequestへ後着した一つのaction attemptに対する応答であり、元requestのterminal recordを置換・追加せず、元の選択、元のstatusおよび元のack seqを保持する。従って、元requestの正準terminal ackは一つだけであり、`stale` ackを理由にstate event、点数、groupの再解決を行ってはならない（MUST NOT）。
 
 同じrequestへ同じ `action_id` を送った完全重複は、最初のaction attemptの結果が既にledgerにある場合、新しいapplication messageを生成せず無視してよい（MAY）。異なる `action_id` は、requestがactiveなら最初の期限内候補を維持して `request_conflict` errorを返し、requestがterminalなら元のterminal decisionを維持して `stale` ackを一つ返す。`request_conflict` errorと`stale` ackは新しいhost seqを持つ別entryだが、元requestのterminal recordへ追加の決定を行わない（MUST）。groupのlinearization前に異なるactionが到着した場合も、最初にlockへ登録された期限内candidateを保持し、後着を採用候補へ混在させてはならない。
 
-すべての `ack` は `request_id`、`status`、`action_id`、`elapsed_ms` および `time_bank_ms` を持たなければならない（MUST）。`action_id` は当該statusに対応する選択（`rejected` では受信したaction）を表す。`elapsed_ms` は、単独requestではその `group_start=issued_at`、decision groupでは全memberを送信キューへ渡し終えた共通 `group_start` からの確定経過時間であり、request個別の送信開始時刻を起点にしてはならない。`time_bank_ms` はack適用後の残量であり、いずれも0以上1,800,000以下、後者は0以上600,000以下でなければならない（MUST）。`rejected` 以外のackはwire上の終端状態であり、`rejected` ackだけを送って元requestを終端化してはならない（MUST NOT）。終端状態へ遷移した後の再送は、旧ackを通常送信へ挿入せず、第13節のreplayまたはsnapshotの履歴としてだけ扱う。
+すべての `ack` は `request_id`、`status`、`action_id`、`elapsed_ms` および `time_bank_ms` を持たなければならない（MUST）。`action_id` は当該statusに対応する選択（`rejected`/`stale` では受信したaction）を表す。`cancelled` だけは未採用を表す `null` とし、他statusではID文字列を必須とする。`elapsed_ms` は、単独requestではその `group_start=issued_at`、decision groupでは全memberを送信キューへ渡し終えた共通 `group_start` からの確定経過時間であり、request個別の送信開始時刻を起点にしてはならない。`time_bank_ms` はack適用後の残量であり、いずれも0以上1,800,000以下、後者は0以上600,000以下でなければならない（MUST）。`rejected` と `stale` は元requestの終端決定ではない。これらのackだけを送ってactive requestを終端化してはならない（MUST NOT）。終端状態へ遷移した後の再送は、旧ackを通常送信へ挿入せず、第13節のreplayまたはsnapshotの履歴としてだけ扱う。
 
 期限の計測は、ホストの単調増加する時計で、単独requestでは完全なrequest messageを当該transportの送信キューへ渡し終えた直後、decision groupでは全memberのrequest messageを送信キューへ渡し終えた直後の最初の時点に開始する（MUST）。JSON LinesではLFを含む1行をflushした時点、WebSocketではtext message全体（fragmentを含む）を送信APIへ渡し終えた時点を各handoffとする。groupの全memberは最後のhandoff後の共通 `group_start` から計測し、個別handoffの時刻を起点にしてはならない。`elapsed_ms` はこの起点からの経過時間を切り捨てた整数である。deadlineの期間は `grace_ms + timeout_ms + time_bank_ms` であり、action ingressはその期間内にstate-machine lockへ到達した場合に限り期限内候補となる。同じdeadline timestampでaction ingressとtimeout expiryが競合した場合は、第8.1.1節のexpiry優先規則によりtimeoutを採用する。`elapsed_ms <= grace_ms + timeout_ms` の場合、time bankを消費しない。超過した場合の消費量は `min(max(0, elapsed_ms - grace_ms - timeout_ms), prior_time_bank_ms)`、残量は `prior_time_bank_ms - consumed_ms` とする。ホストは ack の `elapsed_ms` と `time_bank_ms` に確定値を格納しなければならない（MUST）。`bank_scope` の開始時に残量を `rules.time_control.bank_ms` へresetしなければならない（MUST）。
 
 期限超過時、ホストは `default_action_id` を採用し、`defaulted` ack を送信しなければならない（MUST）。
 
-ホストが action を既に受理している場合、同じ `request_id` と `action_id` の再送には、元のackを通常送信へ再挿入せず、既に送信済みなら新しいapplication messageを生成してはならない（MUST NOT）。resumeまたはsequence-gapのreplayでは、最初のackを元の `seq` および内容で再送する。同じ `request_id` に異なる `action_id` が再送された場合、最初の選択を維持し、受信したactionの `request_id`、`action_id`、元のstatusを含むrecoverable `request_conflict` error（active requestの場合）または `stale` ack（terminal requestの場合）を返さなければならない（MUST）。timeoutによりrequestが既に `defaulted` で解決されている場合、後着actionを適用せず、新しい `seq` の `stale` ackを返さなければならない（MUST）。`accepted`、`passed`、`superseded` または `defaulted` へ遷移したrequestのID、最初に選択されたaction、terminal statusおよびackのwire内容は、少なくとも当該gameの `end_game` まで保持しなければならない（MUST）。後着attemptへの `stale` 応答も、再送時に同じpayloadを再利用できるよう保持する。
+ホストが action を既に受理している場合、同じ `request_id` と `action_id` の再送には、元のackを通常送信へ再挿入せず、既に送信済みなら新しいapplication messageを生成してはならない（MUST NOT）。resumeまたはsequence-gapのreplayでは、最初のackを元の `seq` および内容で再送する。同じ `request_id` に異なる `action_id` が再送された場合、最初の選択を維持し、受信したactionの `request_id`、`action_id`、元のstatusを含むrecoverable `request_conflict` error（active requestの場合）または `stale` ack（terminal requestの場合）を返さなければならない（MUST）。timeoutによりrequestが既に `defaulted` で解決されている場合、後着actionを適用せず、新しい `seq` の `stale` ackを返さなければならない（MUST）。`accepted`、`passed`、`superseded`、`defaulted` または `cancelled` へ遷移したrequestのID、最初に選択されたaction、terminal statusおよびackのwire内容は、少なくとも当該gameの `end_game` まで保持しなければならない（MUST）。後着attemptへの `stale` 応答も、再送時に同じpayloadを再利用できるよう保持する。
 
 ## 10. イベント順序
 
@@ -1131,6 +1140,8 @@ flowchart TD
   E -->|はい| F["end_kyoku"]
   E -->|いいえ| G["event kakan（otherwise, commit the meld）"]
 ```
+
+暗槓は常に `ankan_declared` → `ankan` の二段階とする。`ankan_chankan=never` または合法な槍槓候補がない場合、反応requestを発行せず同じoperation内で直ちに `ankan` をcommitする（MUST）。
 
 `kakan_declared` を受信したプレイヤーに `hora` が合法なら、ホストは request を発行しなければならない（MUST）。`ankan_chankan` が `kokushi_only` なら、国士無双で和了可能なプレイヤーに限り `ankan_declared` 後の request を発行する。
 
@@ -1185,10 +1196,10 @@ flowchart TD
 | event | 直前条件 | 適用後の更新 |
 |---|---|---|
 | `start_game` | sessionがactiveでgame未開始 | players、rules、scoresを初期化し、kyotakuを0とする |
-| `start_kyoku` | game開始済み、前局が終了 | hands、rivers、melds、dora、wall、oya、honba、kyotakuを指定値へ置換し、`first_turn_eligible`を全seat true、`kan_counts`を全seat 0、pendingを空にする |
+| `start_kyoku` | game開始済みで初局、または前局が終了し次局継続 | hands、rivers、melds、dora、wall、oya、honba、kyotakuを指定値へ置換し、`first_turn_eligible`を全seat true、`kan_counts`を全seat 0、pendingを空にする |
 | `tsumo` | `awaiting_draw`、actorが現在手番、live wallまたはrinshan牌が存在 | actorの手牌へpaiを追加し、live drawなら`wall_remaining`を1減らし、phaseを`awaiting_action`へ進める。live wall最後の牌なら`haitei`をtrueとする |
 | `dahai` | `awaiting_action`、actorが手番、paiがactorの手牌に存在 | paiをriverへ移し、`first_turn_eligible[actor]`をfalse、reactionが必要なら`awaiting_responses`へ進める |
-| `chi`/`pon`/`daiminkan` | 直前dahaiへのreaction groupが解決済み、採用候補 |対象牌を副露へ移し、対象seatのfirst-turn資格をfalseとし、chi/ponは直後のdahai request、daiminkanは嶺上drawへ進める |
+| `chi`/`pon`/`daiminkan` | 直前dahaiへのreaction groupが解決済み、採用候補 |対象牌を副露へ移し、対象seatのfirst-turn資格をfalseとし、chi/ponは同じ複合actionに含まれる直後のdahai event（追加requestなし）、daiminkanは嶺上drawへ進める |
 | `ankan_declared`/`kakan_declared` | `awaiting_action`、actorが手番、対象牌が合法 | `pending_kan`を設定し、槍槓判定が必要ならresponse groupへ進める。面子、`kan_counts`、doraはまだ更新しない |
 | `ankan`/`kakan`/`dora` | pending kanまたはkan-dora timingが許す状態 | pendingを確定し、該当actorの`kan_counts`を1増加、dora timingに従いdoraを追加する |
 | `reach_accepted` | 当該reachのreaction groupでhora/鳴きがなく、供託を控除可能 | actorのreach stateをaccepted、kyotakuを1増加、scores/deltasを同時に更新する |
@@ -1199,16 +1210,16 @@ flowchart TD
 
 | event | 必須前提条件 | 正準状態の更新 | 禁止される同時更新 |
 |---|---|---|---|
-| `start_game` | `session=ACTIVE`、`game=NOT_STARTED`、ledger headが0 | `game=READY`、players/rules/scoresを確定、`kyotaku=0`、`head`をeventのseqへ | `kyoku`、request、ack、点数以外の暗黙値 |
-| `start_kyoku` | `game=READY`、前局の`end_kyoku`がcommit済み、active request/groupが0 | `game=IN_KYOKU`、指定された局情報を新規局へ置換し、live wallとrinshan予約を初期化、`phase=awaiting_draw`、全reach=`none`、`pending_kan=null` | 前局のriver/meld/reach/pending、`extension_round`の再計算 |
+| `start_game` | `session=ACTIVE`、`game=NOT_STARTED`、新規play/replayはledger headが0、spectateは未開始stateの初期snapshotだけが適用済み | `game=READY`、players/rules/scoresを確定、`kyotaku=0`、`head`をeventのseqへ | `kyoku`、request、ack、点数以外の暗黙値 |
+| `start_kyoku` | `game=READY`、初局は`start_game`がcommit済み、2局目以降は前局の`end_kyoku`がcommit済みで`next.type!=end_game`、active request/groupが0 | `game=IN_KYOKU`、指定された局情報を新規局へ置換し、live wallとrinshan予約を初期化、`phase=awaiting_draw`、全reach=`none`、`pending_kan=null` | 前局のriver/meld/reach/pending、`extension_round`の再計算 |
 | `tsumo` | `phase=awaiting_draw`、actor=`turn.actor`、source tileが存在 | sourceがliveならlive wallを1減算、rinshanならrinshan予約だけを1消費、actor手牌へpaiを追加、`phase=awaiting_action`、`rinshan`/`haitei`をsourceに合わせる | 他seatの手牌公開、river追加、requestの先行commit |
 | `dahai` | `phase=awaiting_action`、actorが手番、paiが一枚だけ手牌にある、pendingなし | paiをactor riverへ一度だけ移し、`first_turn_eligible[actor]=false`、`phase=awaiting_responses`（reactionあり）または次actorの`awaiting_draw` | 同一paiの二重除去、鳴きの先行適用、reach供託の先行控除 |
 | `chi`/`pon`/`daiminkan` | 原因dahaiのgroupがlinearize済み、candidateが採用 | targetのriverの対象牌を副露へ移し、consumedをactor手牌から移動、actorのfirst-turn資格をfalse。chi/ponはactorの直後打牌待ち、daiminkanはpendingなしで嶺上draw待ち | group未解決中のmeld、非採用candidate、同一riverの二重消費 |
-| `ankan_declared` | actorの通常手番、4枚の同牌が合法、槍槓判定が必要なprofile | `pending_kan={type:ankan_declared,...}`、対象牌を予約状態にする。meld/kan_counts/doraは不変 | `melds`追加、`kan_counts`増加、dora公開、供託 |
+| `ankan_declared` | actorの通常手番、4枚の同牌が合法。`ankan_chankan`の値にかかわらず宣言を行う | `pending_kan={type:ankan_declared,...}`、対象牌を予約状態にする。meld/kan_counts/doraは不変 | `melds`追加、`kan_counts`増加、dora公開、供託 |
 | `kakan_declared` | actorの通常手番、既存ponと追加牌が合法 | `pending_kan={type:kakan_declared,...}`。既存ponとmeld/kan_counts/doraは不変 | 既存ponの書換え、meld確定、dora公開 |
 | `ankan`/`kakan` | matching pendingがあり、必要な槍槓groupでhoraが採用されていない | pendingを対応meldへcommit、`kan_counts[actor] += 1`、嶺上draw待ち。`dora`はtimingで別event | 槍槓済みkan、pending不一致、同一kanの二重commit |
 | `dora` | 直前kanとprofile timingがこの公開を許可し、markerが未公開 | markerをdora列へ一度だけappend | kanの未確定commit、二枚以上の同時追加 |
-| `reach` | `reach`複合actionのdahaiが同一transactionで先行commit済み、actorが未宣言 | `reach_status[actor]=declared`。reaction groupをopenできる | kyotaku/scores控除、`accepted`への直接遷移 |
+| `reach` | actorが未宣言で`phase=awaiting_action`、合法な`reach`複合actionが採用済み。同じtransactionの次eventが対応する`dahai` | `reach_status[actor]=declared`。reaction groupをopenできる | kyotaku/scores控除、`accepted`への直接遷移 |
 | `reach_accepted` | 対応reaction groupがcloseし、hora/chi/pon/daiminkanが不採用、rules上の供託条件を満たす | `reach_status[actor]=accepted`、指定deltas/scores/kyotakuを保存則付きで適用 | call/horaの後付け、二度目の供託、reach未宣言seat |
 | `pao` | yaku成立の責任seatがprofile条件を満たし、同じyakuの履歴がない | `pao[yaku_id]=liable_seat`を一度だけappend | winsへの推測だけ、actor自身をliable seatにすること |
 | `end_kyoku` | `game=IN_KYOKU`、全active request/groupがterminal、resultが一意に確定、pending kan/reachの処理が完了 | result、deltas、scores、next、kyotakuを一つのcommitで確定。未成立のreachは`declared`から`none`へ戻し、pendingを破棄、`kyoku=null`、`game=READY` | 宣言中reachへの供託、pending kanのmeld化、未解決actionの残置 |
@@ -1268,13 +1279,13 @@ replay_full   : mode=replay の full view
 
 snapshotの `state` は、snapshot生成元の正準stateへ `Π_v` を適用した結果でなければならない。snapshot受信側は、必要memberを復元するために別viewの情報、過去の非公開messageまたは推測を混ぜてはならず、投影後のstateから得られる `last_event`、`hands.count`、pending requestおよび `self_state` が相互に一致することを検証しなければならない（MUST）。
 
-ホストは `spectate` または `replay` sessionへ `request` または `ack` を送信してはならない（MUST NOT）。当該sessionは `action` を送信してはならない（MUST NOT）。spectate の `welcome` 後、hostは対象gameの直近の正準stateを `snapshot` で一度送信し、その後に新しいeventをsource順で送信する。接続時点のstateがまだ確定していない場合は `start_game` からのeventを順に送信し、途中のrequest/actionを生成しない。spectate はlive game終了まで継続し、`end_game` eventを受信した時点で通常のreplayを完了する。replayのeventは記録済みeventの順序で送信するが、replay sessionの `seq` はeventだけで1から振り直さなければならない（MUST）。振り直し前の記録messageの番号は各replay eventの必須 `original_seq` として保持する。replayではlive timeoutを適用しない。
+ホストは `spectate` または `replay` sessionへ `request` または `ack` を送信してはならない（MUST NOT）。当該sessionは `action` を送信してはならない（MUST NOT）。spectate の `welcome` 後、hostは対象gameの直近の正準stateを `snapshot(seq=1, replaces_through_seq=0)` で一度送信し、その後に新しいeventをsource順で送信する。game未開始なら `game_phase=NOT_STARTED, kyoku=null` の初期snapshotとし、開始時の `start_game` は次のsession seqで送る。途中のrequest/actionを生成しない。spectate はlive game終了まで継続し、`end_game` eventを受信した時点で観戦を終了する。初期snapshotの `game_phase=ENDED` の場合はその適用時点で終了する。replayのeventは記録済みeventの順序で送信するが、replay sessionの `seq` はeventだけで1から振り直さなければならない（MUST）。振り直し前の記録entryの番号は各replay eventの必須 `original_seq` として保持する。replayではlive timeoutを適用しない。
 
 ### 11.2 Replay の source sequence
 
-replayのsourceは、`target.type == "game"` なら対象gameのhost ledger、`target.type == "recording"` なら対象recordingの保存済みhost message列である。hostはsourceを一度選択した後に変更してはならず（MUST NOT）、`event` kindだけをsourceのseq昇順で抽出する。抽出した第1 eventのreplay `seq` は1、以後は1ずつ増加する。各replay eventにはsource ledgerのseqを `original_seq` として設定し、`original_seq` は正の整数で抽出順に厳密増加しなければならない（MUST）。sourceに欠番、同一 `original_seq` の別payloadまたはeventの並べ替えがある場合は、replayを開始せず `resume_unavailable` 相当のfatal errorで終了する。
+replayのsourceは、`target.type == "game"` なら対象gameの正準event記録（投影前payloadと永続化した `game_event_index`）、`target.type == "recording"` なら対象recordingの保存済みhost message列である。game記録のsource seqは `game_event_index` とし、特定play sessionの秘匿済みledgerを任意に選んではならない。recordingは要求viewの全情報を含み、不足する秘密情報を推測して補完してはならない。hostはsourceを一度選択した後に変更してはならず（MUST NOT）、`event` kindだけをsourceのseq昇順で抽出する。抽出した第1 eventのreplay `seq` は1、以後は1ずつ増加する。各replay eventにはsource ledgerのseqを `original_seq` として設定し、`original_seq` は正の整数で抽出順に厳密増加しなければならない（MUST）。sourceの元記録（event抽出前）に欠番、同一 `original_seq` の別payloadまたはeventの並べ替えがある場合は、replayを開始せず `resume_unavailable` 相当のfatal errorで終了する。
 
-replayの `seq` はsourceの `original_seq` と同じ値にしてはならず、resume replayのseqを再利用してはならない（MUST NOT）。replay eventの `session_id` はreplay session、`game_id` はsourceが表すgameであり、sourceのwire bytesをそのまま再送するのではなく、`original_seq` を付与した後に当該viewの `Π_v` を適用して一度だけserializeする。以後の再送またはsequence gap応答が必要な実装は、そのreplay session ledgerのwire bytesを使わなければならない。
+replayの `seq` とsourceの `original_seq` は独立した番号空間であり、数値が一致してもよい（MAY）。元の `start_game` が1なら、再生先の最初のeventは `seq=1, original_seq=1` となる。source番号を再生先の採番根拠にしてはならない（MUST NOT）。replay eventの `session_id` はreplay session、`game_id` はsourceが表すgameであり、sourceのwire bytesをそのまま再送するのではなく、`original_seq` を付与した後に当該viewの `Π_v` を適用して一度だけserializeする。以後の再送またはsequence gap応答が必要な実装は、そのreplay session ledgerのwire bytesを使わなければならない。
 
 replayは保存済みの有限event列を再生する処理であり、liveのrequest、action、ack、timeout、pending requestおよびsnapshot置換を生成してはならない（MUST NOT）。`join.view="full"` が受理されない場合、hostは `unsupported_view` として拒否し、完全情報を推測で送信してはならない。`replay_seat(i)` ではsourceの時点ごとのseat iの秘匿射影を使い、current live playerの権限やresume tokenを流用してはならない。
 
@@ -1288,7 +1299,7 @@ mode を途中で変更してはならない（MUST NOT）。完全情報 replay
 
 ```json
 {
-  "yamai": "1.0-draft.5",
+  "yamai": "1.0-draft.6",
   "kind": "error",
   "session_id": "s_01J6...",
   "game_id": "g_01J6...",
@@ -1351,6 +1362,8 @@ mode を途中で変更してはならない（MUST NOT）。完全情報 replay
 
 ### 13.2 Replayによる再開
 
+resumeの `welcome` は保存済みのgame phase、局、scores、request、時計およびclientの `applied_seq` をresetしない（MUST NOT）。`welcome.scores` はhostの現在値の情報であり、replay開始前のclient stateへ先行適用しない。`last_seq == head` なら保存済みstateをそのまま継続する。
+
 再開成功後、ホストは同じsessionについて `welcome.replay_from_seq` から、その時点のledger headまでの全entryを、seqの昇順かつwire bytesそのままで再送しなければならない（MUST）。`welcome.replay_from_seq` は常に `join.resume.last_seq + 1` であり、snapshotを選択する場合も復旧要求の下限を示す。クライアントは `join.resume.last_seq` 以下を再適用してはならず（MUST NOT）、resume replayを第11節のreplay modeと混同してseqを振り直してはならない。replay完了後、host ledgerの次のseqからlive送信へ移行する。
 
 `join.resume.last_seq` が0ならledgerの1から、headと等しいならreplay messageなしで、いずれも同じsessionを継続する。last_seqがheadより大きい、ledgerに欠番がある、tokenが別game/seatへ紐付く、または保存したwire bytesを復元できない場合、hostは `resume_unavailable` を返して新規gameへfallbackしてはならない（MUST NOT）。ledgerの一部だけを返して「再開成功」としてはならない。
@@ -1367,7 +1380,7 @@ resume replayに含まれるhost messageは、live送信時と同じ `session_id
 
 ```json
 {
-  "yamai": "1.0-draft.5",
+  "yamai": "1.0-draft.6",
   "kind": "snapshot",
   "session_id": "s_01J6...",
   "game_id": "g_01J6...",
@@ -1431,17 +1444,19 @@ resume replayに含まれるhost messageは、live送信時と同じ `session_id
 
 `hands` はsnapshot時点の正確な手牌または非公開枚数を持たなければならない（MUST）。rulesは再開時の `welcome.rules` を権威とし、snapshotで変更してはならない（MUST NOT）。
 
-`snapshot.replaces_through_seq` はsnapshot送信直前に当該sessionで使用済みの最大seqであり、`snapshot.seq` は `replaces_through_seq + 1` の新しい番号でなければならない（MUST）。snapshotのseqを過去entryのseqへ上書きしてはならない。`snapshot.replaces_through_seq` はresumeの `last_seq` 以上、sequence gapへの応答なら `received_seq` 以上でなければならない。hostは `replaces_through_seq` までのledger entryが連続し、snapshot stateがそのprefixの適用結果であることを検証してから送信しなければならない（MUST）。
+`snapshot.replaces_through_seq` はsnapshot送信直前に当該sessionで使用済みの最大seqであり、`snapshot.seq` は `replaces_through_seq + 1` の新しい番号でなければならない（MUST）。snapshotのseqを過去entryのseqへ上書きしてはならない。`snapshot.replaces_through_seq` はresumeの `last_seq` 以上、sequence gapへの応答なら `received_seq` 以上でなければならない。hostは `replaces_through_seq` までのledger entryが連続し、snapshot stateがそのprefixの適用結果であることを検証してから送信しなければならない（MUST）。新規spectateの初期snapshotだけは、空prefixに対象gameの現在の公開stateを導入する下記の規則を適用する。
 
-クライアントは、resumeまたは `sequence_gap` への応答として受信したsnapshotに限り、`seq == applied_seq + 1` の通常検査を省略して受理できる（MAY）。それ以外のsnapshot、session/game/view/profileが不一致のsnapshot、`snapshot.seq != replaces_through_seq + 1` のsnapshot、または既存の適用済みprefixを後退させるsnapshotは `invalid_message` として拒否しなければならない（MUST）。受理は一つのatomic replaceで行い、既存game state、projection state、active requestおよびgroupを全て破棄した後、`state`を正準状態の投影として置換する。置換前のstateを一部残したり、過去eventを再度適用したりしてはならない（MUST NOT）。
+新規spectateでは `snapshot` capabilityを必須として交渉し、初期snapshotを `seq=1, replaces_through_seq=0` で送受信する（MUST）。これは当該sessionの空ledgerへ対象gameの現在の公開stateを導入する唯一の例外であり、初期snapshot後に過去の `start_game` を再送しない。
+
+クライアントは、resumeまたは `sequence_gap` への応答、あるいは新規spectateの最初のmessageとして受信したsnapshotに限り、`seq == applied_seq + 1` の通常検査を省略して受理できる（MAY）。それ以外のsnapshot、session/game/view/profileが不一致のsnapshot、`snapshot.seq != replaces_through_seq + 1` のsnapshot、または既存の適用済みprefixを後退させるsnapshotは `invalid_message` として拒否しなければならない（MUST）。受理は一つのatomic replaceで行い、既存game state、projection state、active requestおよびgroupを全て破棄した後、`state`を正準状態の投影として置換する。置換前のstateを一部残したり、過去eventを再度適用したりしてはならない（MUST NOT）。
 
 `state.pending_requests` に含まれるrequestは同じID、seat、caused_by_seq、candidate集合、default、group descriptorおよび元deadlineを持つ新しいactive representationとして復元する。snapshot受理を起点にdeadlineを延長してはならず（MUST NOT）、受理時点で既に期限切れならhostは直ちに通常seqの `defaulted` ack/結果transactionを処理する。snapshot受理後のclient `applied_seq` は `snapshot.seq` とし、その次のhost messageは `snapshot.seq + 1` でなければならない（MUST）。旧ledger entryは監査・将来のresume用に保持するが、client stateへ再適用してはならない。
 
 snapshot stateの全memberを検証できない場合、クライアントは部分stateを表示・action選択へ使わず、`invalid_message`（recoverableなresync contextでは再度snapshotを要求）として扱う。hostが正しいsnapshotを生成・配送できない場合は `resume_unavailable` でsessionを終了し、推測値または空のpending requestへ置換してはならない。
 
-`state.session_phase` は `IDLE`、`ACTIVE`、`ENDED` のいずれか、`state.game_phase` は `NOT_STARTED`、`READY`、`IN_KYOKU`、`ENDED` のいずれかで、§3.1の正準 `S.session`/`S.game` と一致しなければならない（MUST）。`state.kyotaku` は供託本数で、局内外を問わず必須である。`kyoku` は局外なら `null`、局内なら上記memberを持つobjectとする。`game_phase=NOT_STARTED` または `ENDED` の `kyoku` は `null`、`READY` では局間の確定値を持つか `null` とし、`IN_KYOKU` では必ずobjectでなければならない。`rivers` の各要素は `{pai,tsumogiri,reach}`、`melds` の各要素は `chi`、`pon`、`daiminkan`、`ankan` または `kakan` eventと同じmemberを持つ。`pending_kan` は `null` または未解決の `ankan_declared`／`kakan_declared` eventである。
+`state.session_phase` は `ACTIVE`、`ENDED` のいずれか、`state.game_phase` は `NOT_STARTED`、`READY`、`IN_KYOKU`、`ENDED` のいずれかで、§3.1の正準 `S.session`/`S.game` と一致しなければならない（MUST）。`state.kyotaku` は供託本数で、局内外を問わず必須である。`kyoku` は局外なら `null`、局内なら上記memberを持つobjectとする。`game_phase=NOT_STARTED` または `ENDED` の `kyoku` は `null`、`READY` でも `null` とし、`IN_KYOKU` では必ずobjectでなければならない。`rivers` の各要素は `{pai,tsumogiri,reach}`、`melds` の各要素は `chi`、`pon`、`daiminkan`、`ankan` または `kakan` eventと同じmemberを持つ。`pending_kan` は `null` または未解決の `ankan_declared`／`kakan_declared` eventである。
 
-`turn.phase` は `awaiting_draw`、`awaiting_action`、`awaiting_responses`、`resolving` のいずれかである。`awaiting_action` または `awaiting_responses` では対応する `pending_requests` を少なくとも1個持ち、`awaiting_draw` または `resolving` ではpending requestを持ってはならない（MUST）。`last_event` は `last_event_seq` のevent payloadと同一でなければならない（MUST）。`reach_status[].state` は `none`、`declared`、`accepted` のいずれかであり、`double` と `ippatsu` は当該seatの現在の資格を表す。`first_turn_eligible`、`kan_counts`、`rinshan` および `haitei` は、途中流局・役・槓制限の判定に使用する現在値である。
+`turn.phase` は `awaiting_draw`、`awaiting_action`、`awaiting_responses`、`resolving` のいずれかである。正準gameの `awaiting_action` または `awaiting_responses` では対応するactive requestを持つが、wireの `pending_requests` は投影後の自seat分だけである。playの自seatが `awaiting_action` のactorなら1個、他家手番または自seatが反応groupへ参加していない場合は空配列とする。public/spectate/replayではmember自体を省略し、他seatのrequestを必須としたり公開したりしてはならない（MUST NOT）。`awaiting_draw` または `resolving` の投影にはpending requestを含めない（MUST）。`last_event` は `last_event_seq` のevent payloadと同一でなければならない（MUST）。`reach_status[].state` は `none`、`declared`、`accepted` のいずれかであり、`double` と `ippatsu` は当該seatの現在の資格を表す。`first_turn_eligible`、`kan_counts`、`rinshan` および `haitei` は、途中流局・役・槓制限の判定に使用する現在値である。
 
 `self_state` は、`kyoku` が局内state objectであるplay sessionでは必須とし、当該sessionのseatだけが知る一時状態を持つ。`kyoku == null` の局外stateでは `self_state` を持たない。`temporary_furiten` は次の自摸までの同巡振聴、`riichi_furiten` はリーチ後の見逃しによる継続振聴、`kuikae_forbidden` は直後の打牌で禁止されるtile、`time_bank_ms` は現在の残り持ち時間である。これらを他seatのplay viewへ送信してはならない（MUST NOT）。spectateとreplayでは `self_state` を省略する。
 
@@ -1501,7 +1516,7 @@ gatewayの変換表、損失箇所および拒否条件は、同一release tag�
 
 ## 17. 適合性
 
-`YAMAI 1.0-draft.5 riichi-4p play` 適合を表明する実装は、少なくとも次の試験を通過しなければならない（MUST）。
+`YAMAI 1.0-draft.6 riichi-4p play` 適合を表明する実装は、少なくとも次の試験を通過しなければならない（MUST）。
 
 1. 版不一致と未対応ルールの拒否
 2. JSONL の分割・複数行一括受信
@@ -1571,14 +1586,16 @@ action replay は第9節の冪等規則で処理しなければならない（MU
 
 `timeout_ms` と `time_bank_ms` は対局結果へ影響する。ホストは全 seat へ同じ rule で時間を計測し、transport latency を含むか否かを一貫させなければならない（MUST）。クライアントが送る elapsed time を権威として使用してはならない（MUST NOT）。
 
+追加の公式回帰vector V41〜V49 は、観戦初期snapshot、head一致resume、チョンボ取消し、初局と次局、リーチ宣言順、副露と打牌の一体処理、槍槓なしの暗槓、他seatのsnapshot、およびagariyame無効時の親継続を正負両方で検証する。
+
 ## 19. Registry Considerations
 
 YAMAI Project は次の registry を本書と同じ repository で管理する。
 
 | Registry | 初期値 |
 |---|---|
-| Protocol Versions | `1.0-draft.5` |
-| Profiles | `riichi-4p@1.0-draft.3` (`sha256:` hashはrelease registryで確定) |
+| Protocol Versions | `1.0-draft.6` |
+| Profiles | `riichi-4p@1.0-draft.4` (`sha256:` hashはrelease registryで確定) |
 | Capabilities | required/optional交渉。初期optional: `resume`, `snapshot` |
 | Message Kinds | `hello`, `join`, `welcome`, `event`, `request`, `action`, `ack`, `error`, `snapshot` |
 | Event Types | 第7.4節の値（`pao`を含む） |
@@ -1617,7 +1634,7 @@ chinroutou, ryuuiisou, chuuren_poutou, suukantsu, tenhou, chiihou
 
 - JSON Lines media type: `application/yamai-jsonl`
 - JSON message media type: `application/yamai+json`
-- WebSocket subprotocol: `yamai.1.draft5`
+- WebSocket subprotocol: `yamai.1.draft6`
 
 `+json` は登録済みstructured syntax suffixである。一方、JSON Lines全体は単一JSON textではないため、未登録suffix `+jsonl` を使用してはならない（MUST NOT）。media typeの正式登録は [RFC 6838] のtemplateとreview手続に従う。
 
@@ -1685,7 +1702,7 @@ stateDiagram-v2
 
 `ENDED` では当該gameのledgerを凍結し、同一session_id/game_idへapplication messageを追加してはならない。新しいhelloは新しいsession_idを生成するため、過去sessionのseqを再利用しない（MUST）。
 
-未解決 `request` は session の部分状態である。`end_kyoku` または `end_game` を送信する前に、関連するすべての request を `accepted`、`passed`、`superseded`、`defaulted` または `stale` のいずれかで解決しなければならない（MUST）。`rejected` は診断ACKであり、これだけでrequestを終端化してはならない。`chombo` ではoffender自身を含む全ての未解決requestを、offenderは`defaulted`、その他は`stale`としてterminal化してからpenaltyを確定する。
+未解決 `request` は session の部分状態である。`end_kyoku` または `end_game` を送信する前に、関連するすべての request を `accepted`、`passed`、`superseded`、`defaulted` または `cancelled` のいずれかで解決しなければならない（MUST）。`rejected` は診断ACKであり、これだけでrequestを終端化してはならない。`chombo` ではoffender自身を含む全ての未解決requestを、全て`cancelled`としてterminal化してからpenaltyを確定する。
 
 ## Appendix B. 最小交換例
 
@@ -1695,8 +1712,8 @@ stateDiagram-v2
 sequenceDiagram
   participant H as Host
   participant P as Player
-  H->>P: hello(versions=[1.0-draft.5], profiles=[{name:riichi-4p, revisions:[1.0-draft.3], hashes:{1.0-draft.3:sha256:...}}], capabilities={required:[],optional:[resume,snapshot]})
-  P->>H: join(version=1.0-draft.5, mode=play, view=seat, profile=riichi-4p, profile_revision=1.0-draft.3, profile_hash=sha256:..., capabilities={required:[],optional:[resume,snapshot]})
+  H->>P: hello(versions=[1.0-draft.6], profiles=[{name:riichi-4p, revisions:[1.0-draft.4], hashes:{1.0-draft.4:sha256:...}}], capabilities={required:[],optional:[resume,snapshot]})
+  P->>H: join(version=1.0-draft.6, mode=play, view=seat, profile=riichi-4p, profile_revision=1.0-draft.4, profile_hash=sha256:..., capabilities={required:[],optional:[resume,snapshot]})
   H->>P: welcome(seat=0, rules=...)
   H->>P: event(seq=1, start_game)
   H->>P: event(seq=2, start_kyoku)

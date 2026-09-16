@@ -7,10 +7,10 @@
 | 表題 | YAMAI Riichi Mahjong Four-Player Scoring Rules |
 | 分類 | Derived / Historical |
 | 状態 | Derived（規範本文は YRC 0003 §7.6） |
-| 版 | 1.0-draft.3 |
-| 発行日 | 2026-08-30 |
-| 対応Protocol Version | YRC 0003 `1.0-draft.5` |
-| 更新対象 | YRC 0003 `1.0-draft.5` の `riichi-4p` profile |
+| 版 | 1.0-draft.4 |
+| 発行日 | 2026-09-16 |
+| 対応Protocol Version | YRC 0003 `1.0-draft.6` |
+| 更新対象 | YRC 0003 `1.0-draft.6` の `riichi-4p` profile |
 | 廃止対象 | なし |
 
 ## Abstract
@@ -21,7 +21,7 @@
 
 本書はYAMAI Projectが管理する履歴的・派生文書であり、IETF Internet StandardでもYAMAIの現行規範文書でもない。本書の配布に制限はない。
 
-本書は [YRC 0003] Protocol Version `1.0-draft.5` の §7.6 から生成された派生文書であり、単独で規範性を持たない。本書と [YRC 0003] に矛盾がある場合は常に [YRC 0003] 本文を優先し、矛盾は次の派生成果物更新で修正する。
+本書は [YRC 0003] Protocol Version `1.0-draft.6` の §7.6 から生成された派生文書であり、単独で規範性を持たない。本書と [YRC 0003] に矛盾がある場合は常に [YRC 0003] 本文を優先し、矛盾は次の派生成果物更新で修正する。
 
 ## Table of Contents
 
@@ -277,7 +277,7 @@ wireへ出力する通常役IDは重複してはならず、各IDの `value` は
 
 ホストは各winについて、本書で計算した `fu`、`han`、`yakus`、`bonuses`、`hand_points` を [YRC 0003] の `end_kyoku.result.wins[]` へ格納しなければならない（MUST）。
 
-`deltas` は基本支払いへ本場、供託、複数ロン配分および責任払いを適用した結果である。`scores` は直前点数との加算で検証可能でなければならない（MUST）。`hand_points` は本場・供託を含まないため、fixtureでこれらの局精算を検証する場合は `state.honba` および `state.kyotaku` を入力し、`payments` と `deltas` には適用後の点数を記録する。省略時はどちらも0とする。
+`deltas` は基本支払いへ本場、供託、複数ロン配分および責任払いを適用した結果である。`scores` は直前点数との加算で検証可能でなければならない（MUST）。`hand_points` は本場・供託を含まないため、fixtureでこれらの局精算を検証する場合は `state.honba` および `state.kyotaku` を入力し、`payments` はplayer間の本場込み支払い、`kyotaku_points` は卓からの供託付与額、`deltas` は両者を合成した点差を記録する。供託を放銃者から再徴収してはならない。省略時はどちらも0とする。
 
 ### 8.1 通常流局のノーテン精算
 
@@ -306,7 +306,7 @@ wireへ出力する通常役IDは重複してはならず、各IDの `value` は
 
 ## 11. Registry Considerations
 
-Yaku ID、Bonus ID、Double Yakuman Conditionの登録は [YRC 0003] 第19節に従う。新しい役は門前・副露飜数、成立条件、既存役との重複、符・役満との関係および最低2個のtest vectorを指定しなければならない（MUST）。本版の実行可能な点数fixtureは `test-vectors/yrc-0005/1.0-draft.3/scoring.json` に収録し、その形式は `schemas/yrc-0005/1.0-draft.3/scoring-vectors.schema.json` に従う。各fixtureは正規化手牌、和了方法、局面state、適用ruleおよび期待する役、bonus、符、飜、基本点、支払明細、seat別 `deltas` の全てを持たなければならない（MUST）。
+Yaku ID、Bonus ID、Double Yakuman Conditionの登録は [YRC 0003] 第19節に従う。新しい役は門前・副露飜数、成立条件、既存役との重複、符・役満との関係および最低2個のtest vectorを指定しなければならない（MUST）。本版の実行可能な点数fixtureは `test-vectors/yrc-0005/1.0-draft.4/scoring.json` に収録し、その形式は `schemas/yrc-0005/1.0-draft.4/scoring-vectors.schema.json` に従う。各fixtureは正規化手牌、和了方法、局面state、適用ruleおよび期待する役、bonus、符、飜、基本点、支払明細、seat別 `deltas` の全てを持たなければならない（MUST）。
 fixtureファイルの `rules` がbase ruleであり、各fixtureの `rule_overrides` はbase ruleをmember単位で置換して適用する。fixtureの `state` は列挙した `state.events` 適用後の状態であり、`honba` と `kyotaku` は精算入力時点の本場数と供託本数を表す（省略時は0）。直前状態が境界判定に必要な場合は `state.pre_state` に記録する。`haitei` と `houtei` のfixtureでは `pre_state.wall_remaining=1`、自摸event適用後の `state.wall_remaining=0` を必須とする。
 
 本版のfixture集合は、registryに登録された全通常役・全役満、通常形・七対子・国士無双、符の20/25/30符境界、3飜60符の切り上げ満貫境界、12飜三倍満・13飜数え役満境界、赤五・表ドラ・裏ドラ、役満value、親ツモ、複数ロン、本場・供託、責任払い、チョンボおよび通常流局の聴牌者数0～4を少なくとも1件ずつ含む。fixtureの `state.events` はYRC 0003のevent typeと同じ意味で解釈し、fixtureの期待値は単なる表示ラベルではなく、入力から再計算できる規範値である（MUST）。
@@ -317,7 +317,7 @@ fixtureファイルの `rules` がbase ruleであり、各fixtureの `rule_overr
 
 - [BCP 14] Bradner, S. and B. Leiba, BCP 14, RFC 2119 and RFC 8174.  
   https://www.rfc-editor.org/info/bcp14
-- [YRC 0003] YAMAI Project, “YAMAI Protocol Version 1 (1.0-draft.5)”.
+- [YRC 0003] YAMAI Project, “YAMAI Protocol Version 1 (1.0-draft.6)”.
 
 ## Appendix A. 計算例
 
@@ -348,3 +348,9 @@ fixtureファイルの `rules` がbase ruleであり、各fixtureの `rule_overr
 ### A.7 役なし形の聴牌
 
 `123m 456m 789m 234p 5s` は `5s` 待ちであり、`5s` を加えると合法な通常形になる。完成形は役を持たなくても、2.7節の形の聴牌を満たすため、通常流局の `tenpai` はtrueである。和了の可否（2.1節）とノーテン精算用の聴牌判定（2.7節）を混同してはならない。
+
+## 現行fixtureの計算契約
+
+`input.result_type` で和了・通常流局・チョンボを指定し、通常流局は4人分の `hands`、チョンボは `offender` を入力する。和了stateの `double_riichi`、`ippatsu`、`first_turn` は確定済み条件であり、完全な局履歴がある場合は履歴との一致も検証する。fixture IDや期待値は計算の入力ではない。門前/副露の飜数、和了牌の配置による符、役の重複排除を手牌から計算する。
+
+責任払いは対象役満の点数寄与だけに適用し、対象外の複合役満は通常精算する。payer変更を伴う本場の比例配分は100点単位で切り捨て、残余の大きい順、同値ならseat昇順に残る単位を割り当てる。詳細は [YRC 0003] §7.2 と §7.6.10 に従う。

@@ -1,4 +1,7 @@
-// Executable protocol core for YAMAI 1.0-draft.5.
+// Aggregated control-flow abstraction. host_seq is an internal audit index,
+// NOT a per-session wire seq. See yamai_session_ledgers.qnt for draft.6
+// session numbering and cancellation. No full wire refinement is claimed.
+// Executable protocol core for YAMAI 1.0-draft.6.
 //
 // Unlike the historical control-flow models, this model has one canonical
 // state.  Requests are four independent slots, messages are an append-only
@@ -8,7 +11,7 @@
 //
 // Refinement boundary:
 //   - a concrete session maps to `session`, `game`, and `turn`;
-//   - every host message maps to exactly one immutable ledger entry;
+//   - an abstract host operation maps to an immutable audit entry;
 //   - a concrete request/group maps to one occupied request slot;
 //   - transport observations map to `delivery` and `applied_tags`;
 //   - a concrete resume snapshot maps to the captured slot/id/member maps.

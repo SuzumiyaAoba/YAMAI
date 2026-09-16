@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:yamai:schema:yrc-0003:1.0-draft.6:message",
+  "title": "YAMAI 1.0-draft.6 message union",
+  "oneOf": [
+    {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.6:hello"},
+    {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.6:join"},
+    {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.6:welcome"},
+    {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.6:event"},
+    {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.6:request"},
+    {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.6:action"},
+    {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.6:ack"},
+    {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.6:error"},
+    {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.6:snapshot"}
+  ]
+}

@@ -15,11 +15,11 @@ MJAI は麻雀 AI と牌譜交換のデファクト標準として広く使わ�
   - Gimite 由来の4人リーチ麻雀用イベントモデルと、主要な通信方言を整理します。
 - [YRC 0002: MJAI プロトコルの設計上の欠陥](docs/mjai-problems.md)
   - 仕様の曖昧さ、実装差、運用上発生した障害と、YAMAI に必要な要件をまとめます。
-- [YRC 0003: YAMAI Protocol Version 1 (1.0-draft.5)](docs/yamai-protocol.md)
+- [YRC 0003: YAMAI Protocol Version 1 (1.0-draft.6)](docs/yamai-protocol.md)
   - 上記の問題を解決する新しいプロトコルを規定します。
 - [YRC 0004: 代表的 MJAI 実装プロファイル](docs/mjai-implementations.md)
   - Gimite、Mortal、mjai.app、Akagi v3、RiichiLab、mjai-reviewerのwire差を比較します。
-- [YRC 0005: YAMAI `riichi-4p` 役・符・点数規則 (1.0-draft.3)](docs/riichi-4p-rules.md)
+- [YRC 0005: YAMAI `riichi-4p` 役・符・点数規則 (1.0-draft.4)](docs/riichi-4p-rules.md)
   - YRC 0003 §7.6 から生成された派生・履歴文書です。標準役、役満、ドラbonus、符、基本点、支払いを整理します。
 
 YRC 0001、YRC 0002、YRC 0004およびYRC 0005は既存プロトコルまたはprofileを記述・整理するInformational／派生・履歴文書です。YRC 0003 `docs/yamai-protocol.md` が、組込み `riichi-4p` profile（§7.6を含む）を含めたYAMAI実装に対する唯一の規範本文です。いずれも現在はDraftであり、IETF RFCではありません。
@@ -28,16 +28,17 @@ YRC 0001、YRC 0002、YRC 0004およびYRC 0005は既存プロトコルまたは
 
 ## 規範成果物と検証範囲
 
-YRC 0003 `1.0-draft.5` 本文がProtocolと `riichi-4p` profileを単体で完全に定義します。Schema、registry、test vector、scoring oracle、Quint modelおよびvalidatorは本文から生成・検証される派生成果物であり、本文と競合する場合は本文が優先されます。全対象ファイルは [release manifest](release-manifest.json) に列挙されています。
+YRC 0003 `1.0-draft.6` 本文がProtocolと `riichi-4p` profileを単体で完全に定義します。Schema、registry、test vector、scoring oracle、Quint modelおよびvalidatorは本文から生成・検証される派生成果物であり、本文と競合する場合は本文が優先されます。全対象ファイルは [release manifest](release-manifest.json) に列挙されています。
 
-- [YRC 0003 message Schema root](schemas/yrc-0003/1.0-draft.5/message.schema.json)（参照される全Schemaを含む）
-- [YRC 0003 stateful trace Schema](schemas/yrc-0003/1.0-draft.5/stateful-trace.schema.json)（session全体の遷移・再送・timeout・visibilityを検査）
-- [YRC 0005 `riichi-4p` rules Schema](schemas/yrc-0005/1.0-draft.3/riichi-4p-rules.schema.json)
-- [YRC 0005 scoring vectors Schema](schemas/yrc-0005/1.0-draft.3/scoring-vectors.schema.json)
-- [YRC 0003 registry](registry/yrc-0003/1.0-draft.5/registry.json)、[YRC 0005 registry](registry/yrc-0005/1.0-draft.3/registry.json)
-- [YRC 0003 vector manifest](test-vectors/yrc-0003/1.0-draft.5/manifest.json)
-- [YRC 0003 test vector](test-vectors/yrc-0003/1.0-draft.5/vectors.json)、[YRC 0005 scoring test vector](test-vectors/yrc-0005/1.0-draft.3/scoring.json)
-- [実行可能な点数oracle](scripts/score_oracle.py)
+- [YRC 0003 message Schema root](schemas/yrc-0003/1.0-draft.6/message.schema.json)（参照される全Schemaを含む）
+- [YRC 0003 stateful trace Schema](schemas/yrc-0003/1.0-draft.6/stateful-trace.schema.json)（session全体の遷移・再送・timeout・visibilityを検査）
+- [YRC 0005 `riichi-4p` rules Schema](schemas/yrc-0005/1.0-draft.4/riichi-4p-rules.schema.json)
+- [YRC 0005 scoring vectors Schema](schemas/yrc-0005/1.0-draft.4/scoring-vectors.schema.json)
+- [YRC 0003 registry](registry/yrc-0003/1.0-draft.6/registry.json)、[YRC 0005 registry](registry/yrc-0005/1.0-draft.4/registry.json)
+- [YRC 0003 vector manifest](test-vectors/yrc-0003/1.0-draft.6/manifest.json)
+- [YRC 0003 test vector](test-vectors/yrc-0003/1.0-draft.6/vectors.json)、[YRC 0005 scoring test vector](test-vectors/yrc-0005/1.0-draft.4/scoring.json)
+- [実行可能な点数oracle](scripts/score_oracle.py)と[回帰テスト](tests/test_regressions.py)
+- [session別ledgerの有限状態モデル](verification/quint/yamai_session_ledgers.qnt)
 - [Canonical Protocol Core Quintモデル](verification/quint/yamai_protocol_core.qnt)と[CI用bounded refinementモデル](verification/quint/yamai_protocol_core_bounded.qnt)
 
 Protocol Version は message Schema とその `$ref` 閉包を固定し、`profile_revision` と `profile_hash` は profile成果物を識別します。現在の `profile_hash` は RFC 8785 JCS で profile/rules/scoring-vectors Schema、hashを除くregistry、official/scoring vectorを入力とし、Protocol message Schema、manifestおよび規範本文は入力としません。これらはそれぞれ Protocol Version と release ID／同一 Git tag で固定します。
@@ -47,9 +48,10 @@ Protocol Version は message Schema とその `$ref` 閉包を固定し、`profi
 ```sh
 rtk python3 scripts/validate_artifacts.py
 rtk python3 scripts/score_oracle.py
+rtk python3 -B -m unittest discover -s tests -v
 ```
 
-Canonical Protocol Coreは、正準状態を最大4件の並行request、単調時計、immutable seq ledger、resume/snapshotまで有限化し、`refinement_mapping`で規範状態との対応条件を検査します。これは有限境界の安全性検査であり、無制限の実装適合証明ではありません。実行方法と境界は[Quint検証README](verification/quint/README.md)を参照してください。
+Protocol Coreモデルは最大4件のrequest、単調時計、集約した処理履歴、resume/snapshotを抽象化します。この集約履歴の連番はwireのsession別seqではありません。draft.6のsession別採番・取消し・resume・観戦初期snapshotは追加のsession ledgerモデルと公式通信vectorで検証します。これは有限境界の安全性検査であり、無制限の実装適合証明ではありません。実行方法と境界は[Quint検証README](verification/quint/README.md)を参照してください。
 
 ## 設計原則
 

@@ -2,7 +2,18 @@
 
 この変更履歴は、YAMAI の規範文書、機械可読成果物およびリリース管理上の変更を記録する。現在のすべての項目は Draft であり、安定版を意味しない。
 
-## 1.0-draft.5 / profile 1.0-draft.3 — 2026-08-30
+## 1.0-draft.6 / profile 1.0-draft.4 — 2026-09-16
+
+- 初局開始、リーチ宣言順、副露と打牌の原子性、槍槓なし暗槓、agariyame無効時の親継続、緑一色の構成牌を修正。
+- game共通の処理順とsessionごとのledgerを分離。replayで `seq == original_seq` を許可し、resume時に既存状態を維持。
+- 観戦初期snapshotを定義し、snapshot capabilityを必須化。非参加seatへのpending request投影を修正し、Schemaへsession/game phaseと供託を追加。
+- チョンボ取消しの終端ACK `cancelled` と `action_id=null` を追加。後着応答 `stale` は元requestを終端化しない。
+- 採点oracleのfixture ID依存を撤去。分解・和了牌配置・局面条件から役、符、点数を計算し、誤ったfixture手牌と期待値を修正。副露による食い下がりをSchemaへ反映。
+- 供託を卓残高から配分し、責任払いを対象役満分だけに適用。本場の端数配分を100点単位で定義。
+- 通信の公式正負vectorを49件へ拡充し、独立した期待値と不正入力を含む回帰テストを追加。
+- Protocol/profileの非互換変更として版・パス・hashを更新。旧draft5/draft3と混在不可。未公開Draftのまま維持。
+
+## 過去版: 1.0-draft.5 / profile 1.0-draft.3 — 2026-08-30
 
 ### Changed
 

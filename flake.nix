@@ -83,6 +83,7 @@
               exit 1
             fi
             python3 scripts/score_oracle.py > "$out/score-oracle.log" 2>&1
+            python3 -B -m unittest discover -s tests -v > "$out/regressions.log" 2>&1
             echo "$validator" > "$out/validator"
             echo "$oracle" > "$out/scoring-oracle"
           '';
@@ -158,6 +159,25 @@
               --verbosity 1 \
               "$model" > "$out/quint-verify.log" 2>&1
             echo "$model" > "$out/model"
+          '';
+
+          sessionLedgerCheck = pkgs.runCommand "yamai-quint-session-ledgers" {
+            src = ./.;
+            toolchainDependency = toolchainCheck;
+            nativeBuildInputs = checkerPackages pkgs;
+          } ''
+            set -eu
+            mkdir "$out"
+            test -d "$toolchainDependency"
+            cp "$src/verification/quint/yamai_session_ledgers.qnt" "$TMPDIR/"
+            cd "$TMPDIR"
+            quint typecheck yamai_session_ledgers.qnt > "$out/typecheck.log" 2>&1
+            quint verify --backend tlc --invariants protocol_invariant --verbosity 1 \
+              yamai_session_ledgers.qnt > "$out/verify.log" 2>&1
+            quint run --invariants protocol_invariant --witnesses witness_complete \
+              --max-steps 40 --max-samples 100 --seed 0x79616d616936 --verbosity 1 \
+              yamai_session_ledgers.qnt > "$out/witness.log" 2>&1
+            grep -Eq '^witness_complete was witnessed in [1-9][0-9]* trace' "$out/witness.log"
           '';
 
           coreSafetyCheck = pkgs.runCommand "yamai-quint-protocol-core" {
@@ -660,6 +680,7 @@
           artifact-validator = artifactValidatorCheck;
           quint-model = safetyCheck;
           quint-protocol-core = coreSafetyCheck;
+          quint-session-ledgers = sessionLedgerCheck;
           quint-model-temporal = temporalCheck;
           quint-model-witnesses = witnessCheck;
           quint-model-extended-parse-typecheck = extendedParseTypecheckCheck;

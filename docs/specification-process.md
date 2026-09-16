@@ -4,7 +4,7 @@
 
 本書は、YAMAI の規範文書、機械可読成果物およびリリースを同一の版として管理するためのプロセスを定める。本書自身はプロセス文書であり、対局 wire の新しい message、event、action または rule を追加しない。
 
-現在の対象は `yamai-1.0-draft.5`（Protocol Version `1.0-draft.5`、`riichi-4p` profile revision `1.0-draft.3`）であり、安定版ではない。公開用 release tag が付されるまでは、release manifest の `published` を `false` とする。
+現在の対象は `yamai-1.0-draft.6`（Protocol Version `1.0-draft.6`、`riichi-4p` profile revision `1.0-draft.4`）であり、安定版ではない。公開用 release tag が付されるまでは、release manifest の `published` を `false` とする。
 
 ## 2. 権威関係
 
@@ -17,7 +17,7 @@
 5. 公式 test vector は、Schemaだけでは表現しにくい相互作用、境界条件、状態遷移、秘匿、再送、精算および資源制限を本文に照合する適合性補助である。
 6. Stateful trace Schemaとsemantic validatorは、sessionを通した前後条件、`seq` ledger、request/group、timeout、snapshot置換およびvisibility射影を実行検査する。
 7. scoring oracleは、fixtureの期待値を入力として使用せず、本書の §7.6 に従って手牌・rule・eventから役、符、点数、支払いおよびdeltaを再計算する。
-8. Canonical Protocol Core Quintモデルと`refinement_mapping`は、明記された有限境界内で正準状態・並行request・clock・ledger・resumeの安全性を検査する。有限モデル検査を無制限状態または実装コードの完全証明とみなしてはならない。
+8. Canonical Protocol Core Quintモデルと`refinement_mapping`は、明記された有限境界内で正準状態・並行request・clock・集約処理履歴・resumeの安全性を検査する。session別wire採番と取消しは `yamai_session_ledgers.qnt` の別モデルで検査する。集約モデルの `host_seq` をwire seqへ直接写像してはならない。有限モデル検査を無制限状態または実装コードの完全証明とみなしてはならない。
 
 YRC 0001、YRC 0002 および YRC 0004 は Informational 文書であり、既存 MJAI の背景・欠陥・実装差を説明する。これらの記述は YAMAI 適合要件の代替にならない。
 
@@ -25,7 +25,7 @@ JSON Schema の検証だけでは、重複 JSON key、frame境界、`seq` の連
 
 ## 3. Protocol Version と profile hash の責務
 
-`yamai`、`hello.versions`、`join.version` および各 message Schema の版は Protocol Version に属する。Protocol Version `1.0-draft.5` は、release manifest に列挙された YRC 0003 の message Schema 閉包を固定する。message Schema の変更は、互換性の有無に応じて draft revision または major version を更新しなければならない。
+`yamai`、`hello.versions`、`join.version` および各 message Schema の版は Protocol Version に属する。Protocol Version `1.0-draft.6` は、release manifest に列挙された YRC 0003 の message Schema 閉包を固定する。message Schema の変更は、互換性の有無に応じて draft revision または major version を更新しなければならない。
 
 `profile_revision` と `profile_hash` は `riichi-4p` など profile の同一性を表す。現在の `profile_hash` の計算対象は、YRC 0003 第6.2節が定義する本文の7個の論理 objectを、RFC 8785 JSON Canonicalization Scheme (JCS) で projection したものである。
 

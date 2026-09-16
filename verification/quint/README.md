@@ -6,7 +6,7 @@
 
 | ファイル | 目的 | 主な抽象化 | 接続・探索範囲 |
 |---|---|---|---|
-| [`yamai_protocol_core.qnt`](yamai_protocol_core.qnt) | 規範Protocol Coreのcanonical modelとrefinement mapping | 最大4件のrequest/group map、単調時計、deadline/grace/timebank、immutable seq ledger、delivery/applied、resume/replay/snapshot、全ACK結果 | `MAX_SEQ`、`MAX_CLOCK`等の有限境界。規範状態への対応は`refinement_mapping`で検査 |
+| [`yamai_protocol_core.qnt`](yamai_protocol_core.qnt) | 規範Protocol Coreのcanonical modelとrefinement mapping | 最大4件のrequest/group map、単調時計、deadline/grace/timebank、集約した内部処理履歴、delivery/applied、resume/replay/snapshot、従来のACK結果（cancelledを除く） | `MAX_SEQ`、`MAX_CLOCK`等の有限境界。規範状態への対応は`refinement_mapping`で検査 |
 | [`yamai_protocol_core_bounded.qnt`](yamai_protocol_core_bounded.qnt) | canonical modelのCI用決定的refinement trace | 4 request slot、deadline/default/ACK、group linearization、ledger、delivery/applied、replay、snapshot | phase-driven traceを固定seedで最後まで実行 |
 | [`yamai_protocol.qnt`](yamai_protocol.qnt) | 既存の小さな基準モデル | session、host seq、single/group request、per-member action/ACK/default、resume/snapshot、score/kyotaku | 接続切断を含む。1 transactionずつの有限シミュレーション |
 | [`yamai_protocol_extended.qnt`](yamai_protocol_extended.qnt) | 規範要件を広く対応付ける拡張モデル | hello/join/welcome の version/profile/hash/capability、seq fresh/gap/duplicate/conflict/replay、pending resume/snapshot、request group、timeout、end_kyoku/end_game。disconnect/pending中もhost内部のtick・ACK/default・resolveを継続し、未配送結果をbacklog rangeへ保持 | `MAX_SEQ=8` などの有限境界。disconnect/resume の不安定な環境も到達可能 |
@@ -49,7 +49,7 @@ request liveness の `group_resolves_under_stable_connection`、`timeout_closes_
 
 ## モデル間の関係と限界
 
-`yamai_protocol_core.qnt`を正準モデルとし、`refinement_session`、`refinement_requests`、`refinement_wire`、`refinement_resume`を合成した`refinement_mapping`で、有限化した具体状態が規範Protocol Coreの状態制約を満たすことを検査する。append-only ledger、delivery/applied順序、request map、group linearization、clock/deadline、ACK結果は`protocol_invariant`の構成要素である。
+`yamai_protocol_core.qnt`を正準モデルとし、`refinement_session`、`refinement_requests`、`refinement_wire`、`refinement_resume`を合成した`refinement_mapping`で、有限化した具体状態が規範Protocol Coreの状態制約を満たすことを検査する。append-onlyな集約履歴、抽象delivery/applied順序、request map、group linearization、clock/deadline、ACK結果は`protocol_invariant`の構成要素である。
 
 既存4モデルは、canonical modelの特定側面をより小さい状態空間で調べる補完モデルである。canonical modelから既存4モデルへの機械的なtrace inclusion/composition theoremは定義していないため、既存モデルのTLC成功だけからcanonical modelや実装の適合性を導出してはならない。また、`refinement_mapping`の成功も下記の有限境界内の主張であり、無制限状態や実装コードへの証明ではない。
 
@@ -227,3 +227,15 @@ nix develop --command quint run \
 ```
 
 `quint run --witnesses` は各 predicate が少なくとも1 traceで成立したことを報告する。TLC temporal の成功だけでは到達性を保証しないため、witness結果を併記する。
+
+## draft.6 のsession別採番と取消し
+
+[`yamai_session_ledgers.qnt`](yamai_session_ledgers.qnt) は2つのplay sessionの独立ledger、1つの共通game、チョンボでの `cancelled`、取消し後の `stale`、head一致resume、観戦の最初のsnapshot、およびreplayの `1 → 1` を有限状態で検査する。拒否ACKを片方だけへ出した後も他方のseqには穴が開かず、取消しで全requestを終端化する。`stale` はその決定を変更しない。
+
+```sh
+rtk quint typecheck verification/quint/yamai_session_ledgers.qnt
+rtk quint verify --backend tlc --invariants protocol_invariant verification/quint/yamai_session_ledgers.qnt
+rtk quint run --invariants protocol_invariant --witnesses witness_complete --max-steps 40 --max-samples 100 --seed 0x79616d616936 verification/quint/yamai_session_ledgers.qnt
+```
+
+既存のcore/boundedモデルの `host_seq` は複数seatの処理をまとめた抽象履歴位置としてのみ解釈する。sessionごとのwire採番・射影、全ACK status、JSON payloadとの直接のrefinementを証明するモデルではない。追加モデルの範囲も上記の2session・1groupに限られ、時計・採点・牌姿の完全性は主張しない。Pythonの公式49組の正負vectorと回帰テストが具体的なSchema・wire例と局進行を検証する。

@@ -1,3 +1,6 @@
+// Aggregated control-flow abstraction. host_seq is an internal audit index,
+// NOT a per-session wire seq. See yamai_session_ledgers.qnt for draft.6
+// session numbering and cancellation. No full wire refinement is claimed.
 // Deterministic, finite conformance projection of yamai_protocol_core.qnt.
 //
 // This is deliberately not a second canonical model.  It is one complete,
