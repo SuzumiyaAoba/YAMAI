@@ -1,72 +1,46 @@
 # 変更履歴
 
-この変更履歴は、YAMAI の規範文書、機械可読成果物およびリリース管理上の変更を記録する。現在のすべての項目は Draft であり、安定版を意味しない。
+YAMAI の仕様と成果物の変更、および版間の互換性を記録する。各版は Draft であり、現行成果物は [release manifest](release-manifest.json) に従って取得する。
 
-## 1.0-draft.6 / profile 1.0-draft.4 — 2026-09-16
+## 未公開の追補 — 2026-09-16
 
-- 初局開始、リーチ宣言順、副露と打牌の原子性、槍槓なし暗槓、agariyame無効時の親継続、緑一色の構成牌を修正。
-- game共通の処理順とsessionごとのledgerを分離。replayで `seq == original_seq` を許可し、resume時に既存状態を維持。
-- 観戦初期snapshotを定義し、snapshot capabilityを必須化。非参加seatへのpending request投影を修正し、Schemaへsession/game phaseと供託を追加。
-- チョンボ取消しの終端ACK `cancelled` と `action_id=null` を追加。後着応答 `stale` は元requestを終端化しない。
-- 採点oracleのfixture ID依存を撤去。分解・和了牌配置・局面条件から役、符、点数を計算し、誤ったfixture手牌と期待値を修正。副露による食い下がりをSchemaへ反映。
-- 供託を卓残高から配分し、責任払いを対象役満分だけに適用。本場の端数配分を100点単位で定義。
-- 通信の公式正負vectorを49件へ拡充し、独立した期待値と不正入力を含む回帰テストを追加。
-- Protocol/profileの非互換変更として版・パス・hashを更新。旧draft5/draft3と混在不可。未公開Draftのまま維持。
+- draft.6の検査実装・公式ベクトル拡充と仕様レビューの修正を統合した。
+- 初局の開始条件、複合リーチの宣言、槍槓判定が不要な槓の成立条件を状態前後条件表に反映した。
+- 採点ID・期待値に依存しない計算、入力変更、sessionごとのseq、再開時の状態保持を回帰テストで検査する。
+- 独立したsession ledgerと取消し後の状態を扱う有限モデルを追加し、5モデルをNixの検査対象にした。
 
-## 過去版: 1.0-draft.5 / profile 1.0-draft.3 — 2026-08-30
+## 1.0-draft.6 / profile 1.0-draft.4 — 2026-09-12
 
-### Changed
+- プロトコルと採点規則を YRC 0003 にまとめ、唯一の規範本文とした。
+- request を `OPEN`、`SELECTED`、`TERMINAL` に分離し、全選択の固定、競合判定、終端 ACK、結果 event の順序を定義した。decision group は他家3人を含み、`all_selected_or_deadline` で閉じる。
+- deadline ちょうどは timeout を優先し、期限前の選択は後着 ACK でも有効とした。不正 action の再試行、選択後の再送、後着 action、chombo による取消しと time bank の扱いを固定した。
+- 牌山、嶺上補充、合法手、フリテン、リーチ後の暗槓、喰い替え、連続槓の順序を明文化した。リーチ打牌が鳴かれてもリーチは成立し、一発を失う。暗槓の4枚は全 view で公開する。
+- 延長上限、親のアガリ止め、penalty での同局やり直し、本場・供託の繰越を定義した。`next` は次局の `bakaze`・`kyoku` を含み、`end_game` の場合も `kyotaku` を必須とする。
+- snapshot に局外の供託・次局・終局順位・time bank、鳴かれた捨て牌、槓ドラ保留、選択済み行動と残り期限を追加した。公開 view と他家の自摸番における pending request の条件を修正した。
+- `welcome` に有効 capability 集合と `replay_through_seq` を追加した。観戦の途中参加、初回 snapshot、全 application message を含む replay の seq、token の一回使用・失効を定義した。
+- profile revision と Protocol Version の対応表、選択前の join Schema、交渉の拒否順序、session 内の拡張 Schema 合成を定義した。新規 join の座席割当、resume の座席固定、replay target を明確化した。
+- stateful trace で wire ledger、transaction、timeout、全 view の再帰的な情報投影を検査する。公式ベクトルには合法候補全体、牌136枚の保存、局進行、資源上限の検査を含めた。
+- 採点入力から手牌の全分解、役・符・点数・支払いを再計算する形式を定義した。責任払いは該当役満の点数成分に適用し、本場の端数配分と供託の別会計を固定した。
+- Schema、registry、公式ベクトル、検査実装、要求・配送・再開を扱う4つの有限形式モデルを同じ版として管理する。
 
-- YRC 0003 本文へ `riichi-4p` の全規範意味論を統合し、文書単体で自己完結する唯一の authority とした。Schema、registry、vector、oracle および Quint は派生成果物と明記し、本文優先、現行意味論不変および固定 profile hash（`sha256:811182d20eb1d33304913f3f9a91cfc68d9304a08230affff0ffb4ba21bdf5d5`）の責務を整理。
-- YRC 0003 に、全 message の正準状態（Protocol Core）、原子的な `Apply` 契約、前後条件および検証層ごとの一意な error 選択規則を追加。
-- host の wire ledger（seq、wire bytes、transaction）を正準化し、範囲 replay、resume、snapshot の `replaces_through_seq` と状態置換を byte-for-byte の規則として明文化。
-- decision group の request 発行順、group/個別 deadline、単調時計の同値境界、lock 内 linearization、ACK と採用 event の原子 transaction を明文化。
-- `play` の任意 seat 要求・最小空席割当と `welcome.seat` の関係、replay の game/recording target、reach 宣言取消しおよび延長局の通し番号・上限を修正。
-- mode/view ごとの完全な visibility 射影を定義し、snapshot、`last_event`、pending request、self state および秘匿牌へ同じ投影を再帰適用する規則を追加。
-- session全体を検査するstateful trace Schemaと正負vectorを追加し、join/welcome、seq ledger、request/ACK終端、group、timeout、snapshotおよびvisibilityをsemantic validatorで検査。
-- 入力から役・符・点数・支払いを再計算する独立scoring oracleと、最大4件の並行request、単調時計、immutable ledger、resume/snapshotおよびrefinement mappingを持つCanonical Protocol Core Quintモデルを追加。
-- YRC 0003 の Protocol Version を `1.0-draft.5`、`riichi-4p` profile の revision を `1.0-draft.3` へ更新。
-- YRC 0003/YRC 0005 の規範本文、Schema、registry および test vector に非互換修正があるため、旧 draft と混在しないよう Protocol Version/profile revision を bump。
-- 現行成果物に基づき、`riichi-4p` の profile hash を `sha256:811182d20eb1d33304913f3f9a91cfc68d9304a08230affff0ffb4ba21bdf5d5` へ更新。
-- Schema、registry、vector の参照先を `1.0-draft.5` / `1.0-draft.3` のディレクトリへ移行。
-- YRC 0003 の規範本文を、JSON Lines の frame 境界、mode 別の resume、`start_game`/`end_game` の順序、decision group の `group_start` と deadline、未解決 request の terminal 化、再接続時の時計進行および liveness の前提に合わせて明確化。
-- YRC 0005 の規範本文を、meld の `open`、本場・供託を含む精算入力、切り上げ満貫・数え役満境界、親ツモ、責任払いおよびチョンボ精算に合わせて明確化。
-- YRC 0003/YRC 0005 の Schema、registry、公式 vector を上記の規範変更へ同期し、spectate/replay target、重複 winner/bonus/pao、score の倍数制約、group deadline および scoring fixture の境界を検査対象へ追加。
-- `scripts/validate_artifacts.py` に、Draft 2020-12 Schema の対応範囲を明示した検査、registry/Schema の discriminator 整合、release manifest と profile hash の整合、公式 vector の構文・意味検査を追加した。Quint/TLC の補助モデルは、request/group、再送・resume、timeout、terminal 化および score conservation の有限状態性質を検査するが、実装適合性や完全な scoring を保証しない。
-- これらは未公開の現行 `yamai-1.0-draft.5` / Protocol `1.0-draft.5` / `riichi-4p` profile revision `1.0-draft.3` に対する同一 release 内の整合修正である。既存の draft5/draft3 bump が旧 draft4/draft2 との非互換境界を表しており、release manifest の `published` は `false` のため、今回さらに release ID、Protocol Version または profile revision を bump しない。公開 tag 後に同等の規範変更を行う場合は、仕様策定プロセスに従い新しい release ID と版を作成する。
+`1.0-draft.5` / profile `1.0-draft.3` とは非互換である。実装は Protocol Version、profile revision、Schema、registry、ベクトル、hash を一緒に更新する。
 
-### Added
+## 1.0-draft.5 / profile 1.0-draft.3 — 2026-08-30
 
-- `scoring-vectors.schema.json` を `riichi-4p` の規範 Schema として現行 profile revision に追加。
-- 規範成果物の権威関係、hash責務、互換性判定および公開手順を [`docs/specification-process.md`](docs/specification-process.md) に整理。
+- Protocol Core の正準状態、message の適用前後条件、不変な wire ledger、transaction 境界を定義した。
+- request の同時到着、timeout、線形化、ACK と採用 event の原子的な処理を明文化した。
+- JSON Lines の frame 境界、mode 別の resume、session の開始・終了、decision group の期限、再接続中の時計進行を明確化した。
+- 座席割当、game/recording の replay target、延長局の番号、snapshot を含む情報公開範囲を定義した。
+- 採点の副露、本場・供託、切り上げ満貫、数え役満、責任払い、チョンボを明確化した。
+- session を通した stateful trace、採点の再計算、Schema・registry・hash・公式ベクトルの整合性検査を追加した。
 
-### Compatibility
+`1.0-draft.4` / profile `1.0-draft.2` とは非互換である。対応する版の成果物一式を使用し、異なる版を混在させない。
 
-- `1.0-draft.5` / `1.0-draft.3` は旧 `1.0-draft.4` / `1.0-draft.2` と互換とみなさない。Protocol Version、profile revision、profile hash および release tag の組を一致させること。
-- 現行 release は、mode/target、seq・再送・request/ACK lifecycle、group deadline、scoring の境界および Schema の追加制約を含む。これらを実装していない旧実装は、hash が同じでない限り適合・互換と表明してはならず、現行 release の全公式 vector と validator を通過させる必要がある。
+## 1.0-draft.4 / profile 1.0-draft.2 — 2026-08-30
 
-### Status
+- 規範本文、Schema、registry、テストベクトル、validator を release manifest で一覧化した。
+- 成果物の権威関係、Protocol Version・profile revision/hash・release ID/tag の責務、互換性判定と公開手順を定義した。
+- 採点ベクトルの Schema を追加した。
+- 認証方式を対象外とし、公開の spectate/replay に別の認可 profile を要求した。
 
-- 安定版の公開条件（公式 vector と二つ以上の独立相互運用実装）は未充足として扱う。
-- 公開 release tag が付くまで、release manifest の `published` は `false` とする。
-
-## 過去版: 1.0-draft.4 / profile 1.0-draft.2 — 2026-08-30
-
-以下は過去版の履歴であり、現行成果物の参照には使用しない。
-
-### Added
-
-- YRC 0003 `1.0-draft.4` と `riichi-4p` profile revision `1.0-draft.2` の規範成果物を release manifest で一覧化。
-- 規範本文、全 Schema、registry、test vector、validator の権威関係と適合性の境界を [`docs/specification-process.md`](docs/specification-process.md) に追加。
-- Protocol Version、profile revision/hash、release ID/tag の責務と互換性判定を明文化。
-- 認証方式が対象外であること、および public/spectate/replay には別の認可 profile が必要であることを明記。
-- `scoring-vectors.schema.json` を `riichi-4p` の規範 Schema として追加。
-
-### Changed
-
-- YRC 0003/YRC 0005 の現在の成果物に合わせ、`riichi-4p` の profile hash を `sha256:e610bf40e4ad75e64a1d40a5add5a51f64151b22fa794e57382a906eec617824` に更新。
-
-### Status
-
-- 安定版の公開条件（公式 vector と二つ以上の独立相互運用実装）は未充足として扱う。
-- 公開 release tag が付くまで、release manifest の `published` は `false` とする。
+過去版の成果物は Git 履歴から取得する。変更提案と公開の手順は [仕様策定・リリースプロセス](docs/specification-process.md) を参照する。

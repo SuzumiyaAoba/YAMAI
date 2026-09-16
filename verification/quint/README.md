@@ -1,241 +1,87 @@
-# YAMAI の Quint 抽象状態機械
+# YAMAI の Quint 検証モデル
 
-このディレクトリは、YAMAI の規範文書にある一部の制御フローを有限状態機械へ抽象化し、Quint/TLC で静的検証するための補助モデルを収録する。いずれも限定的な制御フロー抽象モデルであり、JSON Schema、wire protocol実装、または `riichi-4p` の牌・役・点数エンジンの代替ではない。
+このディレクトリはYRC 0003 draft.6の制御フローを有限状態へ射影した5モデルを収録する。JSON parser、麻雀の合法手・点数エンジン、認証実装を置き換えるものではない。実際のwireと採点の検査範囲は[検証ガイド](../README.md)および公式vectorを併せて確認する。
 
-## 5モデルの役割
+## 5モデルの範囲
 
-| ファイル | 目的 | 主な抽象化 | 接続・探索範囲 |
-|---|---|---|---|
-| [`yamai_protocol_core.qnt`](yamai_protocol_core.qnt) | 規範Protocol Coreのcanonical modelとrefinement mapping | 最大4件のrequest/group map、単調時計、deadline/grace/timebank、集約した内部処理履歴、delivery/applied、resume/replay/snapshot、従来のACK結果（cancelledを除く） | `MAX_SEQ`、`MAX_CLOCK`等の有限境界。規範状態への対応は`refinement_mapping`で検査 |
-| [`yamai_protocol_core_bounded.qnt`](yamai_protocol_core_bounded.qnt) | canonical modelのCI用決定的refinement trace | 4 request slot、deadline/default/ACK、group linearization、ledger、delivery/applied、replay、snapshot | phase-driven traceを固定seedで最後まで実行 |
-| [`yamai_protocol.qnt`](yamai_protocol.qnt) | 既存の小さな基準モデル | session、host seq、single/group request、per-member action/ACK/default、resume/snapshot、score/kyotaku | 接続切断を含む。1 transactionずつの有限シミュレーション |
-| [`yamai_protocol_extended.qnt`](yamai_protocol_extended.qnt) | 規範要件を広く対応付ける拡張モデル | hello/join/welcome の version/profile/hash/capability、seq fresh/gap/duplicate/conflict/replay、pending resume/snapshot、request group、timeout、end_kyoku/end_game。disconnect/pending中もhost内部のtick・ACK/default・resolveを継続し、未配送結果をbacklog rangeへ保持 | `MAX_SEQ=8` などの有限境界。disconnect/resume の不安定な環境も到達可能 |
-| [`yamai_request_liveness.qnt`](yamai_request_liveness.qnt) | request liveness の完全有限検査 | single/group、全member ACK、timeout/default、期限前 action の後着ACK、atomic resolve | `stable_connection=true` を不変条件とし、1 request/run。接続切断・wire・交渉は除外 |
-| [`yamai_resume_delivery.qnt`](yamai_resume_delivery.qnt) | resume/delivery liveness の完全有限検査 | transport、backlog range、gap/replay、pending replay/snapshot、一度だけのdelivery、disconnect中のtick/default/ACK/resolve | `MAX_SEQ=6`、disconnect 1回、1 request/run。交渉・完全wire履歴・scoringは除外 |
-
-`yamai_request_liveness.qnt` は、接続が最終的に安定した後の request scheduler を分離して調べるためのモデルである。`MAX_SEQ=6`、`MAX_TIMEOUT=2`、1 request/run と小さくし、single と group の初期分岐をTLCで完全列挙できるようにしている。`deadline == 0` では新規actionを受け付けず、defaultは `pending_members.exclude(responded_members)` だけへ適用する。extendedでは、同じ request 内部処理がdisconnect、`ReplayPending`、`SnapshotPending` でも止まらないことを別に表現する。
-
-`yamai_resume_delivery.qnt` は、request内部の進行とpeer deliveryを分離するモデルである。接続が切れてもhostのdeadline、default、既受信actionのACK、resolveは進み、生成されたhost messageは `backlog_from_seq..backlog_to_seq` に保持される。replay/snapshotは一度だけbacklogを消費する。full extendedはこのモデルと重複するlivenessを探索せず、安全性と到達性witnessだけを検査する。
-
-## 規範要件とモデルの対応
-
-行番号は現在の規範文書の行番号である。wire上のJSON memberや暗号学的性質を、Quintの有限tag・整数・集合へ写像して検査している。
-
-| 規範要件 | Quint action / invariant / temporal / witness | 出典 |
+| モデル | 検証する対象 | 有限境界と解釈 |
 |---|---|---|
-| session と message kind の状態変更 | extended の `SessionState`、`send_hello`、`send_join_good`、`send_welcome`、`negotiation_invariant`、`witness_negotiated_active` | `docs/yamai-protocol.md:93-109` |
-| version/profile/hash/capability の交渉と拒否 | `send_join_bad_version`、`send_join_bad_profile`、`send_join_bad_capability`、`reject_join`、`negotiation_invariant`、`witness_rejected_*` | `docs/yamai-protocol.md:195-240` |
-| envelope seq、gap、同一seq再送、conflict、replay | extended の `host_emit_event`、`host_emit_gap_message`、`player_detect_gap`、`host_retransmit_exact`、`host_retransmit_conflict`、`player_accept_duplicate`、`player_reject_conflict`、`replay_progress`、`wire_invariant` と各 witness。gap delivery livenessは `yamai_resume_delivery.qnt` の `gap_replay_under_eventual_stable_connection` | `docs/yamai-protocol.md:165-193` |
-| request の一意性・group member・timeout 境界 | extended の `open_single_request`、`open_decision_group`、per-member `request_ids`、`request_lifecycle_invariant`、`request_id_invariant`、`request_capacity_invariant` | `docs/yamai-protocol.md:577-618` |
-| action、ACK、terminal/default、期限後の扱い | `submit_action`、`ack_single`、`ack_group_one/two`、`default_action`、`request_action/status_invariant`。小型モデルでも同じ性質を `request_data_invariant` と temporal で完全検査 | `docs/yamai-protocol.md:620-666`, `:701-735` |
-| group の優先順位と atomic resolve | extended の `resolve_group`、`GroupOpen/Closed/Resolved`、seq reservation と request safety。内部 request liveness は `yamai_request_liveness.qnt` の `group_resolves_under_stable_connection`、優先順位そのもの（hora/pon/chi）は未モデル | `docs/yamai-protocol.md:668-683`, `Appendix A:1174-1194` |
-| disconnect/resume と pending request の保存 | extended の `disconnect`、`resume`、`begin_resume_replay`、`finish_resume_replay`、`emit_pending_snapshot`、`finish_snapshot_resume`、`resume_pending_invariant`、`resume_snapshot_invariant`。`backlog_pending/backlog_from_seq/backlog_to_seq` が、wire送信不可のhost結果をresume replay/snapshotへ渡す有限抽象。delivery livenessは `yamai_resume_delivery.qnt` で検査 | `docs/yamai-protocol.md:888-898` |
-| resume/replay の liveness | `yamai_resume_delivery.qnt` の `pending_delivery_under_eventual_stable_connection` と `gap_replay_under_eventual_stable_connection`。仮定は `weakFair(resume, state)`、delivery progress fairness、および `eventually(always(state.transport == Connected))` | `docs/yamai-protocol.md:894-898` |
-| end_kyoku/end_game 前の terminal 化 | `end_kyoku`、`end_game`、`terminalization_invariant`、`terminal_state_is_quiescent`、`witness_terminalized_end` | `docs/yamai-protocol.md:460-465`, `:477-577`, `Appendix A:1192-1194` |
-| score/kyotaku の全体保存則 | `score_conservation`、reach の抽象控除と `settle_kyotaku`。実際の点数計算は未モデル | `docs/yamai-protocol.md:460-465`; `docs/riichi-4p-rules.md:238-280` |
+| [yamai_protocol.qnt](yamai_protocol.qnt) | session、選択固定→優先順位→ACK→結果、timeout、切断・再開、snapshot、供託の保存則 | seq上限12、期限2、2人の変動する反応者。3人目はnoneで確定済みとし、その定数の通信を射影から除く。seqはこの射影の通信順序を数える |
+| [yamai_protocol_extended.qnt](yamai_protocol_extended.qnt) | version/profile/hash/capabilityの交渉、gap/重複/衝突、要求、未配送の履歴範囲、snapshot、終局 | seq上限8、2人の変動する反応者と1人の確定済みnone。交渉値・payload同一性は有限tag。安全性と到達性を検査する |
+| [yamai_request_liveness.qnt](yamai_request_liveness.qnt) | 1人の自摸判断または**3人全員**の反応group、個別期限、3種類のron policy、ACK順序、原子的な結果公開 | 1 decision/run、放銃者0、他家1～3、各peerの相対seq 0～3、期限0～2、接続は常時安定 |
+| [yamai_resume_delivery.qnt](yamai_resume_delivery.qnt) | 1peerの履歴・受信位置、有限replay範囲、追加backlog、snapshot、切断中の内部処理、一度だけの適用 | 最大6message、1decision、切断1回、gap1回、snapshot1回。他のgroup memberはothers_readyで要約する。履歴はmessage種別の固定tagを保持する |
+| [yamai_session_ledgers.qnt](yamai_session_ledgers.qnt) | 個別sessionのseq、取消し後の後着診断、先頭位置での再開、初回観戦snapshot、replayの番号一致 | 2peerのledger、seq上限8と6、1局・1取消し。3人目の反応者と牌山・時計・payloadを省略する。内部状態Cancelledはwireの終端staleに対応する |
 
-### liveness の環境仮定
+baseline/extendedの2反応者は実対局の2人groupを許可する意味ではない。実対局ではYRC 0003に従って3人全員へ要求する。3人目の応答・期限も変動する場合と三家和はrequest_livenessで検査する。baseline/extendedのseqをそのまま4本のwireへ割り当ててはならない。peerごとのseqはrequest_liveness、実際にどこまで届いたかはresume_deliveryが扱う。
 
-extended の host内部 terminal化・resolve は transport delivery とは別の性質であり、disconnect、`ReplayPending`、`SnapshotPending` でも deadline tick、timeout/default、既受信actionのACK、group resolveを止めない。内部 request liveness は `yamai_request_liveness.qnt`、transport/backlog/gap/replay/snapshot delivery は `yamai_resume_delivery.qnt` へ分割して完全有限検査する。full extended は状態の組合せが大きいため、安全性と到達性witnessだけを保証し、livenessの結果はこの2分割モデルの結果として扱う。
+## 規範との対応
 
-resume-delivery 小型モデルの replay/snapshot delivery liveness は無条件ではない。無限に disconnect/resume を繰り返す環境では、peerへのdeliveryを保証できないため、次の property は式名のとおり `weakFair` に加えて「ある時点以後ずっと transport が `Connected`」という仮定を antecedent に含む。
+| 要件 | 対応するモデル上の操作・性質 | 規範 |
+|---|---|---|
+| 交渉の一致と拒否 | extendedのsend_hello/send_join_*/send_welcome/reject_join、negotiation_invariant | [YRC 0003](../../docs/yamai-protocol.md) §6 |
+| seqの増加、欠落・重複・内容衝突 | extendedのwire_invariant、host_replay_range、player_*、各witness。deliveryのhistoryとapply_counts | YRC 0003 §5・§12 |
+| 全選択を固定してからACKを生成 | baseline/extendedのGroupOpen→GroupClosed→decided、request_lifecycle_invariant。requestのOpen→Closed→Decided→Acked→Resolved | YRC 0003 §8・§9 |
+| 個別期限、未応答だけのdefault、期限前の選択を保持 | requestのremaining/original_deadlines/selected_at、default_member、request_data_invariant、late_ack_* | YRC 0003 §8.1・§9.1 |
+| 優先順位、頭ハネ、三家和、noneとsupersededの区別 | requestのexpected_chosen/expected_ack、sanchahoTest、selectionBeforeAckTest | YRC 0003 §8.4 |
+| 切断で時計・ACK・内部解決を止めない | deliveryのinternal_progressとdisconnected_internal_invariant。baseline/extendedも内部操作をConnectedで制限しない | YRC 0003 §8.4・§13 |
+| 新規メッセージを既存replayへ混ぜない | deliveryのfrozen_frontier/replay_through、extendedのreplay_to_seq。replay終了後のtailを残す | YRC 0003 §13.2 |
+| hostの生成とpeerの適用を区別 | deliveryのprevious_applied_seq/last_delivery/apply_counts。hostだけの操作はapplied_seqを変えない | YRC 0003 §5・§13 |
+| snapshotで選択済み要求を保持 | deliveryのsnapshot_phase/snapshot_choice、extendedのsnapshot_saved_*、具体的runテスト | YRC 0003 §13.3 |
+| 終了済みsessionへ未配送結果を届ける | baselineのendedReplayTest、extendedのendedResumeTest | YRC 0003 §13.2 |
+| 局結果・終局前に要求を解決 | extendedのround_result_available、end_kyoku/end_game、terminalization_invariant | YRC 0003 §7.5・Appendix A |
+| 供託を含む全体の点数保存 | baseline/extendedのscore_conservation、reach控除とsettle_kyotaku | YRC 0003 §7.2・§7.6.8 |
 
-- `gap_replay_under_eventual_stable_connection`
-- `pending_delivery_under_eventual_stable_connection`
+## 実行方法と検査結果
 
-request liveness の `group_resolves_under_stable_connection`、`timeout_closes_under_stable_connection`、`late_ack_survives_default_under_stable_connection` は、接続を常時安定とした別モデルで検査する。
-
-これは host process の稼働、scheduler の fairness、単調時計の進行、最終的な接続安定を仮定する。host crash、scheduler starvation、clock halt、恒久的なtransport不通や無限再切断での peer delivery は主張しない。現行の規範本文にもこの制限が明示されており（`docs/yamai-protocol.md:683`, `:898`）、このREADMEとモデルはその制限を `eventually(always(state.transport == Connected))` という検査可能な前提へ具体化している。
-
-## モデル間の関係と限界
-
-`yamai_protocol_core.qnt`を正準モデルとし、`refinement_session`、`refinement_requests`、`refinement_wire`、`refinement_resume`を合成した`refinement_mapping`で、有限化した具体状態が規範Protocol Coreの状態制約を満たすことを検査する。append-onlyな集約履歴、抽象delivery/applied順序、request map、group linearization、clock/deadline、ACK結果は`protocol_invariant`の構成要素である。
-
-既存4モデルは、canonical modelの特定側面をより小さい状態空間で調べる補完モデルである。canonical modelから既存4モデルへの機械的なtrace inclusion/composition theoremは定義していないため、既存モデルのTLC成功だけからcanonical modelや実装の適合性を導出してはならない。また、`refinement_mapping`の成功も下記の有限境界内の主張であり、無制限状態や実装コードへの証明ではない。
-
-特に、複数の同時 request、複数 decision group、group間の優先順位、複数 pending snapshot/replay、複数回の disconnect/resume、wire backlog と request state の全組合せを一つのモデルで網羅していない。今回の検査は、full extended の safety/witness、request liveness の小型モデル、resume/delivery liveness の小型モデルという分割ごとの主張に限定される。
-
-## 抽象化・非対象
-
-### `yamai_protocol.qnt`
-
-- hello/join/welcome の version、profile revision/hash、capability negotiation
-- wire上の gap/duplicate/conflict、byte-for-byte replay、実際のID文字列
-- pending request を含む本格的な resume/replay/snapshot
-- visibility、seat別秘匿、認証、TLS、frame parser、JSON Schema
-- `superseded`、`stale`、`rejected` ACKの全ポリシー
-- MJAIの牌姿、legal actionの完全集合、役・符・ドラ・複数ron・pao・noten・chombo・ranking
-- 実時間と単調時計。`deadline` は有限tickへ抽象化する
-
-### `yamai_protocol_extended.qnt`
-
-- negotiation のwire JSON、JCS/hash計算、Protocol Versionの文字列互換性の完全な検証
-- capabilityごとの実装能力、receive limit、mode/view/target、visibility projection、seat秘匿
-- wire seq の全履歴、実際の gap range、全 message のbyte-for-byte内容、pending resume/replay履歴の永続化
-- 1つの pending snapshot と有限の replay progress のみ。複数game・複数session・tokenの暗号学的乱数・期限検証
-- `superseded`、`stale`、`rejected` の全ACK状態、invalid-action policyの全分岐
-- 実時間、flush/frame分割、backpressure、latency、host crash、scheduler/clock故障
-- `riichi-4p` の合法性、役・符・ドラ・支払・複数ron・pao・noten・chombo・ranking の完全scoring。`score_conservation` は全体保存則だけ
-- `end_kyoku`/`end_game` payload、優先順位、next policyの全意味論
-
-### `yamai_resume_delivery.qnt`
-
-- negotiation、profile/capability、JSON Schema、実際のmessage payloadとbyte-for-byte履歴
-- 複数request/member、実際のrequest/action ID、複数回の切断・resume、token期限・認証
-- snapshotの完全なstate projection、replay範囲の全message、実時間のdeadline/time bank
-- gapは1回、resume deliveryは1回の有限抽象。`backlog_from_seq..backlog_to_seq` は未配送host結果の存在と一度だけの消費を表す
-- scoring、visibility、transport frame/backpressure、host crashやscheduler故障
-
-### `yamai_request_liveness.qnt`
-
-- session/negotiation/wire seq/resume/snapshot/end_game
-- 接続切断・遅延・再接続。モデル内では `stable_connection` が常に true
-- 実時間の millisecond、time bankの数値計算、schedulerの実装。`deadline` は2 tickへ縮小
-- 実際の legal action object、JSON member、request/action ID文字列、priority/scoring
-- 1 runで1 requestだけ。requestを連続発行する資源競合・複数gameは扱わない
-
-したがって、これらのモデルの成功は、有限境界と上記の環境仮定の下での制御フロー性質だけを示す。実装適合には JSON Schema、registry、公式vector、frame parser、semantic validator および独立した相互運用試験を併用すること。
-
-## Nix 環境での実行
-
-ルートの `flake.nix` が提供するNix環境を使用する。通常は次のように実行する。
+環境はrootの[flake.nix](../../flake.nix)と[flake.lock](../../flake.lock)で固定する。リポジトリのルートで全検査を実行する。
 
 ```sh
-nix develop --command quint --version
+nix flake check path:. --no-update-lock-file
 ```
 
-### parse / typecheck
+各モデルは独立に検査できる。各gateはartifact validatorとtoolchainに依存し、そのモデルのparse/typecheck、安全性、必要な時間的性質、run/witnessを順に実行する。モデル間に任意の成功依存を作らない。aarch64-darwin以外ではsystem名を環境に合わせる。
 
 ```sh
-nix develop --command quint parse verification/quint/yamai_protocol_core.qnt
-nix develop --command quint typecheck verification/quint/yamai_protocol_core.qnt
-nix develop --command quint parse verification/quint/yamai_protocol_core_bounded.qnt
-nix develop --command quint typecheck verification/quint/yamai_protocol_core_bounded.qnt
-nix develop --command quint parse verification/quint/yamai_protocol.qnt
-nix develop --command quint typecheck verification/quint/yamai_protocol.qnt
-nix develop --command quint parse verification/quint/yamai_protocol_extended.qnt
-nix develop --command quint typecheck verification/quint/yamai_protocol_extended.qnt
-nix develop --command quint parse verification/quint/yamai_request_liveness.qnt
-nix develop --command quint typecheck verification/quint/yamai_request_liveness.qnt
+nix build path:.#checks.aarch64-darwin.quint-model-witnesses --no-link
+nix build path:.#checks.aarch64-darwin.quint-model-extended-witnesses --no-link
+nix build path:.#checks.aarch64-darwin.quint-request-liveness-witnesses --no-link
+nix build path:.#checks.aarch64-darwin.quint-resume-delivery-witnesses --no-link
+nix build path:.#checks.aarch64-darwin.quint-session-ledgers --no-link
+```
+
+個別の安全性検査と具体的操作列は次のように実行する。他モデルもファイル名を置き換える。
+
+```sh
 nix develop --command quint parse verification/quint/yamai_resume_delivery.qnt
 nix develop --command quint typecheck verification/quint/yamai_resume_delivery.qnt
+nix develop --command quint verify --backend tlc verification/quint/yamai_resume_delivery.qnt --invariant protocol_invariant
+nix develop --command quint test verification/quint/yamai_resume_delivery.qnt
 ```
 
-### canonical Protocol Core のbounded safety/refinement
+Nixの各出力にはquint-verify.log、時間的性質がある場合はquint-verify-temporal.log、quint-tests.log、quint-witness.logを残す。checkの正確なコマンドと不変条件一覧は[flake.nix](../../flake.nix)に固定する。
 
-full canonical modelのTLC完全探索は状態空間が急増するため、CIでは同じ主要状態射影を持つphase-driven bounded modelの決定的traceを最後まで実行する。
+TLC backendはq_init/q_stepの有限到達状態を検査する。CLIのmax-stepsを用いたランダムシミュレーションの成功と混同しない。runはTLCの状態機械から除かれ、quint testで別途実行する。
 
-```sh
-nix develop --command quint run \
-  --main yamai_protocol_core_bounded \
-  verification/quint/yamai_protocol_core_bounded.qnt --max-steps 24 \
-  --max-samples 1 --seed 0x79616d61695f636f \
-  --invariants protocol_invariant refinement_mapping \
-  --witnesses witness_complete
-```
+## 時間的性質と前提
 
-これはbounded modelの決定的conformance traceであり、状態空間の完全探索、full canonical model、無制限実装の完全証明ではない。リリース証拠にはtrace結果と、full canonical modelで完走・打切りした探索範囲を区別して記録する。
+| モデル | 時間的性質 |
+|---|---|
+| baseline | host_seq_bounded、ended_state_is_quiescent、group_resolves_under_weak_fairness、timeout_closes_under_weak_fairness、resume_returns_under_weak_fairness |
+| request | stable_connection_is_preserved、group_resolves_under_stable_connection、timeout_closes_under_stable_connection、late_ack_survives_default_under_stable_connection |
+| delivery | internal_terminalization_under_fairness、gap_replay_under_eventual_stable_connection、pending_delivery_under_eventual_stable_connection |
 
-### extended の safety
+hostの内部進行は公平なschedulerを、期限の進行は公平なtickを前提とする。deliveryの配送保証はさらに `eventually(always(transport == Connected))` を仮定する。恒久切断、host停止、時計停止、scheduler starvationでの配送は主張しない。host処理とpeer配送は別の義務であり、切断中も前者は進む。
 
-```sh
-nix develop --command quint verify --backend tlc \
-  verification/quint/yamai_protocol_extended.qnt \
-  --invariants type_ok host_seq_non_decreasing negotiation_invariant \
-  wire_invariant request_invariant resume_snapshot_invariant \
-  resume_pending_invariant terminalization_invariant score_conservation
-```
+TLCだけで前提状態の到達性は保証されないため、witnessと具体的runを併用する。requestのsanchahoTestは三家和へ至る操作列を検査する。deliveryのfrozenFrontierTailTestは空のreplay範囲を確定した後にACK/結果を生成し、その追加分を後から正常配送できることを確認する。
 
-extended は状態組合せが大きいため、上の safety invariant と witness だけを実行する。liveness は次の2分割モデルで検査する。
+## 検証の限界
 
-### request liveness の完全検査
+5モデルを合成する形式的なrefinement/composition theoremは定義していない。モデル同士の名前が似ていることから、相互の性質を自動的に導いてはならない。各モデルの有限境界と前提の下での結果として扱う。
 
-```sh
-nix develop --command quint verify --backend tlc \
-  verification/quint/yamai_request_liveness.qnt \
-  --invariants type_ok host_seq_non_decreasing capacity_invariant \
-  request_lifecycle_invariant request_data_invariant protocol_invariant
-nix develop --command quint verify --backend tlc \
-  verification/quint/yamai_request_liveness.qnt \
-  --temporal stable_connection_is_preserved
-nix develop --command quint verify --backend tlc \
-  verification/quint/yamai_request_liveness.qnt \
-  --temporal group_resolves_under_stable_connection
-nix develop --command quint verify --backend tlc \
-  verification/quint/yamai_request_liveness.qnt \
-  --temporal timeout_closes_under_stable_connection
-nix develop --command quint verify --backend tlc \
-  verification/quint/yamai_request_liveness.qnt \
-  --temporal late_ack_survives_default_under_stable_connection
-```
+実際のJSON/UTF-8/frame、byte-for-byteの全履歴、暗号学的token、認証・認可、全visibility、実時間・ネットワークlatency、host crash、複数game、無限の切断再接続、全てのエラー・冪等性・chombo、牌の所有と合法手は完全にはモデル化していない。baseline/extendedの点数は25点×4人、供託1点の保存則だけであり、役・符・本場・責任払いの計算はscoring_referenceと公式fixtureで検査する。
 
-### resume delivery の完全検査
+形式検査の成功を、独立実装同士の相互運用試験や安定版の公開条件の充足と表明してはならない。
 
-```sh
-nix develop --command quint verify --backend tlc \
-  verification/quint/yamai_resume_delivery.qnt \
-  --invariants type_ok host_seq_non_decreasing backlog_invariant \
-  gap_invariant request_invariant pending_saved_invariant \
-  disconnected_internal_invariant protocol_invariant
-nix develop --command quint verify --backend tlc \
-  verification/quint/yamai_resume_delivery.qnt \
-  --temporal internal_terminalization_under_fairness
-nix develop --command quint verify --backend tlc \
-  verification/quint/yamai_resume_delivery.qnt \
-  --temporal gap_replay_under_eventual_stable_connection
-nix develop --command quint verify --backend tlc \
-  verification/quint/yamai_resume_delivery.qnt \
-  --temporal pending_delivery_under_eventual_stable_connection
-```
+## 並列実行時の検証サーバー
 
-### witness による到達性確認
-
-temporal formula の antecedent が到達不能であることによる vacuous truth を避けるため、次の witness をシミュレーションで確認する。
-
-```sh
-nix develop --command quint run \
-  verification/quint/yamai_protocol_extended.qnt \
-  --main yamai_protocol_extended \
-  --invariants type_ok host_seq_non_decreasing negotiation_invariant \
-  wire_invariant request_invariant resume_snapshot_invariant \
-  resume_pending_invariant terminalization_invariant score_conservation \
-  --witnesses witness_negotiated_active witness_rejected_version \
-  witness_rejected_profile witness_rejected_capability witness_gap \
-  witness_duplicate witness_conflict witness_replayed witness_request_group \
-  witness_deadline_boundary witness_pending_resume witness_pending_snapshot \
-  witness_terminalized_end --max-steps 32 --max-samples 2000
-
-nix develop --command quint run \
-  verification/quint/yamai_request_liveness.qnt \
-  --main yamai_request_liveness \
-  --invariants type_ok host_seq_non_decreasing capacity_invariant \
-  request_lifecycle_invariant request_data_invariant protocol_invariant \
-  --witnesses witness_single_open witness_group_open witness_group_closed \
-  witness_timeout_boundary witness_defaulted witness_late_ack_pending \
-  witness_late_ack_acked witness_single_resolved witness_group_resolved \
-  --max-steps 20 --max-samples 1000
-
-nix develop --command quint run \
-  verification/quint/yamai_resume_delivery.qnt \
-  --main yamai_resume_delivery \
-  --invariants type_ok host_seq_non_decreasing backlog_invariant \
-  gap_invariant request_invariant pending_saved_invariant \
-  disconnected_internal_invariant protocol_invariant \
-  --witnesses witness_disconnect_default witness_disconnect_resolve \
-  witness_reconnect_replay witness_snapshot_replacement witness_gap_recovery \
-  --max-steps 24 --max-samples 5000
-```
-
-`quint run --witnesses` は各 predicate が少なくとも1 traceで成立したことを報告する。TLC temporal の成功だけでは到達性を保証しないため、witness結果を併記する。
-
-## draft.6 のsession別採番と取消し
-
-[`yamai_session_ledgers.qnt`](yamai_session_ledgers.qnt) は2つのplay sessionの独立ledger、1つの共通game、チョンボでの `cancelled`、取消し後の `stale`、head一致resume、観戦の最初のsnapshot、およびreplayの `1 → 1` を有限状態で検査する。拒否ACKを片方だけへ出した後も他方のseqには穴が開かず、取消しで全requestを終端化する。`stale` はその決定を変更しない。
-
-```sh
-rtk quint typecheck verification/quint/yamai_session_ledgers.qnt
-rtk quint verify --backend tlc --invariants protocol_invariant verification/quint/yamai_session_ledgers.qnt
-rtk quint run --invariants protocol_invariant --witnesses witness_complete --max-steps 40 --max-samples 100 --seed 0x79616d616936 verification/quint/yamai_session_ledgers.qnt
-```
-
-既存のcore/boundedモデルの `host_seq` は複数seatの処理をまとめた抽象履歴位置としてのみ解釈する。sessionごとのwire採番・射影、全ACK status、JSON payloadとの直接のrefinementを証明するモデルではない。追加モデルの範囲も上記の2session・1groupに限られ、時計・採点・牌姿の完全性は主張しない。Pythonの公式49組の正負vectorと回帰テストが具体的なSchema・wire例と局進行を検証する。
+Nix環境のquint wrapperは、verify/compileごとに未使用のloopback portを選び、Apalacheのserver-endpointを分離する。複数の検査が同じサーバーを共有することを防ぐためであり、明示した `--server-endpoint` は尊重する。

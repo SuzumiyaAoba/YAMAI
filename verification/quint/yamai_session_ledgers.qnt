@@ -2,6 +2,9 @@
 // The finite state space includes a rejected attempt, atomic cancellation,
 // a late stale response, head-equal resume, initial spectate, and replay 1->1.
 // Payload bytes, scoring, wall state and timers remain outside this model.
+// Cancelled is an internal terminal state: draft.6 sends status=stale for
+// cancellation. A later stale diagnostic leaves that terminal state unchanged.
+// A and B project two peer ledgers; the third reaction member is abstracted out.
 module yamai_session_ledgers {
   type Game = NotStarted | Ready | InKyoku | Ended
   type Terminal = Empty | Open | Cancelled

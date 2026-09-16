@@ -62,17 +62,17 @@ MJAI は、次の2つの意味で使用される。
 資料間で異なる場合、本書は次のラベルを使用する。
 
 - **原典**: Gimite の説明ページに記載されている内容
-- **Gimite v3 実装**: `gimite/mjai` の現行コードで観測できる内容
+- **Gimite v3 実装**: `gimite/mjai` の参照版（YRC 0004 §2.1）で観測できる内容
 - **共通実装慣行**: Mortal、mjai.app、牌譜変換器など複数実装で共通する内容
 - **方言**: 特定実装だけの追加フィールドまたは通信規則
 
-外部実装を根拠にする記述の確認日、protocol revision、commit/tagおよび対象ファイルは [YRC 0004] §2.1 に固定する。Gimiteのcommitを確認できない場合など、固定できない資料はその理由を同節へ記録する。
+外部実装を根拠にする記述のprotocol revision、commit/tagおよび対象ファイルは [YRC 0004 §2.1](mjai-implementations.md#21-source-snapshots-and-evidence) に固定する。
 
 ### 1.2 記述規約
 
 本書の「規定されている」は引用元が明示的に要求していることを表す。「観測される」は公開実装のコードパスから確認できることを表す。「一般的である」は複数の独立実装に同じ表現が存在することを表す。
 
-本書中の `MUST`、`SHOULD` および `MAY` は、既存資料を引用する箇所を除き、[RFC 2119] の規範要件を表さない。YAMAI の規範要件は [YRC 0003] `1.0-draft.5` と、同文書が各profileの規範参照として指定するStandards Track文書（現在の `riichi-4p` では [YRC 0005] `1.0-draft.3`）が定義する。
+本書中の `MUST`、`SHOULD` および `MAY` は、既存資料を引用する箇所を除き、[RFC 2119] の規範要件を表さない。YAMAI の規範要件は、組込み `riichi-4p` の採点規則を含め、[YRC 0003](yamai-protocol.md) `1.0-draft.6` が定義する。
 
 ## 2. 用語
 
@@ -305,7 +305,7 @@ MJAI の wire compatibility を維持したまま上記を完全に解決する�
 
 MJAI には、プロトコル版、`type`、`ryukyoku.reason`、役ID、ルールIDまたは拡張フィールドを一意に管理する公式 registry が存在しない。そのため、同名拡張の衝突を機械的に防止できない。
 
-本書は新しい MJAI 値を登録しない。YAMAI 用 registry は [YRC 0003] `1.0-draft.5` が別名前空間として定義する。
+本書は新しい MJAI 値を登録しない。YAMAI 用 registry は [YRC 0003] `1.0-draft.6` が別名前空間として定義する。
 
 ## 12. References
 
@@ -318,7 +318,7 @@ MJAI には、プロトコル版、`type`、`ryukyoku.reason`、役ID、ルー�
 - [GIMITE-MJAI] Gimite, “Mjai 麻雀AI対戦サーバ”, 2017-06-07.  
   https://gimite.net/pukiwiki/index.php?Mjai+%E9%BA%BB%E9%9B%80AI%E5%AF%BE%E6%88%A6%E3%82%B5%E3%83%BC%E3%83%90=
 - [GIMITE-CODE] Gimite, “mjai”, source repository.  
-  https://github.com/gimite/mjai （`master`、commitは2026-08-30時点でWeb取得不能）
+  [gimite/mjai, commit 312c0c6f8446ca69ecc58e246840bffdad656541](https://github.com/gimite/mjai/tree/312c0c6f8446ca69ecc58e246840bffdad656541)
 - [CRYOLITE-MJAI] Cryolite, “Standardization Project for mjai Format Specification”.  
   https://github.com/Cryolite/mjai
 - [MORTAL-EVENT] Equim-chan, “Mortal MJAI Event”.  
@@ -332,8 +332,7 @@ MJAI には、プロトコル版、`type`、`ryukyoku.reason`、役ID、ルー�
 - [RFC 2119] Bradner, S., “Key words for use in RFCs to Indicate Requirement Levels”, BCP 14, RFC 2119, March 1997.  
   https://www.rfc-editor.org/rfc/rfc2119
 - [YRC 0002] YAMAI Project, “MJAI プロトコルの設計上の欠陥”.
-- [YRC 0003] YAMAI Project, “YAMAI Protocol Version 1 (1.0-draft.5)”.
-- [YRC 0005] YAMAI Project, “YAMAI `riichi-4p` 役・符・点数規則 (1.0-draft.3)”.
+- [YRC 0003] YAMAI Project, “YAMAI Protocol Version 1 (1.0-draft.6)”.
 - [YRC 0004] YAMAI Project, “代表的 MJAI 実装プロファイル”.
 
 ## Appendix A. 方言識別票

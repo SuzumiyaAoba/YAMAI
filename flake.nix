@@ -33,8 +33,27 @@
         );
 
       checkerPackages =
-        pkgs: [
-          pkgs.quint.out
+        pkgs: let
+          isolatedQuint = pkgs.writeShellScriptBin "quint" ''
+            set -eu
+            case "''${1-}" in
+              verify|compile)
+                yamai_has_endpoint=0
+                for yamai_arg in "$@"; do
+                  case "$yamai_arg" in
+                    --server-endpoint|--server-endpoint=*) yamai_has_endpoint=1 ;;
+                  esac
+                done
+                if [ "$yamai_has_endpoint" -eq 0 ]; then
+                  yamai_quint_port="$(${pkgs.python3}/bin/python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')"
+                  exec ${pkgs.quint.out}/bin/quint "$@" --server-endpoint "127.0.0.1:$yamai_quint_port"
+                fi
+                ;;
+            esac
+            exec ${pkgs.quint.out}/bin/quint "$@"
+          '';
+        in [
+          isolatedQuint
           pkgs.tlaplus.out
           pkgs.jre_headless.out
           pkgs.z3.out
@@ -66,7 +85,7 @@
         let
           artifactValidatorCheck = pkgs.runCommand "yamai-artifact-validator" {
             src = ./.;
-            nativeBuildInputs = [ pkgs.python3 ];
+            nativeBuildInputs = [ (pkgs.python3.withPackages (ps: [ ps.jsonschema ])) ];
           } ''
             set -eu
             mkdir "$out"
@@ -77,13 +96,14 @@
             fi
             cd "$src"
             python3 scripts/validate_artifacts.py > "$out/validate.log" 2>&1
+            python3 scripts/test_validator.py > "$out/regression.log" 2>&1
+            python3 scripts/test_scoring_reference.py > "$out/scoring-regression.log" 2>&1
+            python3 scripts/test_session_contract.py > "$out/session-regression.log" 2>&1
+            python3 scripts/test_game_contract.py > "$out/game-regression.log" 2>&1
+            python3 tests/test_regressions.py > "$out/specification-regression.log" 2>&1
+            python3 scripts/check_jsonschema.py > "$out/jsonschema.log" 2>&1
             oracle="$src/scripts/score_oracle.py"
-            if [ ! -f "$oracle" ]; then
-              echo "scripts/score_oracle.py is not present" >&2
-              exit 1
-            fi
-            python3 scripts/score_oracle.py > "$out/score-oracle.log" 2>&1
-            python3 -B -m unittest discover -s tests -v > "$out/regressions.log" 2>&1
+            python3 "$oracle" > "$out/score-oracle.log" 2>&1
             echo "$validator" > "$out/validator"
             echo "$oracle" > "$out/scoring-oracle"
           '';
@@ -161,64 +181,6 @@
             echo "$model" > "$out/model"
           '';
 
-          sessionLedgerCheck = pkgs.runCommand "yamai-quint-session-ledgers" {
-            src = ./.;
-            toolchainDependency = toolchainCheck;
-            nativeBuildInputs = checkerPackages pkgs;
-          } ''
-            set -eu
-            mkdir "$out"
-            test -d "$toolchainDependency"
-            cp "$src/verification/quint/yamai_session_ledgers.qnt" "$TMPDIR/"
-            cd "$TMPDIR"
-            quint typecheck yamai_session_ledgers.qnt > "$out/typecheck.log" 2>&1
-            quint verify --backend tlc --invariants protocol_invariant --verbosity 1 \
-              yamai_session_ledgers.qnt > "$out/verify.log" 2>&1
-            quint run --invariants protocol_invariant --witnesses witness_complete \
-              --max-steps 40 --max-samples 100 --seed 0x79616d616936 --verbosity 1 \
-              yamai_session_ledgers.qnt > "$out/witness.log" 2>&1
-            grep -Eq '^witness_complete was witnessed in [1-9][0-9]* trace' "$out/witness.log"
-          '';
-
-          coreSafetyCheck = pkgs.runCommand "yamai-quint-protocol-core" {
-            src = ./.;
-            toolchainDependency = toolchainCheck;
-            nativeBuildInputs = checkerPackages pkgs;
-          } ''
-            set -eu
-            mkdir "$out"
-            test -d "$toolchainDependency"
-
-            model_dir="$src/verification/quint"
-            model="$model_dir/yamai_protocol_core_bounded.qnt"
-            if [ ! -f "$model" ]; then
-              echo "verification/quint/yamai_protocol_core_bounded.qnt is not present" >&2
-              exit 1
-            fi
-
-            work_dir="$TMPDIR/verification/quint-core"
-            mkdir -p "$work_dir"
-            cp "$model_dir"/*.qnt "$work_dir"/
-            model="$work_dir/yamai_protocol_core_bounded.qnt"
-            cd "$TMPDIR"
-            quint parse "$model" > "$out/quint-parse.log" 2>&1
-            quint typecheck "$model" > "$out/quint-typecheck.log" 2>&1
-            quint run \
-              --main yamai_protocol_core_bounded \
-              --invariants protocol_invariant refinement_mapping \
-              --witnesses witness_complete \
-              --max-steps 24 \
-              --max-samples 1 \
-              --seed 0x79616d61695f636f \
-              --verbosity 1 \
-              "$model" > "$out/quint-bounded-safety.log" 2>&1
-            if ! grep -Eq '^witness_complete was witnessed in [1-9][0-9]* trace' "$out/quint-bounded-safety.log"; then
-              cat "$out/quint-bounded-safety.log" >&2
-              exit 1
-            fi
-            echo "$model" > "$out/model"
-          '';
-
           temporalCheck = pkgs.runCommand "yamai-quint-model-temporal" {
             src = ./.;
             safetyDependency = safetyCheck;
@@ -281,6 +243,7 @@
             cp "$model_dir"/*.qnt "$work_dir"/
             model="$work_dir/yamai_protocol.qnt"
             cd "$TMPDIR"
+            quint test "$model" > "$out/quint-tests.log" 2>&1
             witness_log="$out/quint-witness.log"
             quint run \
               --main yamai_protocol \
@@ -288,7 +251,7 @@
               --invariants protocol_invariant \
               --witnesses $witnesses \
               --max-steps 40 \
-              --max-samples 100 \
+              --max-samples 1000 \
               --seed 0x67816c9a00a64203 \
               --verbosity 1 \
               "$model" > "$witness_log" 2>&1
@@ -306,7 +269,7 @@
 
           extendedParseTypecheckCheck = pkgs.runCommand "yamai-quint-model-extended-parse-typecheck" {
             src = ./.;
-            previousDependency = witnessCheck;
+            previousDependency = toolchainCheck;
             nativeBuildInputs = checkerPackages pkgs;
           } ''
             set -eu
@@ -382,6 +345,7 @@
             cp "$model_dir"/*.qnt "$work_dir"/
             model="$work_dir/yamai_protocol_extended.qnt"
             cd "$TMPDIR"
+            quint test "$model" > "$out/quint-tests.log" 2>&1
             witness_log="$out/quint-witness.log"
             quint run \
               --main yamai_protocol_extended \
@@ -409,7 +373,7 @@
 
           requestLivenessParseTypecheckCheck = pkgs.runCommand "yamai-quint-request-liveness-parse-typecheck" {
             src = ./.;
-            previousDependency = extendedWitnessCheck;
+            previousDependency = toolchainCheck;
             nativeBuildInputs = checkerPackages pkgs;
           } ''
             set -eu
@@ -487,7 +451,7 @@
             quint verify \
               --main yamai_request_liveness \
               --backend tlc \
-              --temporal group_resolves_under_stable_connection,timeout_closes_under_stable_connection,late_ack_survives_default_under_stable_connection \
+              --temporal stable_connection_is_preserved,group_resolves_under_stable_connection,timeout_closes_under_stable_connection,late_ack_survives_default_under_stable_connection \
               --max-steps 40 \
               --verbosity 1 \
               "$model" > "$out/quint-verify-temporal.log" 2>&1
@@ -510,21 +474,23 @@
               exit 1
             fi
 
-            witnesses="witness_single_open witness_group_open witness_group_closed witness_timeout_boundary witness_defaulted witness_late_ack_pending witness_late_ack_acked witness_single_resolved witness_group_resolved"
+            witnesses="witness_single_open witness_group_open witness_group_closed witness_timeout_boundary witness_defaulted witness_late_ack_pending witness_late_ack_acked witness_single_resolved witness_group_resolved witness_hora_priority witness_zero_deadline"
             work_dir="$TMPDIR/verification/quint-request-liveness"
             mkdir -p "$work_dir"
             cp "$model_dir"/*.qnt "$work_dir"/
             model="$work_dir/yamai_request_liveness.qnt"
             cd "$TMPDIR"
+            quint test "$model" > "$out/quint-tests.log" 2>&1
             witness_log="$out/quint-witness.log"
             quint run \
               --main yamai_request_liveness \
               --backend rust \
-              --invariant true \
+              --invariants type_ok host_seq_non_decreasing capacity_invariant \
+              request_lifecycle_invariant request_data_invariant protocol_invariant \
               --witnesses $witnesses \
               --max-steps 40 \
-              --max-samples 1000 \
-              --seed 0x7a6d6c697665 \
+              --max-samples 5000 \
+              --seed 0x79616d616972910d \
               --verbosity 1 \
               "$model" > "$witness_log" 2>&1
 
@@ -541,7 +507,7 @@
 
           resumeDeliveryParseTypecheckCheck = pkgs.runCommand "yamai-quint-resume-delivery-parse-typecheck" {
             src = ./.;
-            previousDependency = requestLivenessWitnessCheck;
+            previousDependency = toolchainCheck;
             nativeBuildInputs = checkerPackages pkgs;
           } ''
             set -eu
@@ -650,6 +616,7 @@
             cp "$model_dir"/*.qnt "$work_dir"/
             model="$work_dir/yamai_resume_delivery.qnt"
             cd "$TMPDIR"
+            quint test "$model" > "$out/quint-tests.log" 2>&1
             witness_log="$out/quint-witness.log"
             quint run \
               --main yamai_resume_delivery \
@@ -674,13 +641,33 @@
 
             echo "$model" > "$out/model"
           '';
+          sessionLedgerCheck = pkgs.runCommand "yamai-quint-session-ledgers" {
+            src = ./.;
+            toolchainDependency = toolchainCheck;
+            nativeBuildInputs = checkerPackages pkgs;
+          } ''
+            set -eu
+            mkdir "$out"
+            test -d "$toolchainDependency"
+            cp "$src/verification/quint/yamai_session_ledgers.qnt" "$TMPDIR/"
+            cd "$TMPDIR"
+            model="yamai_session_ledgers.qnt"
+            quint typecheck "$model" > "$out/quint-typecheck.log" 2>&1
+            quint verify --backend tlc --invariants protocol_invariant \
+              --verbosity 1 "$model" > "$out/quint-verify.log" 2>&1
+            quint run --invariants protocol_invariant --witnesses witness_complete \
+              --max-steps 40 --max-samples 100 --seed 0x79616d616936 \
+              --verbosity 1 "$model" > "$out/quint-witness.log" 2>&1
+            if ! grep -Eq '^witness_complete was witnessed in [1-9][0-9]* trace' "$out/quint-witness.log"; then
+              cat "$out/quint-witness.log" >&2
+              exit 1
+            fi
+          '';
         in
         {
           quint-toolchain = toolchainCheck;
           artifact-validator = artifactValidatorCheck;
           quint-model = safetyCheck;
-          quint-protocol-core = coreSafetyCheck;
-          quint-session-ledgers = sessionLedgerCheck;
           quint-model-temporal = temporalCheck;
           quint-model-witnesses = witnessCheck;
           quint-model-extended-parse-typecheck = extendedParseTypecheckCheck;
@@ -694,6 +681,7 @@
           quint-resume-delivery = resumeDeliverySafetyCheck;
           quint-resume-delivery-temporal = resumeDeliveryTemporalCheck;
           quint-resume-delivery-witnesses = resumeDeliveryWitnessCheck;
+          quint-session-ledgers = sessionLedgerCheck;
         }
       );
     };

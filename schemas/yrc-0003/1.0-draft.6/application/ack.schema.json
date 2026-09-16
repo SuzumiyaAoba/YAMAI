@@ -34,14 +34,7 @@
       "$ref": "urn:yamai:schema:yrc-0003:1.0-draft.6:common#/$defs/id"
     },
     "action_id": {
-      "anyOf": [
-        {
-          "$ref": "urn:yamai:schema:yrc-0003:1.0-draft.6:common#/$defs/id"
-        },
-        {
-          "type": "null"
-        }
-      ]
+      "$ref": "urn:yamai:schema:yrc-0003:1.0-draft.6:common#/$defs/id"
     },
     "status": {
       "type": "string",
@@ -50,7 +43,6 @@
         "passed",
         "superseded",
         "defaulted",
-        "cancelled",
         "stale",
         "rejected"
       ]
@@ -68,31 +60,6 @@
   },
   "additionalProperties": false,
   "patternProperties": {
-    "^x_[A-Za-z0-9][A-Za-z0-9_]{0,63}$": {}
-  },
-  "allOf": [
-    {
-      "if": {
-        "properties": {
-          "status": {
-            "const": "cancelled"
-          }
-        }
-      },
-      "then": {
-        "properties": {
-          "action_id": {
-            "type": "null"
-          }
-        }
-      },
-      "else": {
-        "properties": {
-          "action_id": {
-            "$ref": "urn:yamai:schema:yrc-0003:1.0-draft.6:common#/$defs/id"
-          }
-        }
-      }
-    }
-  ]
+    "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
+  }
 }

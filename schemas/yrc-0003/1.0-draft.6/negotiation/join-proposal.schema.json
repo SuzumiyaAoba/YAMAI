@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:yamai:schema:yrc-0003:1.0-draft.6:join",
+  "$id": "urn:yamai:schema:yrc-0003:1.0-draft.6:join-proposal",
   "type": "object",
   "required": [
     "kind",
@@ -19,7 +19,7 @@
       "const": "join"
     },
     "version": {
-      "const": "1.0-draft.6"
+      "$ref": "urn:yamai:schema:yrc-0003:1.0-draft.6:common#/$defs/version"
     },
     "mode": {
       "type": "string",
@@ -57,10 +57,10 @@
       ]
     },
     "profile": {
-      "const": "riichi-4p"
+      "$ref": "urn:yamai:schema:yrc-0003:1.0-draft.6:common#/$defs/profileName"
     },
     "profile_revision": {
-      "const": "1.0-draft.4"
+      "$ref": "urn:yamai:schema:yrc-0003:1.0-draft.6:common#/$defs/version"
     },
     "profile_hash": {
       "$ref": "urn:yamai:schema:yrc-0003:1.0-draft.6:common#/$defs/profileHash"
@@ -326,5 +326,6 @@
   "additionalProperties": false,
   "patternProperties": {
     "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
-  }
+  },
+  "title": "Pre-selection join syntax for deterministic negotiation errors"
 }

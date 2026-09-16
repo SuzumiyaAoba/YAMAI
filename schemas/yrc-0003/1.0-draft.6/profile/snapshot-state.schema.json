@@ -4,7 +4,7 @@
   "$defs": {
     "extension": {
       "patternProperties": {
-        "^x_[A-Za-z0-9][A-Za-z0-9_]{0,63}$": {}
+        "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
       }
     },
     "meld": {
@@ -21,9 +21,7 @@
           "properties": {
             "type": {
               "enum": [
-                "chi",
-                "pon",
-                "daiminkan"
+                "chi"
               ]
             },
             "actor": {
@@ -38,7 +36,7 @@
             "consumed": {
               "type": "array",
               "minItems": 2,
-              "maxItems": 3,
+              "maxItems": 2,
               "items": {
                 "$ref": "urn:yamai:schema:yrc-0003:1.0-draft.6:common#/$defs/tile"
               }
@@ -46,7 +44,7 @@
           },
           "additionalProperties": false,
           "patternProperties": {
-            "^x_[A-Za-z0-9][A-Za-z0-9_]{0,63}$": {}
+            "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
           }
         },
         {
@@ -54,48 +52,58 @@
           "required": [
             "type",
             "actor",
-            "consumed"
-          ],
-          "properties": {
-            "type": {
-              "enum": [
-                "ankan_declared",
-                "ankan"
-              ]
-            },
-            "actor": {
-              "$ref": "urn:yamai:schema:yrc-0003:1.0-draft.6:common#/$defs/seat"
-            },
-            "consumed": {
-              "type": "array",
-              "minItems": 4,
-              "maxItems": 4,
-              "items": {
-                "$ref": "urn:yamai:schema:yrc-0003:1.0-draft.6:common#/$defs/tileOrHidden"
-              }
-            }
-          },
-          "additionalProperties": false,
-          "patternProperties": {
-            "^x_[A-Za-z0-9][A-Za-z0-9_]{0,63}$": {}
-          }
-        },
-        {
-          "type": "object",
-          "required": [
-            "type",
-            "actor",
+            "target",
             "pai",
             "consumed"
           ],
           "properties": {
             "type": {
               "enum": [
-                "kakan_declared",
-                "kakan"
+                "pon"
               ]
             },
             "actor": {
+              "$ref": "urn:yamai:schema:yrc-0003:1.0-draft.6:common#/$defs/seat"
+            },
+            "target": {
+              "$ref": "urn:yamai:schema:yrc-0003:1.0-draft.6:common#/$defs/seat"
+            },
+            "pai": {
+              "$ref": "urn:yamai:schema:yrc-0003:1.0-draft.6:common#/$defs/tile"
+            },
+            "consumed": {
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 2,
+              "items": {
+                "$ref": "urn:yamai:schema:yrc-0003:1.0-draft.6:common#/$defs/tile"
+              }
+            }
+          },
+          "additionalProperties": false,
+          "patternProperties": {
+            "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "type",
+            "actor",
+            "target",
+            "pai",
+            "consumed"
+          ],
+          "properties": {
+            "type": {
+              "enum": [
+                "daiminkan"
+              ]
+            },
+            "actor": {
+              "$ref": "urn:yamai:schema:yrc-0003:1.0-draft.6:common#/$defs/seat"
+            },
+            "target": {
               "$ref": "urn:yamai:schema:yrc-0003:1.0-draft.6:common#/$defs/seat"
             },
             "pai": {
@@ -112,7 +120,75 @@
           },
           "additionalProperties": false,
           "patternProperties": {
-            "^x_[A-Za-z0-9][A-Za-z0-9_]{0,63}$": {}
+            "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "type",
+            "actor",
+            "consumed"
+          ],
+          "properties": {
+            "type": {
+              "enum": [
+                "ankan"
+              ]
+            },
+            "actor": {
+              "$ref": "urn:yamai:schema:yrc-0003:1.0-draft.6:common#/$defs/seat"
+            },
+            "consumed": {
+              "type": "array",
+              "minItems": 4,
+              "maxItems": 4,
+              "items": {
+                "$ref": "urn:yamai:schema:yrc-0003:1.0-draft.6:common#/$defs/tile"
+              }
+            }
+          },
+          "additionalProperties": false,
+          "patternProperties": {
+            "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "type",
+            "actor",
+            "pai",
+            "consumed",
+            "target"
+          ],
+          "properties": {
+            "type": {
+              "enum": [
+                "kakan"
+              ]
+            },
+            "actor": {
+              "$ref": "urn:yamai:schema:yrc-0003:1.0-draft.6:common#/$defs/seat"
+            },
+            "pai": {
+              "$ref": "urn:yamai:schema:yrc-0003:1.0-draft.6:common#/$defs/tile"
+            },
+            "consumed": {
+              "type": "array",
+              "minItems": 3,
+              "maxItems": 3,
+              "items": {
+                "$ref": "urn:yamai:schema:yrc-0003:1.0-draft.6:common#/$defs/tile"
+              }
+            },
+            "target": {
+              "$ref": "urn:yamai:schema:yrc-0003:1.0-draft.6:common#/$defs/seat"
+            }
+          },
+          "additionalProperties": false,
+          "patternProperties": {
+            "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
           }
         }
       ]
@@ -138,13 +214,13 @@
               "minItems": 4,
               "maxItems": 4,
               "items": {
-                "$ref": "urn:yamai:schema:yrc-0003:1.0-draft.6:common#/$defs/tileOrHidden"
+                "$ref": "urn:yamai:schema:yrc-0003:1.0-draft.6:common#/$defs/tile"
               }
             }
           },
           "additionalProperties": false,
           "patternProperties": {
-            "^x_[A-Za-z0-9][A-Za-z0-9_]{0,63}$": {}
+            "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
           }
         },
         {
@@ -176,92 +252,13 @@
           },
           "additionalProperties": false,
           "patternProperties": {
-            "^x_[A-Za-z0-9][A-Za-z0-9_]{0,63}$": {}
+            "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
           }
         }
       ]
     },
     "lastEvent": {
-      "type": "object",
-      "required": [
-        "type"
-      ],
-      "properties": {
-        "type": {
-          "enum": [
-            "start_game",
-            "start_kyoku",
-            "tsumo",
-            "dahai",
-            "chi",
-            "pon",
-            "daiminkan",
-            "ankan_declared",
-            "ankan",
-            "kakan_declared",
-            "kakan",
-            "dora",
-            "reach",
-            "reach_accepted",
-            "pao",
-            "end_kyoku",
-            "end_game"
-          ]
-        },
-        "actor": {
-          "$ref": "urn:yamai:schema:yrc-0003:1.0-draft.6:common#/$defs/seat"
-        },
-        "target": {
-          "$ref": "urn:yamai:schema:yrc-0003:1.0-draft.6:common#/$defs/seat"
-        },
-        "pai": {
-          "$ref": "urn:yamai:schema:yrc-0003:1.0-draft.6:common#/$defs/tileOrHidden"
-        },
-        "consumed": {
-          "type": "array",
-          "maxItems": 4,
-          "items": {
-            "$ref": "urn:yamai:schema:yrc-0003:1.0-draft.6:common#/$defs/tileOrHidden"
-          }
-        },
-        "tsumogiri": {
-          "type": "boolean"
-        },
-        "dora_marker": {
-          "$ref": "urn:yamai:schema:yrc-0003:1.0-draft.6:common#/$defs/tile"
-        },
-        "deltas": {
-          "$ref": "urn:yamai:schema:yrc-0003:1.0-draft.6:common#/$defs/scoreArray"
-        },
-        "scores": {
-          "$ref": "urn:yamai:schema:yrc-0003:1.0-draft.6:common#/$defs/scoreArray"
-        },
-        "kyotaku": {
-          "$ref": "urn:yamai:schema:yrc-0003:1.0-draft.6:common#/$defs/nonNegativeInteger"
-        },
-        "result": {
-          "$ref": "urn:yamai:schema:yrc-0005:1.0-draft.4:scoring-result"
-        },
-        "next": {
-          "type": "object"
-        },
-        "players": {
-          "type": "array"
-        },
-        "rules": {
-          "$ref": "urn:yamai:schema:yrc-0005:1.0-draft.4:riichi-4p-rules"
-        },
-        "yaku_id": {
-          "type": "string"
-        },
-        "liable_seat": {
-          "$ref": "urn:yamai:schema:yrc-0003:1.0-draft.6:common#/$defs/seat"
-        }
-      },
-      "additionalProperties": false,
-      "patternProperties": {
-        "^x_[A-Za-z0-9][A-Za-z0-9_]{0,63}$": {}
-      }
+      "$ref": "urn:yamai:schema:yrc-0003:1.0-draft.6:event#/properties/event"
     },
     "selfState": {
       "type": "object",
@@ -292,7 +289,67 @@
       },
       "additionalProperties": false,
       "patternProperties": {
-        "^x_[A-Za-z0-9][A-Za-z0-9_]{0,63}$": {}
+        "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
+      }
+    },
+    "pao": {
+      "type": "object",
+      "required": [
+        "actor",
+        "yaku_id",
+        "liable_seat"
+      ],
+      "properties": {
+        "actor": {
+          "$ref": "urn:yamai:schema:yrc-0003:1.0-draft.6:common#/$defs/seat"
+        },
+        "yaku_id": {
+          "enum": [
+            "daisangen",
+            "daisuushii"
+          ]
+        },
+        "liable_seat": {
+          "$ref": "urn:yamai:schema:yrc-0003:1.0-draft.6:common#/$defs/seat"
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
+      }
+    },
+    "selection": {
+      "type": "object",
+      "required": [
+        "action_id",
+        "source",
+        "elapsed_ms",
+        "time_bank_ms"
+      ],
+      "properties": {
+        "action_id": {
+          "$ref": "urn:yamai:schema:yrc-0003:1.0-draft.6:common#/$defs/id"
+        },
+        "source": {
+          "enum": [
+            "user",
+            "default"
+          ]
+        },
+        "elapsed_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1800000
+        },
+        "time_bank_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 600000
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
       }
     }
   },
@@ -304,9 +361,10 @@
     "players",
     "scores",
     "kyoku",
-    "session_phase",
     "game_phase",
-    "kyotaku"
+    "kyotaku",
+    "next_kyoku",
+    "final_rankings"
   ],
   "properties": {
     "mode": {
@@ -349,7 +407,7 @@
           },
           "additionalProperties": false,
           "patternProperties": {
-            "^x_[A-Za-z0-9][A-Za-z0-9_]{0,63}$": {}
+            "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
           }
         }
       ]
@@ -376,7 +434,7 @@
         },
         "additionalProperties": false,
         "patternProperties": {
-          "^x_[A-Za-z0-9][A-Za-z0-9_]{0,63}$": {}
+          "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
         }
       }
     },
@@ -408,7 +466,9 @@
             "kan_counts",
             "rinshan",
             "haitei",
-            "pending_kan"
+            "pending_kan",
+            "pao",
+            "pending_dora"
           ],
           "properties": {
             "bakaze": {
@@ -453,7 +513,8 @@
                   "required": [
                     "pai",
                     "tsumogiri",
-                    "reach"
+                    "reach",
+                    "called_by"
                   ],
                   "properties": {
                     "pai": {
@@ -464,11 +525,21 @@
                     },
                     "reach": {
                       "type": "boolean"
+                    },
+                    "called_by": {
+                      "anyOf": [
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "$ref": "urn:yamai:schema:yrc-0003:1.0-draft.6:common#/$defs/seat"
+                        }
+                      ]
                     }
                   },
                   "additionalProperties": false,
                   "patternProperties": {
-                    "^x_[A-Za-z0-9][A-Za-z0-9_]{0,63}$": {}
+                    "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
                   }
                 }
               }
@@ -489,12 +560,13 @@
               "maxItems": 5,
               "items": {
                 "$ref": "urn:yamai:schema:yrc-0003:1.0-draft.6:common#/$defs/tile"
-              }
+              },
+              "minItems": 1
             },
             "wall_remaining": {
               "type": "integer",
               "minimum": 0,
-              "maximum": 136
+              "maximum": 70
             },
             "turn": {
               "type": "object",
@@ -518,7 +590,14 @@
                   ]
                 },
                 "last_event_seq": {
-                  "$ref": "urn:yamai:schema:yrc-0003:1.0-draft.6:common#/$defs/positiveInteger"
+                  "anyOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "urn:yamai:schema:yrc-0003:1.0-draft.6:common#/$defs/positiveInteger"
+                    }
+                  ]
                 },
                 "last_event": {
                   "$ref": "#/$defs/lastEvent"
@@ -526,7 +605,7 @@
               },
               "additionalProperties": false,
               "patternProperties": {
-                "^x_[A-Za-z0-9][A-Za-z0-9_]{0,63}$": {}
+                "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
               }
             },
             "reach_status": {
@@ -558,7 +637,7 @@
                 },
                 "additionalProperties": false,
                 "patternProperties": {
-                  "^x_[A-Za-z0-9][A-Za-z0-9_]{0,63}$": {}
+                  "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
                 }
               }
             },
@@ -597,22 +676,56 @@
               ]
             },
             "pao": {
-              "type": "array"
+              "type": "array",
+              "maxItems": 8,
+              "items": {
+                "$ref": "#/$defs/pao"
+              }
             },
             "self_state": {
               "$ref": "#/$defs/selfState"
+            },
+            "pending_dora": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "kan_type",
+                    "timing"
+                  ],
+                  "properties": {
+                    "kan_type": {
+                      "enum": [
+                        "ankan",
+                        "daiminkan",
+                        "kakan"
+                      ]
+                    },
+                    "timing": {
+                      "const": "after_rinshan_discard"
+                    }
+                  },
+                  "additionalProperties": false,
+                  "patternProperties": {
+                    "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
+                  }
+                }
+              ]
             }
           },
           "additionalProperties": false,
           "patternProperties": {
-            "^x_[A-Za-z0-9][A-Za-z0-9_]{0,63}$": {}
+            "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
           }
         }
       ]
     },
     "pending_requests": {
       "type": "array",
-      "maxItems": 4,
+      "maxItems": 1,
       "items": {
         "type": "object",
         "required": [
@@ -622,7 +735,9 @@
           "timeout_ms",
           "time_bank_ms",
           "legal_actions",
-          "default_action_id"
+          "default_action_id",
+          "remaining_ms",
+          "selection"
         ],
         "properties": {
           "request_id": {
@@ -633,8 +748,8 @@
           },
           "decision_group_members": {
             "type": "array",
-            "minItems": 2,
-            "maxItems": 4,
+            "minItems": 3,
+            "maxItems": 3,
             "items": {
               "type": "object",
               "required": [
@@ -651,7 +766,7 @@
               },
               "additionalProperties": false,
               "patternProperties": {
-                "^x_[A-Za-z0-9][A-Za-z0-9_]{0,63}$": {}
+                "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
               }
             }
           },
@@ -661,7 +776,7 @@
             "maximum": 1200000
           },
           "decision_group_close": {
-            "const": "all_resolved_or_deadline"
+            "const": "all_selected_or_deadline"
           },
           "seat": {
             "$ref": "urn:yamai:schema:yrc-0003:1.0-draft.6:common#/$defs/seat"
@@ -689,30 +804,159 @@
           },
           "default_action_id": {
             "$ref": "urn:yamai:schema:yrc-0003:1.0-draft.6:common#/$defs/id"
+          },
+          "remaining_ms": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1800000
+          },
+          "selection": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/$defs/selection"
+              }
+            ]
+          },
+          "decision_group_remaining_ms": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1200000
           }
         },
         "additionalProperties": false,
         "patternProperties": {
-          "^x_[A-Za-z0-9][A-Za-z0-9_]{0,63}$": {}
-        }
+          "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
+        },
+        "allOf": [
+          {
+            "if": {
+              "required": [
+                "decision_group_id"
+              ]
+            },
+            "then": {
+              "required": [
+                "decision_group_members",
+                "decision_group_deadline_ms",
+                "decision_group_close",
+                "decision_group_remaining_ms"
+              ]
+            }
+          },
+          {
+            "if": {
+              "anyOf": [
+                {
+                  "required": [
+                    "decision_group_members"
+                  ]
+                },
+                {
+                  "required": [
+                    "decision_group_deadline_ms"
+                  ]
+                },
+                {
+                  "required": [
+                    "decision_group_close"
+                  ]
+                },
+                {
+                  "required": [
+                    "decision_group_remaining_ms"
+                  ]
+                }
+              ]
+            },
+            "then": {
+              "required": [
+                "decision_group_id"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "selection": {
+                  "type": "object"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "remaining_ms": {
+                  "const": 0
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "selection": {
+                  "type": "null"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "remaining_ms": {
+                  "minimum": 1
+                }
+              }
+            }
+          }
+        ]
       }
-    },
-    "session_phase": {
-      "enum": [
-        "ACTIVE",
-        "ENDED"
-      ]
     },
     "game_phase": {
       "enum": [
-        "NOT_STARTED",
-        "READY",
-        "IN_KYOKU",
-        "ENDED"
+        "between_kyoku",
+        "in_kyoku",
+        "ended"
       ]
     },
     "kyotaku": {
       "$ref": "urn:yamai:schema:yrc-0003:1.0-draft.6:common#/$defs/nonNegativeInteger"
+    },
+    "next_kyoku": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "urn:yamai:schema:yrc-0003:1.0-draft.6:common#/$defs/roundCoordinates"
+        }
+      ]
+    },
+    "final_rankings": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "array",
+          "minItems": 4,
+          "maxItems": 4,
+          "uniqueItems": true,
+          "items": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 4
+          }
+        }
+      ]
+    },
+    "time_bank_ms": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 600000
+    },
+    "original_seq": {
+      "$ref": "urn:yamai:schema:yrc-0003:1.0-draft.6:common#/$defs/positiveInteger"
     }
   },
   "allOf": [
@@ -796,7 +1040,7 @@
                 },
                 "additionalProperties": false,
                 "patternProperties": {
-                  "^x_[A-Za-z0-9][A-Za-z0-9_]{0,63}$": {}
+                  "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
                 }
               }
             ]
@@ -859,8 +1103,41 @@
     {
       "if": {
         "properties": {
+          "mode": {
+            "const": "play"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "time_bank_ms"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "mode": {
+            "enum": [
+              "spectate",
+              "replay"
+            ]
+          }
+        }
+      },
+      "then": {
+        "not": {
+          "required": [
+            "time_bank_ms"
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
           "game_phase": {
-            "const": "IN_KYOKU"
+            "const": "in_kyoku"
           }
         }
       },
@@ -868,12 +1145,11 @@
         "properties": {
           "kyoku": {
             "type": "object"
-          }
-        }
-      },
-      "else": {
-        "properties": {
-          "kyoku": {
+          },
+          "next_kyoku": {
+            "type": "null"
+          },
+          "final_rankings": {
             "type": "null"
           }
         }
@@ -882,14 +1158,20 @@
     {
       "if": {
         "properties": {
-          "session_phase": {
-            "const": "ENDED"
+          "game_phase": {
+            "const": "between_kyoku"
           }
         }
       },
       "then": {
         "properties": {
           "kyoku": {
+            "type": "null"
+          },
+          "next_kyoku": {
+            "type": "object"
+          },
+          "final_rankings": {
             "type": "null"
           },
           "pending_requests": {
@@ -902,25 +1184,51 @@
       "if": {
         "properties": {
           "game_phase": {
-            "enum": [
-              "NOT_STARTED",
-              "READY",
-              "ENDED"
-            ]
+            "const": "ended"
           }
         }
       },
       "then": {
         "properties": {
+          "kyoku": {
+            "type": "null"
+          },
+          "next_kyoku": {
+            "type": "null"
+          },
+          "final_rankings": {
+            "type": "array"
+          },
           "pending_requests": {
             "maxItems": 0
           }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "mode": {
+            "const": "replay"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "original_seq"
+        ]
+      },
+      "else": {
+        "not": {
+          "required": [
+            "original_seq"
+          ]
         }
       }
     }
   ],
   "additionalProperties": false,
   "patternProperties": {
-    "^x_[A-Za-z0-9][A-Za-z0-9_]{0,63}$": {}
+    "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
   }
 }

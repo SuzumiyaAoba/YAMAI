@@ -7,7 +7,7 @@
 | 表題 | Design Defects in the MJAI Protocol |
 | 分類 | Informational |
 | 状態 | Draft |
-| 版 | 1.0-draft.3 |
+| 版 | 1.0-draft.4 |
 | 発行日 | 2026-08-30 |
 | 更新対象 | なし |
 | 廃止対象 | なし |
@@ -16,13 +16,13 @@
 
 MJAI はリーチ麻雀 AI と牌譜処理系の相互運用に大きく貢献した。一方、MJAI の仕様は、通信境界、版交渉、要求と応答の対応、ルール記述、終局精算、エラー復旧および資源上限を規範的に定義していない。これらの不足は、互換性のない方言、遅延応答の誤適用、複数和了の不正精算、非公開情報の漏洩および入力起因のサービス不能を生じさせる。
 
-本書は、公開仕様、公開実装および報告済みの運用障害を根拠として、12個のプロトコル設計欠陥を識別する。各欠陥について、観測事実、失敗条件、影響および後継仕様の設計目標を整理し、[YRC 0003] `1.0-draft.5` と、同文書がprofileの規範参照として指定するStandards Track文書（現在の `riichi-4p` では [YRC 0005] `1.0-draft.3`）との参照関係を記録する。
+本書は、公開仕様、公開実装および報告済みの運用障害を根拠として、12個のプロトコル設計欠陥を識別する。各欠陥について、観測事実、失敗条件、影響および後継仕様の設計目標を整理し、[YRC 0003](yamai-protocol.md) `1.0-draft.6` との参照関係を記録する。
 
 ## Status of This Memo
 
 本書は YAMAI Project が管理する Informational 文書であり、IETF Internet Standard ではない。本書は MJAI 実装に新しい適合要件を課さない。
 
-本書中の「後継仕様の設計目標」は、欠陥を解消する仕様に望ましい性質を表す。本書はMJAI実装またはYAMAI実装へ規範要件を課さない。`MUST`、`SHOULD` および `MAY` を用いる規範要件は [YRC 0003] `1.0-draft.5` と、同文書がprofileの規範参照として指定するStandards Track文書（現在の `riichi-4p` では [YRC 0005] `1.0-draft.3`）だけが定義する。
+本書中の「後継仕様の設計目標」は、欠陥を解消する仕様に望ましい性質を表す。本書はMJAI実装またはYAMAI実装へ規範要件を課さない。`MUST`、`SHOULD` および `MAY` を用いる規範要件は、組込み `riichi-4p` の採点規則を含め、[YRC 0003](yamai-protocol.md) `1.0-draft.6` だけが定義する。
 
 ## Table of Contents
 
@@ -81,8 +81,6 @@ Appendix B. 欠陥証拠メタデータ
 
 原典ページの例は `protocol_version: 1` であるが、Gimite のサーバ実装は `3` を送信する [YRC 0001]。番号ごとの機能差、後方互換性および非対応版の拒否方法は規定されていない。
 
-過去の標準化案では `start_game.id` の範囲不一致が指摘されたこともあるが、その案のrevisionとSchemaは本書の参照資料として固定されていない。本リポジトリの現行YAMAI仕様では `start_game.id` を使用せず、`welcome.seat` を座席の通知に使用する。この過去版の指摘は、現行YAMAIの適合性問題ではなく、Gimite系MJAIの歴史的証拠として扱う。
-
 結果として、クライアントはバージョンを無視するか、特定サーバの挙動を暗黙に仮定する。実装を更新しただけで、同じ設定の対局が変化する可能性がある。
 
 **後継仕様の設計目標（提案）:** ホストが対応版を提示し、クライアントが1版を選び、共通版がなければゲーム開始前に終了できること。
@@ -91,7 +89,7 @@ Appendix B. 欠陥証拠メタデータ
 
 原典は1イベントを送信するたびに、4プレイヤーから1応答を待つ。Mortal本体は1行1 event objectを読むstream interfaceである。一方、mjai.appおよびAkagi v3は、複数イベントをJSON arrayとして送信し、行動可能地点で1回だけ応答するbatch interfaceを使用する [MORTAL-ENGINE] [MJAI-APP] [AKAGI-BOT]。詳細は [YRC 0004] に記述する。
 
-[CRYOLITE-MJAI] においても、この区別は TODO である。
+[CRYOLITE-MJAI] でも、逐次方式とbatch方式の区別は定義されていない。
 
 受信側が1行1 object を期待する場合、array を解釈できない。逆に、ホストがイベントごとの `none` を待つ一方で、クライアントが batch 末尾にだけ応答する場合、両者はデッドロックする。
 
@@ -204,7 +202,7 @@ Gimite 実装のダブルロンは複数の `hora` を逐次配信し、後の `
 
 ## 4. YAMAIに対する設計要求候補
 
-以下はYAMAIへ提案する設計要求候補であり、本書自身の規範要件ではない。実装適合性に関する規範効果は [YRC 0003] `1.0-draft.5` と同文書が指定するprofile文書に限られる。
+以下はYAMAIへ提案する設計要求候補であり、本書自身の規範要件ではない。実装適合性に関する規範効果は [YRC 0003] `1.0-draft.6` と同文書が指定するprofile文書に限られる。
 
 | 提案ID | 設計要求候補 |
 |---|---|
@@ -222,11 +220,11 @@ Gimite 実装のダブルロンは複数の `hora` を逐次配信し、後の `
 | Y-12 | フレーム・JSON・キューの資源上限 |
 | Y-13 | MJAI との損失箇所を明示した変換規則 |
 
-これらを具体化した規範仕様は、本書ではなく [YRC 0003] `1.0-draft.5` と、同文書がprofileの規範参照として指定するStandards Track文書（現在の `riichi-4p` では [YRC 0005] `1.0-draft.3`）からなる。
+これらを具体化した規範仕様は、[YRC 0003](yamai-protocol.md) `1.0-draft.6` が定義する。
 
-Y-10およびY-13については、[YRC 0003] `1.0-draft.5` が要求する同一release tagの規範Schema、registryおよび公式test vector（profileの[YRC 0005] `1.0-draft.3` scoring vectorを含む）まで追跡可能にすることをYAMAIへ提案する。本書自体はその追跡可能性を保証せず、YAMAI実装の適合要件も定義しない。
+Y-10およびY-13については、[YRC 0003] `1.0-draft.6` が要求する同一release tagのSchema、registryおよび公式test vector（`riichi-4p` profile `1.0-draft.4` のscoring vectorを含む）まで追跡可能にすることをYAMAIへ提案する。本書自体はその追跡可能性を保証せず、YAMAI実装の適合要件も定義しない。
 
-→ [YAMAI Protocol 1.0 Draft 5](yamai-protocol.md)
+→ [YRC 0003: YAMAI Protocol Version 1](yamai-protocol.md)
 
 ## 5. Security Considerations
 
@@ -242,18 +240,18 @@ MJAI を loopback 以外へ公開することは、transport authentication と 
 
 ## 6. Registry Considerations
 
-本書は registry を新設せず、新しい protocol value を割り当てない。P-01、P-07 および P-11 を解消するため、[YRC 0003] `1.0-draft.5` は version、profile、capability、rule、event、action、error および result reason の registry を定義する。
+本書は registry を新設せず、新しい protocol value を割り当てない。P-01、P-07 および P-11 を解消するため、[YRC 0003] `1.0-draft.6` は version、profile、capability、rule、event、action、error および result reason の registry を定義する。
 
 ## 7. References
 
 ### 7.1 Informative References
 
 - [YRC 0001] YAMAI Project, “デファクト MJAI プロトコル記述仕様”.
-- [YRC 0003] YAMAI Project, “YAMAI Protocol Version 1 (1.0-draft.5)”.
+- [YRC 0003] YAMAI Project, “YAMAI Protocol Version 1 (1.0-draft.6)”.
 - [GIMITE-MJAI] Gimite, “Mjai 麻雀AI対戦サーバ”, 2017-06-07.  
   https://gimite.net/pukiwiki/index.php?Mjai+%E9%BA%BB%E9%9B%80AI%E5%AF%BE%E6%88%A6%E3%82%B5%E3%83%BC%E3%83%90=
 - [GIMITE-CODE] Gimite, “mjai”, source repository.  
-  https://github.com/gimite/mjai （`master`、commitは2026-08-30時点でWeb取得不能）
+  [gimite/mjai, commit 312c0c6f8446ca69ecc58e246840bffdad656541](https://github.com/gimite/mjai/tree/312c0c6f8446ca69ecc58e246840bffdad656541)
 - [CRYOLITE-MJAI] Cryolite, “Standardization Project for mjai Format Specification”.  
   https://github.com/Cryolite/mjai
 - [MORTAL-EVENT] Equim-chan, “Mortal MJAI Event”.  
@@ -269,11 +267,10 @@ MJAI を loopback 以外へ公開することは、transport authentication と 
 - [RFC 8259] Bray, T., Ed., “The JavaScript Object Notation (JSON) Data Interchange Format”, STD 90, RFC 8259, December 2017.  
   https://www.rfc-editor.org/rfc/rfc8259
 - [YRC 0004] YAMAI Project, “代表的 MJAI 実装プロファイル”.
-- [YRC 0005] YAMAI Project, “YAMAI `riichi-4p` 役・符・点数規則 (1.0-draft.3)”.
 
 ## Appendix A. 設計目標追跡表
 
-| 欠陥 | 導出設計目標 | Standards Track文書の主節（YRC 0003 `1.0-draft.5` / profile規範参照 YRC 0005 `1.0-draft.3`） |
+| 欠陥 | 導出設計目標 | YRC 0003 `1.0-draft.6` の主節 |
 |---|---|---|
 | P-01 | Y-01 | 6. 版・機能交渉、17. 適合性 |
 | P-02 | Y-02, Y-06 | 3. プロトコルモデル、4. JSON と transport |
@@ -281,7 +278,7 @@ MJAI を loopback 以外へ公開することは、transport authentication と 
 | P-04 | Y-06 | 3. プロトコルモデル |
 | P-05 | Y-05 | 8. 行動要求 |
 | P-06 | Y-10 | 4. JSON、7. profile、17. 適合性 |
-| P-07 | Y-07 | 6.3 `welcome`、7.2 必須ルール、[YRC 0005] `1.0-draft.3` |
+| P-07 | Y-07 | 6.3 `welcome`、7.2 必須ルール、7.6 採点規則 |
 | P-08 | Y-09 | 11. visibility と mode |
 | P-09 | Y-08 | 7.5 `end_kyoku` |
 | P-10 | Y-03, Y-04, Y-11 | 9. ACK、12. エラー、13. 再接続 |
@@ -291,21 +288,19 @@ MJAI を loopback 以外へ公開することは、transport authentication と 
 
 ## Appendix B. 欠陥証拠メタデータ
 
-次の表は、各P項目が何を対象にした観測または設計分析であるかを明示する。`対象` が `MJAI` の行は歴史的な原典・方言の問題であり、現行YAMAI仕様の不適合を意味しない。`確度` は、一次資料の直接記載を「高」、複数の実装差または資料からの設計分析を「中」、未固定資料に依存するものを「低」とする。確認日は 2026-08-30 である。
+次の表は、各P項目が何を対象にした観測または設計分析であるかを明示する。`対象` が `MJAI` の行は原典・方言の問題を扱う。`確度` は、一次資料の直接記載を「高」、複数の実装差または資料からの設計分析を「中」とする。比較対象の版と出典は [YRC 0004 §2.1](mjai-implementations.md#21-source-snapshots-and-evidence) に記載する。
 
 | 欠陥 | 対象 | 根拠revision／対象ファイル | 最小traceまたは観測 | 確度 |
 |---|---|---|---|---|
-| P-01 | MJAI原典・Gimite方言 | Gimite公式説明（最終更新 2017-06-07）、`gimite/mjai` `master` の `lib/mjai/tcp_game_server.rb`（commitはWeb取得不能） | `hello.protocol_version=1` と実装の `3`、交渉messageなし | 高 |
+| P-01 | MJAI原典・Gimite方言 | Gimite公式説明（最終更新 2017-06-07）、Gimite `312c0c6` の `lib/mjai/tcp_game_server.rb` | `hello.protocol_version=1` と実装の `3`、交渉messageなし | 高 |
 | P-02 | MJAI方言 | Mortal `0cff2b52982be5b1163aa9a62fb01f03ce91e0d2`（`mortal/mortal.py`）、mjai.app `cc24bace09673d1d38b4315031a1ce63fb1b5abf`（`README.md`）、Akagi `v3.7.0` `a7565de28037c3759647d1d6327e5be42d11e924`（`mjai_bot/README.md`） | object一個/行とevent array一個/行、行動可能地点だけの応答 | 高 |
 | P-03 | RiichiLab方言 | 公式Protocol v2（有効 2026-06-10 22:51 JST）、RiichiEnv `b1d08b3615a710f929679fefb50d1c384f2070b9` | `request_action.request_id=42`、遅延IDを`stale`処理、IDなしはlegacy arrival-order | 高 |
-| P-04 | MJAI原典・Gimite方言 | Gimite公式説明（2017-06-07）、`lib/mjai/game.rb` | `start_kyoku`、他家`tsumo`、`dora`等の各通知後に`none` | 高 |
-| P-05 | MJAI原典・Gimite v3 | Gimite `lib/mjai/game.rb`（commitはWeb取得不能）、公式説明（2017-06-07） | 原典例に候補列挙なし、v3の`possible_actions`付加 | 高 |
-| P-06 | MJAI実装慣行 | Mortal `0cff2b52982be5b1163aa9a62fb01f03ce91e0d2`（`libriichi/src/mjai/event.rs`）、Gimite `lib/mjai/game.rb`（commit未固定） | 型・actor・牌・順序の異常を最小eventへ適用する場合の検証不足 | 中 |
+| P-04 | MJAI原典・Gimite方言 | Gimite公式説明（2017-06-07）、Gimite `312c0c6` の `lib/mjai/game.rb` | `start_kyoku`、他家`tsumo`、`dora`等の各通知後に`none` | 高 |
+| P-05 | MJAI原典・Gimite v3 | Gimite `312c0c6` の `lib/mjai/game.rb`、公式説明（2017-06-07） | 原典例に候補列挙なし、v3の`possible_actions`付加 | 高 |
+| P-06 | MJAI実装慣行 | Mortal `0cff2b52982be5b1163aa9a62fb01f03ce91e0d2`（`libriichi/src/mjai/event.rs`）、Gimite `312c0c6` の `lib/mjai/game.rb` | 型・actor・牌・順序の異常を最小eventへ適用する場合の検証不足 | 中 |
 | P-07 | MJAI原典・方言 | Gimite公式説明（2017-06-07）、mjai.app `cc24bace09673d1d38b4315031a1ce63fb1b5abf` | `start_game`にゲーム長・赤牌・精算ルールがない | 高 |
-| P-08 | MJAI play/replay方言 | Gimite `lib/mjai/game.rb`（commit未固定）、mjai.app `cc24bace09673d1d38b4315031a1ce63fb1b5abf` | play viewの`?`と完全情報replayの同一event語彙 | 高 |
-| P-09 | MJAI原典・Gimite方言 | Gimite公式説明（2017-06-07）、`lib/mjai/game.rb`（commit未固定） | ダブルロンの逐次`hora`と累積`scores`、結果情報の逐次分散 | 中 |
+| P-08 | MJAI play/replay方言 | Gimite `312c0c6` の `lib/mjai/game.rb`、mjai.app `cc24bace09673d1d38b4315031a1ce63fb1b5abf` | play viewの`?`と完全情報replayの同一event語彙 | 高 |
+| P-09 | MJAI原典・Gimite方言 | Gimite公式説明（2017-06-07）、Gimite `312c0c6` の `lib/mjai/game.rb` | ダブルロンの逐次`hora`と累積`scores`、結果情報の逐次分散 | 中 |
 | P-10 | MJAI原典・方言 | Gimite公式説明（2017-06-07）、RiichiLab Protocol v2（2026-06-10） | timeout、EOF、再送後の同一actionが異なる要求へ束縛され得る | 高 |
 | P-11 | MJAI 4P/3P方言 | Akagi `v3.7.0` `a7565de28037c3759647d1d6327e5be42d11e924`、RiichiLab公式Protocol v2 | `num_players`/`kita`、`Observation3P`、seat・配列長の差 | 高 |
 | P-12 | MJAI transport運用 | Gimite公式説明（2017-06-07）、各方言のJSONL/stdio記述 | LFを送らないpeer、過大frame、応答未読peerへの上限記載なし | 中 |
-
-Gimiteのcommit固定は、公式GitHubのrepository・対象ファイルまでは確認できたが、commit履歴URLがWeb取得不能だったため未実施である。次回改訂では公式GitHubのcommit SHAまたはタグを確認し、上表と各参考文献へ反映する。過去仕様に関する主張は、現行YAMAIの規範要件として再利用しないことを推奨する。

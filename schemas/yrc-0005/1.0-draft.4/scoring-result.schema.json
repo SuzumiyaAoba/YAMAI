@@ -239,15 +239,16 @@
               "const": "riichi"
             },
             "value": {
-              "enum": [
-                1
-              ]
+              "const": 1
             },
             "unit": {
               "const": "han"
             }
           },
-          "additionalProperties": false
+          "additionalProperties": false,
+          "patternProperties": {
+            "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
+          }
         },
         {
           "type": "object",
@@ -261,15 +262,16 @@
               "const": "double_riichi"
             },
             "value": {
-              "enum": [
-                2
-              ]
+              "const": 2
             },
             "unit": {
               "const": "han"
             }
           },
-          "additionalProperties": false
+          "additionalProperties": false,
+          "patternProperties": {
+            "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
+          }
         },
         {
           "type": "object",
@@ -283,15 +285,16 @@
               "const": "ippatsu"
             },
             "value": {
-              "enum": [
-                1
-              ]
+              "const": 1
             },
             "unit": {
               "const": "han"
             }
           },
-          "additionalProperties": false
+          "additionalProperties": false,
+          "patternProperties": {
+            "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
+          }
         },
         {
           "type": "object",
@@ -305,15 +308,16 @@
               "const": "menzen_tsumo"
             },
             "value": {
-              "enum": [
-                1
-              ]
+              "const": 1
             },
             "unit": {
               "const": "han"
             }
           },
-          "additionalProperties": false
+          "additionalProperties": false,
+          "patternProperties": {
+            "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
+          }
         },
         {
           "type": "object",
@@ -327,15 +331,16 @@
               "const": "tanyao"
             },
             "value": {
-              "enum": [
-                1
-              ]
+              "const": 1
             },
             "unit": {
               "const": "han"
             }
           },
-          "additionalProperties": false
+          "additionalProperties": false,
+          "patternProperties": {
+            "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
+          }
         },
         {
           "type": "object",
@@ -349,15 +354,16 @@
               "const": "pinfu"
             },
             "value": {
-              "enum": [
-                1
-              ]
+              "const": 1
             },
             "unit": {
               "const": "han"
             }
           },
-          "additionalProperties": false
+          "additionalProperties": false,
+          "patternProperties": {
+            "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
+          }
         },
         {
           "type": "object",
@@ -371,15 +377,16 @@
               "const": "iipeikou"
             },
             "value": {
-              "enum": [
-                1
-              ]
+              "const": 1
             },
             "unit": {
               "const": "han"
             }
           },
-          "additionalProperties": false
+          "additionalProperties": false,
+          "patternProperties": {
+            "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
+          }
         },
         {
           "type": "object",
@@ -393,15 +400,16 @@
               "const": "yakuhai_haku"
             },
             "value": {
-              "enum": [
-                1
-              ]
+              "const": 1
             },
             "unit": {
               "const": "han"
             }
           },
-          "additionalProperties": false
+          "additionalProperties": false,
+          "patternProperties": {
+            "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
+          }
         },
         {
           "type": "object",
@@ -415,15 +423,16 @@
               "const": "yakuhai_hatsu"
             },
             "value": {
-              "enum": [
-                1
-              ]
+              "const": 1
             },
             "unit": {
               "const": "han"
             }
           },
-          "additionalProperties": false
+          "additionalProperties": false,
+          "patternProperties": {
+            "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
+          }
         },
         {
           "type": "object",
@@ -437,15 +446,16 @@
               "const": "yakuhai_chun"
             },
             "value": {
-              "enum": [
-                1
-              ]
+              "const": 1
             },
             "unit": {
               "const": "han"
             }
           },
-          "additionalProperties": false
+          "additionalProperties": false,
+          "patternProperties": {
+            "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
+          }
         },
         {
           "type": "object",
@@ -459,15 +469,16 @@
               "const": "seat_wind"
             },
             "value": {
-              "enum": [
-                1
-              ]
+              "const": 1
             },
             "unit": {
               "const": "han"
             }
           },
-          "additionalProperties": false
+          "additionalProperties": false,
+          "patternProperties": {
+            "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
+          }
         },
         {
           "type": "object",
@@ -481,15 +492,16 @@
               "const": "round_wind"
             },
             "value": {
-              "enum": [
-                1
-              ]
+              "const": 1
             },
             "unit": {
               "const": "han"
             }
           },
-          "additionalProperties": false
+          "additionalProperties": false,
+          "patternProperties": {
+            "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
+          }
         },
         {
           "type": "object",
@@ -503,15 +515,16 @@
               "const": "rinshan_kaihou"
             },
             "value": {
-              "enum": [
-                1
-              ]
+              "const": 1
             },
             "unit": {
               "const": "han"
             }
           },
-          "additionalProperties": false
+          "additionalProperties": false,
+          "patternProperties": {
+            "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
+          }
         },
         {
           "type": "object",
@@ -525,15 +538,16 @@
               "const": "chankan"
             },
             "value": {
-              "enum": [
-                1
-              ]
+              "const": 1
             },
             "unit": {
               "const": "han"
             }
           },
-          "additionalProperties": false
+          "additionalProperties": false,
+          "patternProperties": {
+            "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
+          }
         },
         {
           "type": "object",
@@ -547,15 +561,16 @@
               "const": "haitei"
             },
             "value": {
-              "enum": [
-                1
-              ]
+              "const": 1
             },
             "unit": {
               "const": "han"
             }
           },
-          "additionalProperties": false
+          "additionalProperties": false,
+          "patternProperties": {
+            "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
+          }
         },
         {
           "type": "object",
@@ -569,15 +584,16 @@
               "const": "houtei"
             },
             "value": {
-              "enum": [
-                1
-              ]
+              "const": 1
             },
             "unit": {
               "const": "han"
             }
           },
-          "additionalProperties": false
+          "additionalProperties": false,
+          "patternProperties": {
+            "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
+          }
         },
         {
           "type": "object",
@@ -600,7 +616,10 @@
               "const": "han"
             }
           },
-          "additionalProperties": false
+          "additionalProperties": false,
+          "patternProperties": {
+            "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
+          }
         },
         {
           "type": "object",
@@ -623,7 +642,10 @@
               "const": "han"
             }
           },
-          "additionalProperties": false
+          "additionalProperties": false,
+          "patternProperties": {
+            "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
+          }
         },
         {
           "type": "object",
@@ -646,7 +668,10 @@
               "const": "han"
             }
           },
-          "additionalProperties": false
+          "additionalProperties": false,
+          "patternProperties": {
+            "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
+          }
         },
         {
           "type": "object",
@@ -660,15 +685,16 @@
               "const": "chiitoitsu"
             },
             "value": {
-              "enum": [
-                2
-              ]
+              "const": 2
             },
             "unit": {
               "const": "han"
             }
           },
-          "additionalProperties": false
+          "additionalProperties": false,
+          "patternProperties": {
+            "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
+          }
         },
         {
           "type": "object",
@@ -682,15 +708,16 @@
               "const": "toitoi"
             },
             "value": {
-              "enum": [
-                2
-              ]
+              "const": 2
             },
             "unit": {
               "const": "han"
             }
           },
-          "additionalProperties": false
+          "additionalProperties": false,
+          "patternProperties": {
+            "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
+          }
         },
         {
           "type": "object",
@@ -704,15 +731,16 @@
               "const": "sanankou"
             },
             "value": {
-              "enum": [
-                2
-              ]
+              "const": 2
             },
             "unit": {
               "const": "han"
             }
           },
-          "additionalProperties": false
+          "additionalProperties": false,
+          "patternProperties": {
+            "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
+          }
         },
         {
           "type": "object",
@@ -726,15 +754,16 @@
               "const": "honroutou"
             },
             "value": {
-              "enum": [
-                2
-              ]
+              "const": 2
             },
             "unit": {
               "const": "han"
             }
           },
-          "additionalProperties": false
+          "additionalProperties": false,
+          "patternProperties": {
+            "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
+          }
         },
         {
           "type": "object",
@@ -748,15 +777,16 @@
               "const": "sanshoku_doukou"
             },
             "value": {
-              "enum": [
-                2
-              ]
+              "const": 2
             },
             "unit": {
               "const": "han"
             }
           },
-          "additionalProperties": false
+          "additionalProperties": false,
+          "patternProperties": {
+            "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
+          }
         },
         {
           "type": "object",
@@ -770,15 +800,16 @@
               "const": "sankantsu"
             },
             "value": {
-              "enum": [
-                2
-              ]
+              "const": 2
             },
             "unit": {
               "const": "han"
             }
           },
-          "additionalProperties": false
+          "additionalProperties": false,
+          "patternProperties": {
+            "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
+          }
         },
         {
           "type": "object",
@@ -792,15 +823,16 @@
               "const": "shousangen"
             },
             "value": {
-              "enum": [
-                2
-              ]
+              "const": 2
             },
             "unit": {
               "const": "han"
             }
           },
-          "additionalProperties": false
+          "additionalProperties": false,
+          "patternProperties": {
+            "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
+          }
         },
         {
           "type": "object",
@@ -823,7 +855,10 @@
               "const": "han"
             }
           },
-          "additionalProperties": false
+          "additionalProperties": false,
+          "patternProperties": {
+            "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
+          }
         },
         {
           "type": "object",
@@ -846,7 +881,10 @@
               "const": "han"
             }
           },
-          "additionalProperties": false
+          "additionalProperties": false,
+          "patternProperties": {
+            "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
+          }
         },
         {
           "type": "object",
@@ -860,15 +898,16 @@
               "const": "ryanpeikou"
             },
             "value": {
-              "enum": [
-                3
-              ]
+              "const": 3
             },
             "unit": {
               "const": "han"
             }
           },
-          "additionalProperties": false
+          "additionalProperties": false,
+          "patternProperties": {
+            "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
+          }
         },
         {
           "type": "object",
@@ -891,7 +930,10 @@
               "const": "han"
             }
           },
-          "additionalProperties": false
+          "additionalProperties": false,
+          "patternProperties": {
+            "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
+          }
         }
       ]
     },
@@ -928,7 +970,33 @@
           "const": "yakuman"
         }
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "id": {
+                "enum": [
+                  "kokushi_musou",
+                  "suuankou",
+                  "chuuren_poutou",
+                  "daisuushii"
+                ]
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "value": {
+                "const": 1
+              }
+            }
+          }
+        }
+      ],
+      "patternProperties": {
+        "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
+      }
     },
     "extension_yaku": {
       "type": "object",
@@ -940,7 +1008,7 @@
       "properties": {
         "id": {
           "type": "string",
-          "pattern": "^x_[A-Za-z0-9][A-Za-z0-9.-]*_[A-Za-z0-9][A-Za-z0-9_.-]*$"
+          "pattern": "^x_(?=[A-Za-z0-9_.-]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_.-]*$"
         },
         "value": {
           "type": "integer",
@@ -954,7 +1022,10 @@
           ]
         }
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
+      }
     },
     "yaku": {
       "oneOf": [
@@ -987,7 +1058,10 @@
               "maximum": 99
             }
           },
-          "additionalProperties": false
+          "additionalProperties": false,
+          "patternProperties": {
+            "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
+          }
         },
         {
           "type": "object",
@@ -1005,7 +1079,10 @@
               "maximum": 99
             }
           },
-          "additionalProperties": false
+          "additionalProperties": false,
+          "patternProperties": {
+            "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
+          }
         },
         {
           "type": "object",
@@ -1023,7 +1100,10 @@
               "maximum": 99
             }
           },
-          "additionalProperties": false
+          "additionalProperties": false,
+          "patternProperties": {
+            "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
+          }
         }
       ]
     },
@@ -1044,7 +1124,10 @@
           "$ref": "#/$defs/seat"
         }
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
+      }
     },
     "win": {
       "type": "object",
@@ -1133,7 +1216,10 @@
           }
         }
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
+      }
     },
     "hora": {
       "type": "object",
@@ -1159,7 +1245,10 @@
           }
         }
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
+      }
     },
     "ryukyoku": {
       "type": "object",
@@ -1199,7 +1288,10 @@
           ]
         }
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
+      }
     },
     "payment": {
       "type": "object",
@@ -1217,12 +1309,15 @@
         },
         "points": {
           "type": "integer",
-          "minimum": 0,
+          "minimum": 100,
           "maximum": 9007199254740900,
           "multipleOf": 100
         }
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
+      }
     },
     "penalty": {
       "type": "object",
@@ -1250,16 +1345,22 @@
           "properties": {
             "payments": {
               "type": "array",
-              "minItems": 1,
+              "minItems": 0,
               "items": {
                 "$ref": "#/$defs/payment"
               }
             }
           },
-          "additionalProperties": false
+          "additionalProperties": false,
+          "patternProperties": {
+            "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
+          }
         }
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
+      }
     }
   },
   "oneOf": [

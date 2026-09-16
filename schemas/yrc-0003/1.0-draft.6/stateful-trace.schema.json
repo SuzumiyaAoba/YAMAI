@@ -55,24 +55,11 @@
         },
         "message": {
           "$ref": "#/$defs/message"
-        },
-        "game_event_index": {
-          "type": "integer",
-          "minimum": 1
-        },
-        "connection_id": {
-          "$ref": "urn:yamai:schema:yrc-0003:1.0-draft.6:common#/$defs/id"
-        },
-        "resync": {
-          "enum": [
-            "resume",
-            "sequence_gap"
-          ]
         }
       },
       "additionalProperties": false,
       "patternProperties": {
-        "^x_[A-Za-z0-9][A-Za-z0-9_]{0,63}$": {}
+        "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
       }
     },
     "ledgerEntry": {
@@ -100,15 +87,11 @@
         },
         "message": {
           "$ref": "#/$defs/message"
-        },
-        "game_event_index": {
-          "type": "integer",
-          "minimum": 1
         }
       },
       "additionalProperties": false,
       "patternProperties": {
-        "^x_[A-Za-z0-9][A-Za-z0-9_]{0,63}$": {}
+        "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
       }
     },
     "client": {
@@ -117,7 +100,7 @@
         "client_id",
         "mode",
         "view",
-        "session_id"
+        "seat"
       ],
       "properties": {
         "client_id": {
@@ -153,7 +136,7 @@
               },
               "additionalProperties": false,
               "patternProperties": {
-                "^x_[A-Za-z0-9][A-Za-z0-9_]{0,63}$": {}
+                "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
               }
             }
           ]
@@ -167,17 +150,11 @@
               "type": "null"
             }
           ]
-        },
-        "session_id": {
-          "$ref": "urn:yamai:schema:yrc-0003:1.0-draft.6:common#/$defs/id"
-        },
-        "ledger_start_seq": {
-          "$ref": "urn:yamai:schema:yrc-0003:1.0-draft.6:common#/$defs/positiveInteger"
         }
       },
       "additionalProperties": false,
       "patternProperties": {
-        "^x_[A-Za-z0-9][A-Za-z0-9_]{0,63}$": {}
+        "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
       }
     },
     "projection": {
@@ -219,7 +196,7 @@
               },
               "additionalProperties": false,
               "patternProperties": {
-                "^x_[A-Za-z0-9][A-Za-z0-9_]{0,63}$": {}
+                "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
               }
             }
           ]
@@ -240,7 +217,7 @@
       },
       "additionalProperties": false,
       "patternProperties": {
-        "^x_[A-Za-z0-9][A-Za-z0-9_]{0,63}$": {}
+        "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
       }
     },
     "visibilityRecord": {
@@ -263,13 +240,14 @@
       },
       "additionalProperties": false,
       "patternProperties": {
-        "^x_[A-Za-z0-9][A-Za-z0-9_]{0,63}$": {}
+        "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
       }
     }
   },
   "type": "object",
   "required": [
     "trace_type",
+    "session_id",
     "game_id",
     "messages",
     "ledger"
@@ -294,7 +272,9 @@
       "type": "array",
       "items": {
         "$ref": "#/$defs/client"
-      }
+      },
+      "minItems": 1,
+      "maxItems": 1
     },
     "messages": {
       "type": "array",
@@ -305,7 +285,7 @@
     },
     "ledger": {
       "type": "array",
-      "minItems": 0,
+      "minItems": 1,
       "items": {
         "$ref": "#/$defs/ledgerEntry"
       }
@@ -326,15 +306,18 @@
     "welcome": {
       "type": "object"
     },
-    "initial_states": {
-      "type": "object",
-      "additionalProperties": {
-        "$ref": "urn:yamai:schema:yrc-0003:1.0-draft.6:snapshot-state"
+    "context": {
+      "type": "object"
+    },
+    "request_lifecycles": {
+      "type": "array",
+      "items": {
+        "type": "object"
       }
     }
   },
   "additionalProperties": false,
   "patternProperties": {
-    "^x_[A-Za-z0-9][A-Za-z0-9_]{0,63}$": {}
+    "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
   }
 }

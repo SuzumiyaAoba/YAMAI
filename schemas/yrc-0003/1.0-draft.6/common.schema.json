@@ -42,122 +42,252 @@
     "tile": {
       "type": "string",
       "enum": [
-        "1m", "2m", "3m", "4m", "5m", "5mr", "6m", "7m", "8m", "9m",
-        "1p", "2p", "3p", "4p", "5p", "5pr", "6p", "7p", "8p", "9p",
-        "1s", "2s", "3s", "4s", "5s", "5sr", "6s", "7s", "8s", "9s",
-        "E", "S", "W", "N", "P", "F", "C"
+        "1m",
+        "2m",
+        "3m",
+        "4m",
+        "5m",
+        "5mr",
+        "6m",
+        "7m",
+        "8m",
+        "9m",
+        "1p",
+        "2p",
+        "3p",
+        "4p",
+        "5p",
+        "5pr",
+        "6p",
+        "7p",
+        "8p",
+        "9p",
+        "1s",
+        "2s",
+        "3s",
+        "4s",
+        "5s",
+        "5sr",
+        "6s",
+        "7s",
+        "8s",
+        "9s",
+        "E",
+        "S",
+        "W",
+        "N",
+        "P",
+        "F",
+        "C"
       ]
     },
     "tileOrHidden": {
       "anyOf": [
-        {"$ref": "#/$defs/tile"},
-        {"type": "null"}
+        {
+          "$ref": "#/$defs/tile"
+        },
+        {
+          "type": "null"
+        }
       ]
     },
     "seatArray": {
       "type": "array",
       "minItems": 4,
       "maxItems": 4,
-      "items": {"$ref": "#/$defs/seat"}
+      "items": {
+        "$ref": "#/$defs/seat"
+      }
     },
     "intSeatArray": {
       "type": "array",
       "minItems": 4,
       "maxItems": 4,
-      "items": {"$ref": "#/$defs/safeInteger"}
+      "items": {
+        "$ref": "#/$defs/safeInteger"
+      }
     },
     "scoreArray": {
       "type": "array",
       "minItems": 4,
       "maxItems": 4,
-      "items": {"$ref": "#/$defs/safeInteger"}
+      "items": {
+        "$ref": "#/$defs/safeInteger"
+      }
     },
     "capabilityName": {
       "type": "string",
-      "pattern": "^(?:[a-z][a-z0-9_]{0,63}|x-[A-Za-z0-9][A-Za-z0-9_.-]{0,63})$"
+      "pattern": "^(?:[a-z][a-z0-9_]{0,63}|x-(?=[A-Za-z0-9_.-]{3,62}$)[A-Za-z0-9]+-[A-Za-z0-9][A-Za-z0-9_.-]*)$"
     },
     "capabilities": {
       "type": "object",
-      "required": ["required", "optional"],
+      "required": [
+        "required",
+        "optional"
+      ],
       "properties": {
         "required": {
           "type": "array",
-          "items": {"$ref": "#/$defs/capabilityName"},
+          "items": {
+            "$ref": "#/$defs/capabilityName"
+          },
           "uniqueItems": true,
           "maxItems": 64
         },
         "optional": {
           "type": "array",
-          "items": {"$ref": "#/$defs/capabilityName"},
+          "items": {
+            "$ref": "#/$defs/capabilityName"
+          },
           "uniqueItems": true,
           "maxItems": 64
         }
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
+      }
     },
     "receiveLimits": {
       "type": "object",
-      "required": ["max_message_bytes", "max_json_depth", "max_unresolved_requests"],
+      "required": [
+        "max_message_bytes",
+        "max_json_depth",
+        "max_unresolved_requests"
+      ],
       "properties": {
-        "max_message_bytes": {"type": "integer", "minimum": 65536, "maximum": 1048576},
-        "max_json_depth": {"type": "integer", "minimum": 16, "maximum": 64},
-        "max_unresolved_requests": {"type": "integer", "minimum": 1, "maximum": 4}
+        "max_message_bytes": {
+          "type": "integer",
+          "minimum": 65536,
+          "maximum": 1048576
+        },
+        "max_json_depth": {
+          "type": "integer",
+          "minimum": 16,
+          "maximum": 64
+        },
+        "max_unresolved_requests": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4
+        }
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
+      }
     },
     "profileAdvertisement": {
       "type": "object",
-      "required": ["name", "revisions", "hashes"],
+      "required": [
+        "name",
+        "revisions",
+        "hashes",
+        "protocol_versions"
+      ],
       "properties": {
-        "name": {"$ref": "#/$defs/profileName"},
+        "name": {
+          "$ref": "#/$defs/profileName"
+        },
         "revisions": {
           "type": "array",
           "minItems": 1,
           "maxItems": 16,
           "uniqueItems": true,
-          "items": {"$ref": "#/$defs/version"}
+          "items": {
+            "$ref": "#/$defs/version"
+          }
         },
         "hashes": {
           "type": "object",
           "minProperties": 1,
           "maxProperties": 16,
-          "additionalProperties": {"$ref": "#/$defs/profileHash"}
+          "additionalProperties": {
+            "$ref": "#/$defs/profileHash"
+          }
+        },
+        "protocol_versions": {
+          "type": "object",
+          "minProperties": 1,
+          "maxProperties": 16,
+          "patternProperties": {
+            "^[0-9]+\\.[0-9]+(?:-draft\\.[0-9]+)?$": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 16,
+              "uniqueItems": true,
+              "items": {
+                "$ref": "#/$defs/version"
+              }
+            }
+          },
+          "additionalProperties": false
         }
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
+      }
     },
     "client": {
       "type": "object",
-      "required": ["name", "version"],
+      "required": [
+        "name",
+        "version"
+      ],
       "properties": {
-        "name": {"type": "string", "minLength": 1, "maxLength": 128},
-        "version": {"type": "string", "minLength": 1, "maxLength": 64}
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        }
       },
       "additionalProperties": false,
-      "patternProperties": {"^x_[A-Za-z0-9][A-Za-z0-9_]{0,63}$": {}}
+      "patternProperties": {
+        "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
+      }
     },
     "hand": {
       "oneOf": [
         {
           "type": "object",
-          "required": ["tiles"],
+          "required": [
+            "tiles"
+          ],
           "properties": {
             "tiles": {
               "type": "array",
               "minItems": 0,
               "maxItems": 14,
-              "items": {"$ref": "#/$defs/tile"}
+              "items": {
+                "$ref": "#/$defs/tile"
+              }
             }
           },
-          "additionalProperties": false
+          "additionalProperties": false,
+          "patternProperties": {
+            "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
+          }
         },
         {
           "type": "object",
-          "required": ["count"],
+          "required": [
+            "count"
+          ],
           "properties": {
-            "count": {"$ref": "#/$defs/nonNegativeInteger"}
+            "count": {
+              "$ref": "#/$defs/nonNegativeInteger"
+            }
           },
-          "additionalProperties": false
+          "additionalProperties": false,
+          "patternProperties": {
+            "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
+          }
         }
       ]
     },
@@ -165,21 +295,87 @@
       "type": "array",
       "minItems": 4,
       "maxItems": 4,
-      "items": {"$ref": "#/$defs/hand"}
+      "items": {
+        "$ref": "#/$defs/hand"
+      }
     },
     "eventEnvelope": {
       "type": "object",
-      "required": ["yamai", "kind", "session_id", "game_id", "seq"],
+      "required": [
+        "yamai",
+        "kind",
+        "session_id",
+        "game_id",
+        "seq"
+      ],
       "properties": {
-        "yamai": {"const": "1.0-draft.6"},
-        "kind": {"type": "string"},
-        "session_id": {"$ref": "#/$defs/id"},
-        "game_id": {"$ref": "#/$defs/id"},
-        "seq": {"$ref": "#/$defs/positiveInteger"},
-        "original_seq": {"$ref": "#/$defs/positiveInteger"}
+        "yamai": {
+          "const": "1.0-draft.6"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "session_id": {
+          "$ref": "#/$defs/id"
+        },
+        "game_id": {
+          "$ref": "#/$defs/id"
+        },
+        "seq": {
+          "$ref": "#/$defs/positiveInteger"
+        },
+        "original_seq": {
+          "$ref": "#/$defs/positiveInteger"
+        }
       },
       "additionalProperties": false,
-      "patternProperties": {"^x_[A-Za-z0-9][A-Za-z0-9_]{0,63}$": {}}
+      "patternProperties": {
+        "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
+      }
+    },
+    "roundCoordinates": {
+      "type": "object",
+      "required": [
+        "bakaze",
+        "kyoku",
+        "oya",
+        "honba",
+        "kyotaku",
+        "extension_round"
+      ],
+      "properties": {
+        "bakaze": {
+          "enum": [
+            "E",
+            "S",
+            "W",
+            "N"
+          ]
+        },
+        "kyoku": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4
+        },
+        "oya": {
+          "$ref": "urn:yamai:schema:yrc-0003:1.0-draft.6:common#/$defs/seat"
+        },
+        "honba": {
+          "$ref": "urn:yamai:schema:yrc-0003:1.0-draft.6:common#/$defs/nonNegativeInteger"
+        },
+        "kyotaku": {
+          "$ref": "urn:yamai:schema:yrc-0003:1.0-draft.6:common#/$defs/nonNegativeInteger"
+        },
+        "extension_round": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
+      }
     }
   }
 }

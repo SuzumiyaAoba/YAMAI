@@ -16,9 +16,15 @@ import json
 import math
 import re
 import sys
+from copy import deepcopy
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from protocol_state import Projection, next_round
 from typing import Any, Dict, Iterable, List, Mapping, Sequence, Tuple
+
+from request_contract import evaluate as evaluate_request_contract
+from scoring_reference import ScoringError, basic_points, normal_payments, calculate_fixture as calculate_scoring_fixture
+from session_contract import SessionError, Receiver, negotiate, check_token_trace, replay_plan, resource_trace, classify_player_input
+from game_contract import GameError, EventState, next_kyoku, legal_actions, canonical_action, furiten, furiten_step, abortive_reason, kan_sequence, public_pao
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -30,7 +36,8 @@ YRC0003_SCHEMA_DIR = SCHEMA_ROOT / "yrc-0003" / PROTOCOL
 RELEASE_MANIFEST_PATH = ROOT / "release-manifest.json"
 MAX_INT = 9007199254740991
 ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,64}$")
-EXTENSION_FIELD_RE = re.compile(r"^x_[A-Za-z0-9][A-Za-z0-9_]{0,63}$")
+EXTENSION_FIELD_RE = re.compile(r"^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$")
+CAPABILITY_RE = re.compile(r"^(?:[a-z][a-z0-9_]{0,63}|x-(?=[A-Za-z0-9_.-]{3,62}$)[A-Za-z0-9]+-[A-Za-z0-9][A-Za-z0-9_.-]*)$")
 ERROR_CODE_RE = re.compile(r"^[a-z][a-z0-9_]{1,63}$")
 PROFILE_HASH_INPUTS = [
     "schemas/yrc-0003/1.0-draft.6/profile/riichi-4p.schema.json",
@@ -81,16 +88,27 @@ def _reject_constant(value: str) -> Any:
     raise ArtifactError("invalid_json", "non-JSON number: " + value)
 
 
+def _parse_real(raw: str) -> Any:
+    value = Decimal(raw)
+    if value == value.to_integral_value():
+        if not -MAX_INT <= value <= MAX_INT:
+            raise ArtifactError("invalid_json", "integer outside IEEE-754 safe range")
+        return int(value)
+    return value
+
+
 def _walk_json(value: Any, depth: int = 0, path: str = "$") -> None:
-    if depth > 64:
-        raise ArtifactError("resource_limit", "JSON depth exceeds 64 at " + path)
+    if isinstance(value, (dict, list)):
+        depth += 1
+        if depth > 64:
+            raise ArtifactError("resource_limit", "JSON depth exceeds 64 at " + path)
     if isinstance(value, bool) or value is None:
         return
     if isinstance(value, int):
         if value < -MAX_INT or value > MAX_INT:
             raise ArtifactError("invalid_json", "integer outside IEEE-754 safe range at " + path)
         return
-    if isinstance(value, float):
+    if isinstance(value, (float, Decimal)):
         if not math.isfinite(value):
             raise ArtifactError("invalid_json", "non-finite number at " + path)
         return
@@ -100,12 +118,12 @@ def _walk_json(value: Any, depth: int = 0, path: str = "$") -> None:
         return
     if isinstance(value, list):
         for i, item in enumerate(value):
-            _walk_json(item, depth + 1, f"{path}[{i}]")
+            _walk_json(item, depth, f"{path}[{i}]")
         return
     if isinstance(value, dict):
         for key, item in value.items():
-            _walk_json(key, depth + 1, f"{path}.{key}")
-            _walk_json(item, depth + 1, f"{path}.{key}")
+            _walk_json(key, depth, f"{path}.{key}")
+            _walk_json(item, depth, f"{path}.{key}")
         return
     raise ArtifactError("invalid_json", "unsupported JSON value at " + path)
 
@@ -119,15 +137,33 @@ def strict_load_bytes(data: bytes, *, source: str = "<bytes>", max_bytes: int | 
         text = data.decode("utf-8", "strict")
     except UnicodeDecodeError as exc:
         raise ArtifactError("invalid_json", f"invalid UTF-8 in {source}: {exc}") from exc
+    depth, quoted, escaped = 0, False, False
+    for char in text:
+        if quoted:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                quoted = False
+        elif char == '"':
+            quoted = True
+        elif char in "[{":
+            depth += 1
+            if depth > 64:
+                raise ArtifactError("resource_limit", f"JSON depth exceeds 64 in {source}")
+        elif char in "]}":
+            depth -= 1
     try:
         value = json.loads(
             text,
             object_pairs_hook=_pairs,
             parse_constant=_reject_constant,
+            parse_float=_parse_real,
         )
     except ArtifactError:
         raise
-    except (json.JSONDecodeError, RecursionError, ValueError) as exc:
+    except (json.JSONDecodeError, RecursionError, ValueError, InvalidOperation, OverflowError) as exc:
         raise ArtifactError("invalid_json", f"invalid JSON in {source}: {exc}") from exc
     _walk_json(value, path=source)
     return value
@@ -147,12 +183,26 @@ def _json_type(value: Any, name: str) -> bool:
     if name == "integer":
         return isinstance(value, int) and not isinstance(value, bool)
     if name == "number":
-        return isinstance(value, (int, float)) and not isinstance(value, bool)
+        return isinstance(value, (int, float, Decimal)) and not isinstance(value, bool)
     if name == "boolean":
         return isinstance(value, bool)
     if name == "null":
         return value is None
-    return True
+    raise ArtifactError("schema_error", "unknown JSON Schema type: " + str(name))
+
+
+def _json_equal(left: Any, right: Any) -> bool:
+    if isinstance(left, bool) or isinstance(right, bool):
+        return type(left) is type(right) and left == right
+    if isinstance(left, (int, float, Decimal)) and isinstance(right, (int, float, Decimal)):
+        return left == right
+    if type(left) is not type(right):
+        return False
+    if isinstance(left, dict):
+        return left.keys() == right.keys() and all(_json_equal(left[k], right[k]) for k in left)
+    if isinstance(left, list):
+        return len(left) == len(right) and all(_json_equal(a, b) for a, b in zip(left, right))
+    return left == right
 
 
 class SchemaSet:
@@ -207,17 +257,42 @@ class SchemaSet:
             self._check_keyword_support(schema, sid, "$")
 
     def _check_keyword_support(self, value: Any, owner: str, path: str) -> None:
-        if isinstance(value, dict):
-            for key, item in value.items():
-                if key in UNSUPPORTED_DRAFT202012_KEYWORDS:
-                    raise ArtifactError(
-                        "schema_error",
-                        f"unsupported Draft 2020-12 keyword {key} in {owner}{path}",
-                    )
-                self._check_keyword_support(item, owner, f"{path}.{key}")
-        elif isinstance(value, list):
-            for index, item in enumerate(value):
-                self._check_keyword_support(item, owner, f"{path}[{index}]")
+        if type(value) is bool:
+            return
+        if not isinstance(value, dict):
+            raise ArtifactError("schema_error", f"schema is not an object or boolean in {owner}{path}")
+        if path != "$" and "$id" in value:
+            raise ArtifactError("schema_error", f"nested schema resources require a full Draft 2020-12 validator in {owner}{path}")
+        for key in value:
+            if key in UNSUPPORTED_DRAFT202012_KEYWORDS:
+                raise ArtifactError("schema_error", f"unsupported Draft 2020-12 keyword {key} in {owner}{path}")
+        if "type" in value:
+            types = value["type"] if isinstance(value["type"], list) else [value["type"]]
+            if not types or any(not isinstance(t, str) or t not in {"null", "boolean", "object", "array", "number", "integer", "string"} for t in types) or len(types) != len(set(types)):
+                raise ArtifactError("schema_error", f"invalid type keyword in {owner}{path}")
+        for key in ("minLength", "maxLength", "minItems", "maxItems", "minProperties", "maxProperties", "minContains", "maxContains"):
+            if key in value and (type(value[key]) is not int or value[key] < 0):
+                raise ArtifactError("schema_error", f"invalid {key} in {owner}{path}")
+        for suffix, child in self._schema_children(value):
+            self._check_keyword_support(child, owner, path + suffix)
+
+    @staticmethod
+    def _schema_children(value: Mapping[str, Any]) -> Iterable[Tuple[str, Any]]:
+        for key in ("$defs", "definitions", "properties", "patternProperties"):
+            if key in value:
+                if not isinstance(value[key], dict):
+                    raise ArtifactError("schema_error", f"{key} must be a schema map")
+                for name, child in value[key].items():
+                    yield f".{key}.{name}", child
+        for key in ("allOf", "anyOf", "oneOf"):
+            if key in value:
+                if not isinstance(value[key], list) or not value[key]:
+                    raise ArtifactError("schema_error", f"{key} must be a nonempty schema array")
+                for index, child in enumerate(value[key]):
+                    yield f".{key}[{index}]", child
+        for key in ("items", "contains", "not", "if", "then", "else", "additionalProperties"):
+            if key in value:
+                yield "." + key, value[key]
 
     def _check_refs(self, value: Any, owner: str) -> None:
         if isinstance(value, dict):
@@ -226,16 +301,17 @@ class SchemaSet:
                 if not isinstance(ref, str):
                     raise ArtifactError("schema_error", f"non-string $ref in {owner}")
                 self.resolve(ref, self.schemas[owner])
-            for item in value.values():
-                self._check_refs(item, owner)
-        elif isinstance(value, list):
-            for item in value:
+            for _, item in self._schema_children(value):
                 self._check_refs(item, owner)
 
     def validate(self, value: Any, schema: Any, path: str = "$") -> None:
         self._validate(value, schema, path, schema)
 
     def _validate(self, value: Any, schema: Any, path: str, base: Mapping[str, Any]) -> None:
+        if schema is True:
+            return
+        if schema is False:
+            raise ArtifactError("invalid_message", "false schema at " + path)
         if not isinstance(schema, dict):
             raise ArtifactError("schema_error", "schema is not an object")
         if "$ref" in schema:
@@ -245,14 +321,17 @@ class SchemaSet:
             for sub in schema["allOf"]:
                 self._validate(value, sub, path, base)
         if "anyOf" in schema:
-            errors = []
+            matched = False
             for sub in schema["anyOf"]:
                 try:
                     self._validate(value, sub, path, base)
-                    return
+                    matched = True
+                    break
                 except ArtifactError as exc:
-                    errors.append(exc)
-            raise ArtifactError("invalid_message", f"no anyOf branch matched at {path}")
+                    if exc.code != "invalid_message":
+                        raise
+            if not matched:
+                raise ArtifactError("invalid_message", f"no anyOf branch matched at {path}")
         if "oneOf" in schema:
             matches = 0
             for sub in schema["oneOf"]:
@@ -279,16 +358,16 @@ class SchemaSet:
             branch = schema.get("then") if condition else schema.get("else")
             if branch is not None:
                 self._validate(value, branch, path, base)
-        if "const" in schema and value != schema["const"]:
+        if "const" in schema and not _json_equal(value, schema["const"]):
             raise ArtifactError("invalid_message", f"const mismatch at {path}")
-        if "enum" in schema and value not in schema["enum"]:
+        if "enum" in schema and not any(_json_equal(value, item) for item in schema["enum"]):
             raise ArtifactError("invalid_message", f"enum mismatch at {path}")
         typ = schema.get("type")
         if typ is not None:
             types = typ if isinstance(typ, list) else [typ]
             if not any(_json_type(value, item) for item in types):
                 raise ArtifactError("invalid_message", f"type mismatch at {path}")
-        if isinstance(value, (int, float)) and not isinstance(value, bool):
+        if isinstance(value, (int, float, Decimal)) and not isinstance(value, bool):
             if "minimum" in schema and value < schema["minimum"]:
                 raise ArtifactError("invalid_message", f"minimum mismatch at {path}")
             if "maximum" in schema and value > schema["maximum"]:
@@ -308,7 +387,7 @@ class SchemaSet:
             if "maxItems" in schema and len(value) > schema["maxItems"]:
                 raise ArtifactError("invalid_message", f"maxItems mismatch at {path}")
             if schema.get("uniqueItems"):
-                if len({json.dumps(x, sort_keys=True, ensure_ascii=False) for x in value}) != len(value):
+                if any(_json_equal(item, earlier) for i, item in enumerate(value) for earlier in value[:i]):
                     raise ArtifactError("invalid_message", f"uniqueItems mismatch at {path}")
             if "contains" in schema:
                 matches = 0
@@ -336,18 +415,17 @@ class SchemaSet:
             props = schema.get("properties", {})
             patterns = schema.get("patternProperties", {})
             for key, item in value.items():
+                matched = key in props
                 if key in props:
                     self._validate(item, props[key], f"{path}.{key}", base)
-                else:
-                    matched = False
-                    for pattern, subschema in patterns.items():
-                        if re.search(pattern, key):
-                            self._validate(item, subschema, f"{path}.{key}", base)
-                            matched = True
-                    if not matched and schema.get("additionalProperties") is False:
-                        raise ArtifactError("invalid_message", f"unknown member {key} at {path}")
-                    if not matched and isinstance(schema.get("additionalProperties"), dict):
-                        self._validate(item, schema["additionalProperties"], f"{path}.{key}", base)
+                for pattern, subschema in patterns.items():
+                    if re.search(pattern, key):
+                        self._validate(item, subschema, f"{path}.{key}", base)
+                        matched = True
+                if not matched and schema.get("additionalProperties") is False:
+                    raise ArtifactError("invalid_message", f"unknown member {key} at {path}")
+                if not matched and isinstance(schema.get("additionalProperties"), dict):
+                    self._validate(item, schema["additionalProperties"], f"{path}.{key}", base)
 
 
 def schema_by_id(schemas: SchemaSet, sid: str) -> Any:
@@ -465,6 +543,35 @@ def check_registry(schemas: SchemaSet) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     ack_statuses = set(_schema_property_values(ack_schema, "status"))
     if set(p["ack_statuses"]) != ack_statuses:
         raise ArtifactError("registry_error", "ack status registry does not match ack schema")
+    error_id = f"urn:yamai:schema:yrc-0003:{PROTOCOL}:error"
+    error_schema = schema_by_id(schemas, error_id)
+    _require(set(error_schema["$defs"]["base"]["properties"]["code"]["enum"]) == {item["id"] for item in p["error_codes"]}, "registry_error", "error code schema and registry differ")
+    for entry in p["error_codes"]:
+        contexts = entry.get("contexts")
+        _require(entry["severity"] in {"fatal", "recoverable", "contextual"}, "registry_error", "unknown error severity policy")
+        _require(isinstance(contexts, list) and bool(contexts) and all(isinstance(c, str) for c in contexts) and len(contexts) == len(set(contexts)) and set(contexts) <= {"host-negotiation", "player-negotiation", "host-application", "player-application"}, "registry_error", "invalid error context registry")
+        for context in ("host-negotiation", "player-negotiation", "host-application", "player-application"):
+            for severity in ("fatal", "recoverable"):
+                message = {"kind":"error","code":entry["id"],"severity":severity,"message":"diagnostic"}
+                if context.endswith("application"):
+                    message.update(yamai=PROTOCOL, session_id="s1", game_id="g1")
+                    if context.startswith("host"):
+                        message["seq"] = 1
+                if entry["id"] == "sequence_gap":
+                    message.update(expected_seq=1, received_seq=2)
+                if entry["id"] == "request_conflict":
+                    message.update(request_id="r1", action_id="a1")
+                allowed_severity = entry["severity"] == severity or (entry["severity"] == "contextual" and (severity == "fatal" or context == "host-application"))
+                expected = context in entry.get("contexts", []) and allowed_severity
+                actual = True
+                try:
+                    side = context.split("-", 1)[0]
+                    schemas.validate(message, {"$ref": error_id + "#/$defs/" + side + "Message"})
+                except ArtifactError as error:
+                    if error.code != "invalid_message":
+                        raise
+                    actual = False
+                _require(actual == expected, "registry_error", f"{entry['id']}: error context/severity differs for {context}/{severity}")
 
     expected_schema_files = {
         str(path.relative_to(ROOT))
@@ -502,12 +609,30 @@ def check_registry(schemas: SchemaSet) -> Tuple[Dict[str, Any], Dict[str, Any]]:
 def canonical(value: Any) -> bytes:
     """Return the artifact subset's RFC 8785-compatible canonical bytes.
 
-    The release artifacts intentionally contain only JSON strings, integers,
-    booleans, nulls, arrays, and objects.  Python's compact sorted encoding is
-    therefore byte-identical to JCS for this subset; rejecting non-finite
-    values keeps the invariant explicit if a future artifact adds numbers.
+    Artifacts use only safe integers, not floating-point numbers. JCS sorts
+    object names by UTF-16 code units, including names outside the BMP.
+    Fail if the artifact subset changes instead of silently hashing with
+    Python's different float formatting or Unicode code-point sort order.
     """
-    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
+    def prepare(item: Any) -> Any:
+        if item is None or isinstance(item, bool):
+            return item
+        if isinstance(item, str):
+            if any(0xD800 <= ord(ch) <= 0xDFFF for ch in item):
+                raise ArtifactError("hash_error", "JCS input contains a lone surrogate")
+            return item
+        if type(item) is int and -MAX_INT <= item <= MAX_INT:
+            return item
+        if isinstance(item, list):
+            return [prepare(child) for child in item]
+        if isinstance(item, dict):
+            if any(not isinstance(key, str) for key in item):
+                raise ArtifactError("hash_error", "JCS object names must be strings")
+            keys = [prepare(key) for key in item]
+            return {key: prepare(item[key]) for key in sorted(keys, key=lambda key: key.encode("utf-16-be"))}
+        raise ArtifactError("hash_error", "JCS artifact input requires safe integers; floating-point values are unsupported")
+
+    return json.dumps(prepare(value), ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode("utf-8")
 
 
 def profile_hash(protocol_registry: Dict[str, Any], rules_registry: Dict[str, Any]) -> str:
@@ -524,25 +649,38 @@ def profile_hash(protocol_registry: Dict[str, Any], rules_registry: Dict[str, An
 
     def normalize_profile_hashes(value: Any) -> Any:
         if isinstance(value, dict):
-            normalized: Dict[str, Any] = {}
-            for key, item in value.items():
-                if key == "profile_hash":
-                    normalized[key] = zero_hash
-                elif key == "hashes" and isinstance(item, dict):
-                    normalized[key] = {revision: zero_hash for revision in item}
-                elif key == "wire" and isinstance(item, str):
-                    normalized[key] = re.sub(r"sha256:[0-9a-f]{64}", zero_hash, item)
-                else:
-                    normalized[key] = normalize_profile_hashes(item)
-            return normalized
+            result = {key: normalize_profile_hashes(item) for key, item in value.items()}
+            if isinstance(value.get("wire"), str):
+                try:
+                    wire_value = strict_load_bytes(value["wire"].encode("utf-8"))
+                except ArtifactError:
+                    wire_value = None
+                identities = set()
+                if isinstance(wire_value, dict):
+                    if isinstance(wire_value.get("kind"), str) and wire_value["kind"] in {"join", "welcome"}:
+                        candidate = wire_value.get("profile_hash")
+                        if isinstance(candidate, str) and re.fullmatch(r"sha256:[0-9a-f]{64}", candidate):
+                            identities.add(candidate)
+                    elif wire_value.get("kind") == "hello":
+                        for profile in wire_value.get("profiles", []) if isinstance(wire_value.get("profiles"), list) else []:
+                            if isinstance(profile, dict) and isinstance(profile.get("hashes"), dict):
+                                identities.update(h for h in profile["hashes"].values() if isinstance(h, str) and re.fullmatch(r"sha256:[0-9a-f]{64}", h))
+                if identities:
+                    result["wire"] = re.sub(r'"(?:[^"\\]|\\.)*"', lambda match: json.dumps(zero_hash) if json.loads(match[0]) in identities else match[0], value["wire"])
+            if isinstance(value.get("kind"), str) and value["kind"] in {"join", "welcome"} and isinstance(value.get("profile_hash"), str) and re.fullmatch(r"sha256:[0-9a-f]{64}", value["profile_hash"]):
+                result["profile_hash"] = zero_hash
+            if value.get("kind") == "hello" and isinstance(result.get("profiles"), list):
+                for profile in result.get("profiles", []):
+                    if isinstance(profile, dict) and isinstance(profile.get("hashes"), dict):
+                        profile["hashes"] = {revision: zero_hash if isinstance(digest, str) and re.fullmatch(r"sha256:[0-9a-f]{64}", digest) else digest for revision, digest in profile["hashes"].items()}
+            return result
         if isinstance(value, list):
             return [normalize_profile_hashes(item) for item in value]
         return value
 
     pcopy = json.loads(json.dumps(protocol_registry))
-    pcopy["profiles"][0]["hash"] = zero_hash
-    pcopy["profiles"][0].pop("hash", None)
-    vectors = normalize_profile_hashes(vectors)
+    for profile in pcopy["profiles"]:
+        profile.pop("hash", None)
     payload = {
         "profile_schema": profile_schema,
         "rules_schema": rules_schema,
@@ -552,7 +690,7 @@ def profile_hash(protocol_registry: Dict[str, Any], rules_registry: Dict[str, An
         "official_vectors": vectors,
         "scoring_vectors": scoring,
     }
-    canonical_bytes = canonical(payload)
+    canonical_bytes = canonical(normalize_profile_hashes(payload))
     return "sha256:" + hashlib.sha256(canonical_bytes).hexdigest()
 
 
@@ -662,41 +800,19 @@ def check_release_manifest(manifest: Dict[str, Any], p: Dict[str, Any], r: Dict[
     scope = release.get("profile_hash_scope")
     if not isinstance(scope, Mapping) or scope.get("canonicalization") != manifest["profile_hash_canonicalization"] or scope.get("inputs") != manifest["profile_hash_inputs"]:
         raise ArtifactError("release_error", "release profile hash scope mismatch")
-    if scope.get("protocol_version_pins") != [manifest["schema_root"]]:
+    proposal_path = f"schemas/yrc-0003/{PROTOCOL}/negotiation/join-proposal.schema.json"
+    if protocol.get("proposal_schema") != proposal_path:
+        raise ArtifactError("release_error", "release join proposal schema mismatch")
+    if scope.get("protocol_version_pins") != [manifest["schema_root"], proposal_path]:
         raise ArtifactError("release_error", "release protocol version pin mismatch")
-    expected_normalization = {
-        "yrc0003_registry": "remove profiles[].hash",
-        "official_vectors": "replace every profile_hash value, every hello.profiles[].hashes value, and each corresponding hash literal in wire strings with sha256: followed by 64 zeroes",
-    }
-    if scope.get("normalization") != expected_normalization:
-        raise ArtifactError("release_error", "release profile hash normalization mismatch")
 
     validator = release.get("validator")
-    if not isinstance(validator, Mapping) or validator.get("path") != "scripts/validate_artifacts.py" or validator.get("command") != "rtk python3 scripts/validate_artifacts.py":
+    if not isinstance(validator, Mapping) or validator.get("path") != "scripts/validate_artifacts.py" or validator.get("command") != "python3 scripts/validate_artifacts.py":
         raise ArtifactError("release_error", "release validator metadata mismatch")
     _repo_file(validator.get("path"), "validator.path")
-    _repo_file_list(validator.get("modules"), "validator.modules")
-    _repo_file(validator.get("regression_tests", {}).get("path"), "validator.regression_tests.path")
-
-    scoring_oracle = validator.get("scoring_oracle")
-    if not isinstance(scoring_oracle, Mapping) or scoring_oracle.get("path") != "scripts/score_oracle.py" or scoring_oracle.get("command") != "rtk python3 scripts/score_oracle.py":
-        raise ArtifactError("release_error", "release scoring oracle metadata mismatch")
-    _repo_file(scoring_oracle.get("path"), "validator.scoring_oracle.path")
-
-    formal_verification = release.get("formal_verification")
-    if not isinstance(formal_verification, Mapping):
-        raise ArtifactError("release_error", "formal verification metadata is missing")
-    if formal_verification.get("canonical_model") != "verification/quint/yamai_protocol_core.qnt":
-        raise ArtifactError("release_error", "canonical Quint model metadata mismatch")
-    if formal_verification.get("bounded_model") != "verification/quint/yamai_protocol_core_bounded.qnt":
-        raise ArtifactError("release_error", "bounded Quint model metadata mismatch")
-    if formal_verification.get("refinement_mapping") != "yamai_protocol_core::refinement_mapping":
-        raise ArtifactError("release_error", "canonical refinement mapping metadata mismatch")
-    if formal_verification.get("scope") != "bounded":
-        raise ArtifactError("release_error", "formal verification scope must be bounded")
-    _repo_file(formal_verification.get("canonical_model"), "formal_verification.canonical_model")
-    _repo_file(formal_verification.get("bounded_model"), "formal_verification.bounded_model")
-    _repo_file(formal_verification.get("session_ledger_model"), "formal_verification.session_ledger_model")
+    if validator.get("support_files") != ["scripts/request_contract.py", "scripts/scoring_reference.py", "scripts/session_contract.py", "scripts/game_contract.py", "scripts/test_scoring_reference.py", "scripts/test_session_contract.py", "scripts/test_game_contract.py", "scripts/test_validator.py", "scripts/check_jsonschema.py", "scripts/score_oracle.py", "tests/test_regressions.py"]:
+        raise ArtifactError("release_error", "release validator support files mismatch")
+    _repo_file_list(validator.get("support_files"), "validator.support_files")
 
     change_control = release.get("change_control")
     if not isinstance(change_control, Mapping):
@@ -707,7 +823,7 @@ def check_release_manifest(manifest: Dict[str, Any], p: Dict[str, Any], r: Dict[
     _repo_file_list(release.get("informational_documents"), "informational_documents")
 
 
-TERMINAL_ACK_STATUSES = {"accepted", "passed", "superseded", "defaulted", "cancelled"}
+TERMINAL_ACK_STATUSES = {"accepted", "passed", "superseded", "defaulted", "stale"}
 GROUP_FIELDS = ("decision_group_members", "decision_group_deadline_ms", "decision_group_close")
 TARGET_TYPES = {"game", "recording"}
 KNOWN_RULE_KEYS = {
@@ -731,12 +847,12 @@ def _check_mode_view(mode: Any, view: Any, seat: Any, *, context: str) -> None:
     elif mode == "spectate":
         _require(view == "public" and seat is None, "invalid_message", f"{context}: spectate requires public/null")
     elif mode == "replay":
-        valid_view = view in {"public", "full"}
+        valid_view = isinstance(view, str) and view in {"public", "full"}
         if isinstance(view, dict):
             valid_view = (
                 "seat" in view
                 and all(key == "seat" or EXTENSION_FIELD_RE.fullmatch(key) for key in view)
-                and isinstance(view.get("seat"), int)
+                and type(view.get("seat")) is int
                 and 0 <= view["seat"] <= 3
             )
         _require(valid_view and seat is None, "invalid_message", f"{context}: invalid replay view/seat")
@@ -748,14 +864,25 @@ def _check_target(target: Any, *, allowed_types: set[str] = TARGET_TYPES) -> Non
     _require(isinstance(target.get("id"), str) and ID_RE.fullmatch(target["id"]), "invalid_message", "target.id is invalid")
 
 
+def _check_event_visibility(event: Mapping[str, Any], mode: str, view: Any, seat: Any) -> None:
+    visible_seat = seat if mode == "play" else view.get("seat") if isinstance(view, dict) else None
+    full = view == "full"
+    if event.get("type") == "start_kyoku":
+        for actor, hand in enumerate(event["hands"]):
+            _require(("tiles" in hand) == (full or actor == visible_seat), "invalid_message", "event hand visibility differs")
+    if event.get("type") == "tsumo":
+        _require((event.get("pai") is not None) == (full or event["actor"] == visible_seat), "invalid_message", "draw visibility differs")
+
+
 def _check_capabilities(capabilities: Any) -> None:
     _require(isinstance(capabilities, dict), "invalid_message", "capabilities must be an object")
     required, optional = capabilities.get("required"), capabilities.get("optional")
     _require(isinstance(required, list) and isinstance(optional, list), "invalid_message", "capability arrays are missing")
+    _require(all(isinstance(value, str) for value in required + optional), "invalid_message", "capability names must be strings")
     _require(len(set(required)) == len(required) and len(set(optional)) == len(optional), "invalid_message", "capabilities contain duplicates")
     _require(not set(required) & set(optional), "invalid_message", "capability appears in both arrays")
     for value in required + optional:
-        _require(isinstance(value, str) and (re.fullmatch(r"[a-z][a-z0-9_]{0,63}", value) or re.fullmatch(r"x-[A-Za-z0-9][A-Za-z0-9_.-]{0,63}", value)), "invalid_message", "capability name is invalid")
+        _require(CAPABILITY_RE.fullmatch(value) is not None, "invalid_message", "capability name is invalid")
 
 
 def _check_rules(rules: Any) -> None:
@@ -767,19 +894,22 @@ def _check_rules(rules: Any) -> None:
 def _check_players(players: Any) -> None:
     _require(isinstance(players, list) and len(players) == 4, "invalid_message", "players must contain four seats")
     seats = [player.get("seat") for player in players if isinstance(player, dict)]
-    _require(len(seats) == 4 and set(seats) == {0, 1, 2, 3}, "invalid_message", "players must contain each seat exactly once")
+    _require(all(type(seat) is int for seat in seats) and seats == [0, 1, 2, 3], "invalid_message", "players must be in absolute seat order")
 
 
-def _check_action_object(action: Any, *, expected_actor: int | None = None) -> None:
+def _check_action_object(action: Any, *, expected_actor: int | None = None, extension_types: Iterable[str] = ()) -> None:
     _require(isinstance(action, dict), "invalid_message", "action candidate must be an object")
     kind = action.get("type")
     if kind == "none":
         actor = action.get("actor")
-        _require(actor is None or (isinstance(actor, int) and 0 <= actor <= 3), "invalid_message", "none actor is invalid")
+        _require("actor" not in action or (type(actor) is int and 0 <= actor <= 3), "invalid_message", "none actor is invalid")
+        _require(actor is None or expected_actor is None or actor == expected_actor, "invalid_message", "none actor does not match request seat")
         return
     _require(isinstance(action.get("actor"), int) and 0 <= action["actor"] <= 3, "invalid_message", "action actor is invalid")
     if expected_actor is not None:
         _require(action["actor"] == expected_actor, "invalid_message", "action actor does not match request seat")
+    if kind in extension_types:
+        return
     if kind == "dahai":
         _require(isinstance(action.get("pai"), str) and action["pai"] != "?", "invalid_message", "dahai pai is invalid")
         _require(isinstance(action.get("tsumogiri"), bool), "invalid_message", "dahai tsumogiri is invalid")
@@ -808,26 +938,43 @@ def _check_action_object(action: Any, *, expected_actor: int | None = None) -> N
     _require(kind in {"hora", "ryukyoku"}, "invalid_message", "unknown action type")
 
 
-def _check_request(message: Mapping[str, Any], *, grace_ms: int | None = None) -> None:
+def _check_request(message: Mapping[str, Any], *, grace_ms: int | None = None, extension_contexts: Mapping[str, Sequence[str]] | None = None) -> None:
+    extension_contexts = extension_contexts or {}
     request_id = message.get("request_id")
     seat = message.get("seat")
     _require(isinstance(request_id, str) and ID_RE.fullmatch(request_id), "invalid_message", "request_id is invalid")
-    _require(isinstance(seat, int) and 0 <= seat <= 3, "invalid_message", "request seat is invalid")
+    _require(type(seat) is int and 0 <= seat <= 3, "invalid_message", "request seat is invalid")
     actions = message.get("legal_actions")
     _require(isinstance(actions, list) and 1 <= len(actions) <= 512, "invalid_message", "legal_actions is not complete")
     action_ids: set[str] = set()
+    choices: set[str] = set()
     for candidate in actions:
         _require(isinstance(candidate, dict), "invalid_message", "action candidate is not an object")
         action_id = candidate.get("action_id")
         _require(isinstance(action_id, str) and ID_RE.fullmatch(action_id), "invalid_message", "action_id is invalid")
         _require(action_id not in action_ids, "invalid_message", "action_id is not unique")
         action_ids.add(action_id)
-        _check_action_object(candidate.get("action"), expected_actor=seat)
+        _check_action_object(candidate.get("action"), expected_actor=seat, extension_types=extension_contexts)
+        choice = canonical_action(candidate["action"])
+        _require(choice not in choices, "invalid_message", "same choice is listed under more than one action ID")
+        choices.add(choice)
     _require(message.get("default_action_id") in action_ids, "invalid_message", "default_action_id is not a legal action")
+    default = next(c["action"] for c in actions if c["action_id"] == message["default_action_id"])
+    if any(c["action"]["type"] == "none" for c in actions):
+        _require(default["type"] == "none", "invalid_message", "reaction default must be none")
+    else:
+        _require(default["type"] == "dahai" and default.get("tsumogiri") is True, "invalid_message", "draw default must discard the drawn tile")
     group = message.get("decision_group_id")
+    _require((group is not None) == any(c["action"]["type"] == "none" for c in actions), "invalid_message", "reaction requests require a group and a none candidate")
+    context = "reaction" if group is not None or any(c["action"]["type"] == "none" for c in actions) else "turn"
+    for candidate in actions:
+        kind = candidate["action"]["type"]
+        if kind in extension_contexts:
+            _require(context in extension_contexts[kind], "invalid_message", "extension action is not allowed in this decision context")
     grouped = any(x in message for x in GROUP_FIELDS)
     _require(not grouped or isinstance(group, str), "invalid_message", "decision group fields require an id")
     if group is not None:
+        _require(all(c["action"]["type"] in {"none", "hora", "chi", "pon", "daiminkan"} or c["action"]["type"] in extension_contexts for c in actions), "invalid_message", "group contains a non-reaction action")
         _require(all(x in message for x in GROUP_FIELDS), "invalid_message", "decision group is incomplete")
         timeout_ms = message.get("timeout_ms")
         time_bank_ms = message.get("time_bank_ms")
@@ -839,21 +986,42 @@ def _check_request(message: Mapping[str, Any], *, grace_ms: int | None = None) -
             deadline_floor += grace_ms
         _require(group_deadline_ms >= deadline_floor, "invalid_message", "decision group deadline is shorter than the available request time")
         members = message["decision_group_members"]
-        _require(isinstance(members, list) and 2 <= len(members) <= 4, "invalid_message", "decision group members are invalid")
+        _require(isinstance(members, list) and len(members) == 3, "invalid_message", "reaction group must contain the three other seats")
         member_ids = []
         member_seats = []
         for member in members:
-            _require(isinstance(member, dict) and set(member) == {"request_id", "seat"}, "invalid_message", "decision group member shape is invalid")
+            _require(isinstance(member, dict) and {"request_id", "seat"}.issubset(member) and all(key in {"request_id", "seat"} or EXTENSION_FIELD_RE.fullmatch(key) for key in member), "invalid_message", "decision group member shape is invalid")
             _require(isinstance(member["request_id"], str) and ID_RE.fullmatch(member["request_id"]), "invalid_message", "group request_id is invalid")
             _require(isinstance(member["seat"], int) and 0 <= member["seat"] <= 3, "invalid_message", "group seat is invalid")
             member_ids.append(member["request_id"])
             member_seats.append(member["seat"])
         _require(len(set(member_ids)) == len(member_ids) and len(set(member_seats)) == len(member_seats), "invalid_message", "group members are not unique")
-        _require(request_id in member_ids and seat in member_seats, "invalid_message", "request is absent from its group")
-        _require(message.get("decision_group_close") == "all_resolved_or_deadline", "invalid_message", "unsupported group close")
+        _require((request_id, seat) in set(zip(member_ids, member_seats)), "invalid_message", "request/seat pair is absent from its group")
+        _require(message.get("decision_group_close") == "all_selected_or_deadline", "invalid_message", "unsupported group close")
 
 
-def _check_snapshot(message: Mapping[str, Any]) -> None:
+def _check_decision_cause(request: Mapping[str, Any], cause: Mapping[str, Any]) -> None:
+    seat, kind = request["seat"], cause["type"]
+    _require(kind in {"tsumo", "dahai", "ankan_declared", "kakan_declared"}, "invalid_message", "event cannot cause a decision")
+    turn = kind == "tsumo"
+    _require((cause["actor"] == seat) == turn, "invalid_message", "cause actor and request owner differ")
+    _require(("decision_group_id" not in request) == turn, "invalid_message", "decision context differs from cause")
+    if not turn:
+        _require({m["seat"] for m in request["decision_group_members"]} == set(range(4)) - {cause["actor"]}, "invalid_message", "group does not contain exactly the other seats")
+    for candidate in request["legal_actions"]:
+        action = candidate["action"]
+        t = action["type"]
+        if t in {"chi", "pon", "daiminkan"}:
+            _require(kind == "dahai" and action["target"] == cause["actor"] and action["pai"] == cause["pai"], "invalid_message", "call differs from its cause discard")
+            _require(t != "chi" or action["target"] == (seat + 3) % 4, "invalid_message", "chi is not from the preceding seat")
+        elif t in {"dahai", "reach", "ankan", "kakan", "ryukyoku"}:
+            _require(turn, "invalid_message", "draw action proposed in a reaction")
+            discard = action.get("dahai", action)
+            if discard["type"] == "dahai" and discard["tsumogiri"]:
+                _require(discard["pai"] == cause["pai"], "invalid_message", "tsumogiri is not the drawn tile")
+
+
+def _check_snapshot(message: Mapping[str, Any], extension_contexts: Mapping[str, Sequence[str]] | None = None) -> None:
     state = message.get("state")
     _require(isinstance(state, dict), "invalid_message", "snapshot state is missing")
     _check_players(state.get("players"))
@@ -868,23 +1036,68 @@ def _check_snapshot(message: Mapping[str, Any]) -> None:
         _require(not pending_present, "invalid_message", "public snapshot must omit pending_requests")
         if isinstance(state.get("kyoku"), dict):
             _require("self_state" not in state["kyoku"], "invalid_message", "public snapshot must omit self_state")
-    if not isinstance(state.get("kyoku"), dict):
-        _require(not state.get("pending_requests"), "invalid_message", "snapshot outside kyoku has pending requests")
+    pending = state.get("pending_requests", [])
+    _require(len(pending) <= 1, "invalid_message", "snapshot contains another seat's request")
     if isinstance(state.get("kyoku"), dict):
-        _require(state.get("kyotaku") == state["kyoku"].get("kyotaku"), "invalid_message", "snapshot kyotaku counters differ")
-        phase = state["kyoku"].get("turn", {}).get("phase")
-        pending = state.get("pending_requests", [])
-        if mode == "play" and phase == "awaiting_action":
-            own_turn = state["kyoku"]["turn"].get("actor") == seat
-            _require(len(pending) == int(own_turn), "invalid_message", "awaiting_action requires only the actor's own request")
+        kyoku = state["kyoku"]
+        turn = kyoku["turn"]
+        _check_event_visibility(turn["last_event"], mode, view, seat)
+        phase = turn["phase"]
+        initial_observer = mode == "spectate" and message["seq"] == 1 and message["replaces_through_seq"] == 0
+        if initial_observer:
+            _require(turn["last_event_seq"] is None, "invalid_message", "initial observer has no earlier session event")
+        else:
+            _require(type(turn["last_event_seq"]) is int and 0 < turn["last_event_seq"] <= message["replaces_through_seq"], "invalid_message", "snapshot cause event lies outside replacement range")
+        needs_request = mode == "play" and ((phase == "awaiting_action" and turn["actor"] == seat) or (phase == "awaiting_responses" and turn["actor"] != seat))
+        _require(len(pending) == int(needs_request), "invalid_message", "pending requests do not match this seat's turn")
+        _require(kyoku["kyotaku"] == state["kyotaku"], "invalid_message", "snapshot kyotaku differs")
         if mode == "play":
-            _require(len(pending) <= 1 and all(item.get("seat") == seat for item in pending), "invalid_message", "snapshot exposes another seat's request")
-        if phase in {"awaiting_draw", "resolving"}:
-            _require(not pending_present or len(state.get("pending_requests", [])) == 0, "invalid_message", "draw/resolving phase cannot have pending requests")
-    _require(state.get("session_phase") in {"ACTIVE", "ENDED"}, "invalid_message", "snapshot session phase is invalid")
-    _require(state.get("game_phase") in {"NOT_STARTED", "READY", "IN_KYOKU", "ENDED"}, "invalid_message", "snapshot game phase is invalid")
-    _require((state.get("game_phase") == "IN_KYOKU") == isinstance(state.get("kyoku"), dict), "invalid_message", "snapshot game phase and kyoku differ")
-    _require(isinstance(state.get("kyotaku"), int) and state["kyotaku"] >= 0, "invalid_message", "snapshot kyotaku is invalid")
+            _require(kyoku["self_state"]["time_bank_ms"] == state["time_bank_ms"], "invalid_message", "snapshot time bank differs")
+        visible_seat = seat if mode == "play" else view.get("seat") if isinstance(view, dict) else None
+        for actor, hand in enumerate(kyoku["hands"]):
+            visible = view == "full" or actor == visible_seat
+            _require(("tiles" in hand) == visible, "invalid_message", "snapshot hand visibility differs")
+            physical_count = len(hand["tiles"]) if visible else hand["count"]
+            extra = int(actor == turn["actor"] and (phase == "awaiting_action" or (phase == "awaiting_responses" and kyoku["pending_kan"] is not None)))
+            _require(physical_count == 13 - 3 * len(kyoku["melds"][actor]) + extra, "invalid_message", "snapshot concealed tile count differs")
+            for meld in kyoku["melds"][actor]:
+                _require(meld["actor"] == actor and meld.get("target") != actor, "invalid_message", "snapshot meld seat differs")
+            for tile in kyoku["rivers"][actor]:
+                _require(tile["called_by"] != actor, "invalid_message", "a river tile is called by its discarder")
+        _require(sum(kyoku["kan_counts"]) <= 4, "invalid_message", "too many kans")
+        for actor in range(4):
+            count = sum(m["type"] in {"ankan", "daiminkan", "kakan"} for m in kyoku["melds"][actor])
+            _require(kyoku["kan_counts"][actor] == count, "invalid_message", "kan count differs from committed melds")
+        concealed_count = sum(len(h["tiles"]) if "tiles" in h else h["count"] for h in kyoku["hands"])
+        meld_count = sum(len(m["consumed"]) + int(m["type"] != "ankan") for row in kyoku["melds"] for m in row)
+        river_count = sum(t["called_by"] is None for river in kyoku["rivers"] for t in river)
+        dead_count = 14 + int(kyoku["rinshan"] and phase == "awaiting_draw")
+        _require(concealed_count + meld_count + river_count + kyoku["wall_remaining"] + dead_count == 136, "invalid_message", "snapshot loses or creates physical tiles")
+        _require(len(kyoku["dora_markers"]) == 1 + sum(kyoku["kan_counts"]) - int(kyoku["pending_dora"] is not None), "invalid_message", "dora count differs from kan state")
+        pao_keys = [(item["actor"], item["yaku_id"]) for item in kyoku["pao"]]
+        _require(len(pao_keys) == len(set(pao_keys)) and all(item["actor"] != item["liable_seat"] for item in kyoku["pao"]), "invalid_message", "pao assignments are invalid")
+        known_pao = public_pao(kyoku["melds"], {"pao":{"yakus":["daisangen","daisuushii"]}})
+        _require(all(item in known_pao for item in kyoku["pao"]), "invalid_message", "snapshot pao is not derived from public meld history")
+        for request in pending:
+            _check_request(request, extension_contexts=extension_contexts)
+            _check_decision_cause(request, turn["last_event"])
+            _require(request["seat"] == seat and request["caused_by_seq"] == turn["last_event_seq"] < message["replaces_through_seq"], "invalid_message", "snapshot request owner/cause differs")
+            selection = request["selection"]
+            if selection is not None:
+                _require(selection["action_id"] in {c["action_id"] for c in request["legal_actions"]}, "invalid_message", "snapshot selection is not legal")
+                _require(selection["source"] != "default" or selection["action_id"] == request["default_action_id"], "invalid_message", "snapshot default selection differs")
+                _require(selection["time_bank_ms"] <= request["time_bank_ms"], "invalid_message", "snapshot selection invents bank time")
+                _require(selection["time_bank_ms"] == state["time_bank_ms"], "invalid_message", "selected time bank differs from the shared balance")
+            else:
+                _require(request["time_bank_ms"] == state["time_bank_ms"], "invalid_message", "open request changed the shared balance")
+    else:
+        _require(not pending, "invalid_message", "out-of-round snapshot contains pending requests")
+    if state.get("next_kyoku") is not None:
+        _require(state["next_kyoku"]["kyotaku"] == state["kyotaku"], "invalid_message", "snapshot next kyotaku differs")
+    if state.get("game_phase") == "ended":
+        order = sorted(range(4), key=lambda i: (-state["scores"][i], i))
+        _require(state["final_rankings"] == [order.index(i) + 1 for i in range(4)], "invalid_message", "snapshot rankings differ")
+    _require(("original_seq" in state) == (mode == "replay"), "invalid_message", "snapshot recording cursor differs from mode")
     _require(message.get("seq") == message.get("replaces_through_seq", -1) + 1, "invalid_message", "snapshot seq does not follow replacement range")
 
 
@@ -913,6 +1126,8 @@ def semantic_message(message: Mapping[str, Any], case_id: str, expected_profile_
                 for right in range(4):
                     if scores[left] > scores[right]:
                         _require(rankings[left] < rankings[right], "invalid_message", "rankings do not follow descending scores")
+            order = sorted(range(4), key=lambda i: (-scores[i], i))
+            _require(rankings == [order.index(i) + 1 for i in range(4)], "invalid_message", "ranking tie does not follow initial seat order")
         if event.get("type") == "end_kyoku":
             result = event.get("result", {})
             if result.get("type") == "hora":
@@ -926,6 +1141,7 @@ def semantic_message(message: Mapping[str, Any], case_id: str, expected_profile_
                     yakuman = sum(item.get("value", 0) for item in win.get("yakus", []) if item.get("unit") == "yakuman")
                     if yakuman:
                         _require(win.get("han") == 0 and win.get("bonuses") == [], "invalid_message", "yakuman win must not carry han/bonuses")
+                        _require(win.get("fu") == 0 and all(item.get("unit") == "yakuman" for item in win["yakus"]), "invalid_message", "yakuman must not mix ordinary roles or fu")
                     else:
                         _require(win.get("han") == regular_han + bonus_han, "invalid_message", "win han does not match yaku/bonus sum")
                 _require(actors == sorted(actors) and len(set(actors)) == len(actors), "invalid_message", "wins must be sorted by unique actor")
@@ -953,10 +1169,9 @@ def semantic_message(message: Mapping[str, Any], case_id: str, expected_profile_
         elif mode == "spectate":
             _require(view == "public" and "target" in message and "resume" not in message, "invalid_message", "spectate join shape is invalid")
             _check_target(message.get("target"), allowed_types={"game"})
-            _require("snapshot" in message.get("capabilities", {}).get("required", []) + message.get("capabilities", {}).get("optional", []), "unsupported_capability", "spectate requires snapshot")
         else:
             _require("target" in message and "resume" not in message, "invalid_message", "replay join shape is invalid")
-            _require(isinstance(view, str) and view in {"public", "full"} or (isinstance(view, dict) and "seat" in view and all(key == "seat" or EXTENSION_FIELD_RE.fullmatch(key) for key in view) and isinstance(view.get("seat"), int) and 0 <= view["seat"] <= 3), "invalid_message", "replay view is invalid")
+            _require((isinstance(view, str) and view in {"public", "full"}) or (isinstance(view, dict) and "seat" in view and all(key == "seat" or EXTENSION_FIELD_RE.fullmatch(key) for key in view) and type(view.get("seat")) is int and 0 <= view["seat"] <= 3), "invalid_message", "replay view is invalid")
             _check_target(message.get("target"), allowed_types={"game", "recording"})
         limits = message.get("receive_limits", {})
         if message.get("profile") == PROFILE and (
@@ -975,21 +1190,32 @@ def semantic_message(message: Mapping[str, Any], case_id: str, expected_profile_
         _check_mode_view(message.get("mode"), message.get("view"), message.get("seat"), context="welcome")
         resumed = message.get("resumed")
         _require(isinstance(resumed, bool), "invalid_message", "welcome resumed is invalid")
+        capabilities = message.get("capabilities")
+        _require(isinstance(capabilities, list) and all(isinstance(c, str) for c in capabilities) and capabilities == sorted(set(capabilities)), "invalid_message", "welcome capabilities must be sorted and unique")
+        resume_enabled = message["mode"] == "play" and "resume" in capabilities
+        _require(("resume" in message) == resume_enabled, "invalid_message", "welcome resume capability/member differs")
+        _require(message["mode"] == "play" or "resume" not in capabilities, "invalid_message", "resume enabled in a non-play mode")
         if resumed:
-            _require("replay_from_seq" in message and "resume" in message, "invalid_message", "resumed welcome is incomplete")
+            _require("replay_from_seq" in message and "replay_through_seq" in message and "resume" in message, "invalid_message", "resumed welcome is incomplete")
+            _require(message["replay_from_seq"] <= message["replay_through_seq"] + 1, "invalid_message", "resume range is reversed")
         else:
-            _require("replay_from_seq" not in message, "invalid_message", "new welcome must not contain replay_from_seq")
+            _require("replay_from_seq" not in message and "replay_through_seq" not in message, "invalid_message", "new welcome must not contain replay bounds")
     elif kind == "hello":
         _check_capabilities(message.get("capabilities"))
+        names = [profile.get("name") for profile in message.get("profiles", [])]
+        _require(len(names) == len(set(names)), "invalid_message", "profile advertisements repeat a name")
         for profile in message.get("profiles", []):
             _require(isinstance(profile, dict), "invalid_message", "profile advertisement is invalid")
             revisions = profile.get("revisions", [])
             hashes = profile.get("hashes", {})
             _require(set(revisions) == set(hashes), "invalid_message", "profile revisions and hashes must match")
+            protocols = profile.get("protocol_versions", {})
+            _require(set(revisions) == set(protocols), "invalid_message", "profile protocol matrix must cover all revisions")
+            _require(all(set(versions) <= set(message["versions"]) for versions in protocols.values()), "invalid_message", "profile matrix contains an unadvertised protocol")
     elif kind == "request":
         _check_request(message)
     elif kind == "ack":
-        _require(message.get("status") in TERMINAL_ACK_STATUSES | {"rejected", "stale"}, "invalid_message", "unknown ack status")
+        _require(message.get("status") in TERMINAL_ACK_STATUSES | {"rejected"}, "invalid_message", "unknown ack status")
         _require(isinstance(message.get("elapsed_ms"), int) and 0 <= message["elapsed_ms"] <= 1800000, "invalid_message", "ack elapsed_ms is invalid")
         _require(isinstance(message.get("time_bank_ms"), int) and 0 <= message["time_bank_ms"] <= 600000, "invalid_message", "ack time_bank_ms is invalid")
         if message.get("status") == "rejected":
@@ -999,6 +1225,9 @@ def semantic_message(message: Mapping[str, Any], case_id: str, expected_profile_
     elif kind == "action":
         if "resolved_status" in message and message.get("resolved_status") in TERMINAL_ACK_STATUSES:
             raise ArtifactError("request_conflict", "different action for a resolved request")
+    elif kind == "error":
+        if message.get("code") == "sequence_gap":
+            _require(message.get("received_seq", 0) > message.get("expected_seq", 0), "invalid_message", "sequence_gap range is not increasing")
     elif kind == "future_kind":
         raise ArtifactError("invalid_message", "unknown message kind")
 
@@ -1050,18 +1279,55 @@ def semantic_resource_trace(trace: Mapping[str, Any]) -> None:
         raise ArtifactError("resource_limit", "peer did not drain the send backlog")
 
 
+def parse_jsonl_chunks(chunks: Iterable[bytes], max_bytes: int = 1048576) -> List[Dict[str, Any]]:
+    """Frame and decode JSONL, including split UTF-8 and CRLF boundaries."""
+    pending = bytearray()
+    messages = []
+    for chunk in chunks:
+        for byte in chunk:
+            if byte == 10:
+                payload = bytes(pending[:-1] if pending.endswith(b"\r") else pending)
+                pending.clear()
+                _require(payload.startswith(b"{") and b"\r" not in payload, "invalid_frame", "JSONL frame must start with an object and contain no raw CR")
+                message = strict_load_bytes(payload, max_bytes=max_bytes)
+                _require(isinstance(message, dict), "invalid_message", "JSONL payload must be an object")
+                messages.append(message)
+            else:
+                pending.append(byte)
+                if len(pending) > max_bytes + 1 or (len(pending) == max_bytes + 1 and byte != 13):
+                    raise ArtifactError("resource_limit", "JSONL payload exceeds byte limit")
+    _require(not pending, "invalid_frame", "EOF during an incomplete JSONL frame")
+    return messages
+
+
 def semantic_transport_trace(trace: Mapping[str, Any]) -> None:
     _require(trace.get("trace_type") == "transport", "invalid_message", "transport trace type is invalid")
     transport = trace.get("transport")
     if transport == "jsonl":
-        for line in trace.get("lines", []):
-            _require(isinstance(line, str) and line.endswith("\n") and line.strip(" \t\r\n") != "", "invalid_frame", "invalid JSONL line")
+        if "chunks_hex" in trace:
+            try:
+                chunks = [bytes.fromhex(value) for value in trace["chunks_hex"]]
+            except (ValueError, TypeError) as exc:
+                raise ArtifactError("invalid_frame", "invalid byte chunks") from exc
+        else:
+            lines = trace.get("lines")
+            _require(isinstance(lines, list) and all(isinstance(line, str) for line in lines), "invalid_frame", "invalid JSONL input")
+            stream = "".join(lines).encode("utf-8")
+            splits = trace.get("split_at", [])
+            _require(all(type(i) is int and 0 < i < len(stream) for i in splits) and splits == sorted(set(splits)), "invalid_frame", "invalid chunk boundaries")
+            cuts = [0, *splits, len(stream)]
+            chunks = [stream[a:b] for a,b in zip(cuts,cuts[1:])]
+        messages = parse_jsonl_chunks(chunks)
+        if "expected_messages" in trace:
+            _require(_json_equal(messages, trace["expected_messages"]), "invalid_message", "decoded JSONL messages differ")
     elif transport == "websocket":
         _require(trace.get("message_type") in {"text", "binary"}, "invalid_frame", "invalid websocket message type")
         if trace.get("message_type") == "text":
             _require(isinstance(trace.get("message"), str) and trace["message"] != "", "invalid_frame", "empty websocket text message")
             if "fragments" in trace:
                 _require(isinstance(trace["fragments"], list) and "".join(trace["fragments"]) == trace["message"], "invalid_frame", "websocket fragments do not reconstruct the message")
+            message = strict_load_bytes(trace["message"].encode("utf-8"), max_bytes=1048576)
+            _require(isinstance(message, dict), "invalid_message", "WebSocket payload must be an object")
         if trace.get("message_type") == "binary":
             raise ArtifactError("unsupported_frame", "binary websocket message")
     else:
@@ -1111,7 +1377,7 @@ def semantic_noten_trace(trace: Mapping[str, Any]) -> None:
 
 def semantic_ack_trace(trace: Mapping[str, Any]) -> None:
     statuses = trace.get("statuses")
-    _require(isinstance(statuses, list) and all(status in TERMINAL_ACK_STATUSES | {"rejected", "stale"} for status in statuses), "invalid_message", "ack status trace is invalid")
+    _require(isinstance(statuses, list) and all(status in TERMINAL_ACK_STATUSES | {"rejected"} for status in statuses), "invalid_message", "ack status trace is invalid")
     if statuses and statuses[-1] == "rejected":
         _require(trace.get("request_open", True) is True, "invalid_message", "rejected ack incorrectly terminalized request")
 
@@ -1123,197 +1389,15 @@ def semantic_composite_trace(trace: Mapping[str, Any]) -> None:
         semantic_ack_trace(trace["ack"])
 
 
-def _check_scoring_hand(hand: Any, fixture_id: str) -> None:
-    _require(isinstance(hand, dict), "scoring_error", f"{fixture_id}: hand is not an object")
-    concealed = hand.get("concealed_tiles", [])
-    melds = hand.get("melds", [])
-    _require(isinstance(concealed, list) and isinstance(melds, list), "scoring_error", f"{fixture_id}: hand arrays are invalid")
-    kan_kinds = {"kantsu", "ankan", "daiminkan", "kakan"}
-    called_open = {"chi": True, "pon": True, "daiminkan": True, "kakan": True, "ankan": False}
-    logical_count = len(concealed)
-    kan_count = 0
-    for meld in melds:
-        _require(isinstance(meld, dict) and isinstance(meld.get("tiles"), list), "scoring_error", f"{fixture_id}: meld tiles are invalid")
-        kind = meld.get("kind")
-        if kind in called_open:
-            _require(meld.get("open") is called_open[kind], "scoring_error", f"{fixture_id}: {kind} open flag is inconsistent")
-        logical_count += len(meld["tiles"])
-        if kind in kan_kinds:
-            kan_count += 1
-    # The fixture format represents a 13-tile hand plus one extra physical
-    # tile per kan (the winning tile is part of the 13-tile input shape).
-    _require(logical_count == 13 + kan_count, "scoring_error", f"{fixture_id}: hand/meld logical tile count is inconsistent")
-
-
-def _scoring_state_values(state: Any, fixture_id: str) -> Tuple[int, int]:
-    _require(isinstance(state, Mapping), "scoring_error", f"{fixture_id}: state is not an object")
-    values = []
-    for field in ("honba", "kyotaku"):
-        value = state.get(field, 0)
-        _require(isinstance(value, int) and not isinstance(value, bool) and value >= 0, "scoring_error", f"{fixture_id}: {field} is invalid")
-        values.append(value)
-    return values[0], values[1]
-
-
-def _payment_deltas(payments: Any, fixture_id: str, context: str) -> List[int]:
-    _require(isinstance(payments, list), "scoring_error", f"{fixture_id}.{context}: payments are not an array")
-    deltas = [0, 0, 0, 0]
-    for payment in payments:
-        _require(isinstance(payment, Mapping), "scoring_error", f"{fixture_id}.{context}: payment is not an object")
-        source = payment.get("from")
-        target = payment.get("to")
-        points = payment.get("points")
-        _require(isinstance(source, int) and not isinstance(source, bool) and 0 <= source <= 3, "scoring_error", f"{fixture_id}.{context}: payment source is invalid")
-        _require(isinstance(target, int) and not isinstance(target, bool) and 0 <= target <= 3, "scoring_error", f"{fixture_id}.{context}: payment target is invalid")
-        _require(source != target, "scoring_error", f"{fixture_id}.{context}: payment endpoints are identical")
-        _require(isinstance(points, int) and not isinstance(points, bool) and points >= 0, "scoring_error", f"{fixture_id}.{context}: payment points are invalid")
-        deltas[source] -= points
-        deltas[target] += points
-    return deltas
-
-
-def _check_delta_conservation(deltas: Any, fixture_id: str, context: str) -> None:
-    _require(isinstance(deltas, list) and len(deltas) == 4, "scoring_error", f"{fixture_id}.{context}: deltas are invalid")
-    _require(all(isinstance(value, int) and not isinstance(value, bool) for value in deltas), "scoring_error", f"{fixture_id}.{context}: deltas contain a non-integer")
-    _require(sum(deltas) == 0, "scoring_error", f"{fixture_id}.{context}: deltas do not conserve points")
-
-
-def _check_expected_win(input_data: Mapping[str, Any], win: Mapping[str, Any], fixture_id: str) -> None:
-    method = input_data.get("win_method")
-    _require(input_data.get("actor") == win.get("actor"), "scoring_error", f"{fixture_id}: expected actor does not match input")
-    _require(input_data.get("target") == win.get("target"), "scoring_error", f"{fixture_id}: expected target does not match input")
-    _require(input_data.get("winning_tile") == win.get("winning_tile"), "scoring_error", f"{fixture_id}: winning_tile does not match expected win")
-    if method == "tsumo":
-        _require(win.get("target") == win.get("actor"), "scoring_error", f"{fixture_id}: tsumo target must equal actor")
-    elif method == "ron":
-        _require(win.get("target") != win.get("actor"), "scoring_error", f"{fixture_id}: ron target must differ from actor")
-    else:
-        raise ArtifactError("scoring_error", f"{fixture_id}: unknown win method")
-    for key, id_key in (("yakus", "id"), ("bonuses", "id"), ("pao", "yaku_id")):
-        values = [entry.get(id_key) for entry in win.get(key, []) if isinstance(entry, dict)]
-        _require(len(values) == len(set(values)), "scoring_error", f"{fixture_id}: duplicate {key} id")
-    payments = win.get("payments", [])
-    derived_deltas = _payment_deltas(payments, fixture_id, "win")
-    derived_deltas[win["actor"]] += win.get("kyotaku_points", 0)
-    _require(derived_deltas == win.get("deltas"), "scoring_error", f"{fixture_id}: win deltas do not match payments")
-    _require(sum(win["deltas"]) == win.get("kyotaku_points", 0), "scoring_error", f"{fixture_id}: kyotaku allocation does not conserve points")
-
-
-def _effective_scoring_rules(base_rules: Mapping[str, Any], fixture: Mapping[str, Any]) -> Dict[str, Any]:
-    return dict(base_rules) | dict(fixture.get("rule_overrides", {}))
-
-
-def _expected_settlement_extras(
-    fixture_id: str,
-    input_data: Mapping[str, Any],
-    wins: Sequence[Mapping[str, Any]],
-    state: Mapping[str, Any],
-    rules: Mapping[str, Any],
-) -> List[int]:
-    """Return per-win additions to hand_points from honba and kyotaku."""
-    honba, kyotaku = _scoring_state_values(state, fixture_id)
-    stick_value = rules.get("riichi_stick_value", 0)
-    ron_honba = rules.get("honba_ron_value", 0)
-    tsumo_honba = rules.get("honba_tsumo_value_per_payer", 0)
-    _require(isinstance(stick_value, int) and not isinstance(stick_value, bool) and stick_value >= 0 and stick_value % 100 == 0, "scoring_error", f"{fixture_id}: riichi_stick_value is invalid")
-    _require(isinstance(ron_honba, int) and not isinstance(ron_honba, bool) and ron_honba >= 0, "scoring_error", f"{fixture_id}: honba_ron_value is invalid")
-    _require(isinstance(tsumo_honba, int) and not isinstance(tsumo_honba, bool) and tsumo_honba >= 0, "scoring_error", f"{fixture_id}: honba_tsumo_value_per_payer is invalid")
-
-    count = len(wins)
-    _require(count > 0, "scoring_error", f"{fixture_id}: no wins to settle")
-    extras = [0] * count
-    methods = [entry.get("win_method") for entry in [input_data] + list(input_data.get("other_winners", []))]
-    if count == 1:
-        method = methods[0]
-        if method == "ron":
-            extras[0] += honba * ron_honba
-        elif method == "tsumo":
-            # A tsumo has three payer shares. Pao may collapse those shares
-            # into one payment entry, but the honba amount remains per payer.
-            extras[0] += honba * tsumo_honba * 3
-        else:
-            raise ArtifactError("scoring_error", f"{fixture_id}: unknown settlement method")
-        extras[0] += kyotaku * stick_value
-        return extras
-
-    _require(all(method == "ron" for method in methods), "scoring_error", f"{fixture_id}: multiple wins must all be ron")
-    settlement = rules.get("multiple_ron_settlement", {})
-    _require(isinstance(settlement, Mapping), "scoring_error", f"{fixture_id}: multiple_ron_settlement is invalid")
-    honba_policy = settlement.get("honba")
-    kyotaku_policy = settlement.get("kyotaku")
-    _require(honba_policy in {"each_winner", "first_winner"}, "scoring_error", f"{fixture_id}: multiple-ron honba policy is invalid")
-    _require(kyotaku_policy in {"first_winner", "equal_split"}, "scoring_error", f"{fixture_id}: multiple-ron kyotaku policy is invalid")
-    first_index = min(
-        range(count),
-        key=lambda index: (wins[index].get("actor", 0) - wins[index].get("target", 0) + 4) % 4,
-    )
-    if honba_policy == "each_winner":
-        extras = [honba * ron_honba] * count
-    else:
-        extras[first_index] += honba * ron_honba
-
-    total_kyotaku = kyotaku * stick_value
-    if kyotaku_policy == "first_winner":
-        extras[first_index] += total_kyotaku
-    else:
-        # Equal split is in 100-point units; any remainder goes to the first
-        # winner, as required by the profile settlement rule.
-        equal_share = (total_kyotaku // count // 100) * 100
-        extras = [extra + equal_share for extra in extras]
-        extras[first_index] += total_kyotaku - equal_share * count
-    return extras
-
-
-def _check_scoring_fixture_semantics(fixture: Mapping[str, Any], base_rules: Mapping[str, Any]) -> None:
-    fixture_id = fixture.get("id", "<unknown>")
-    input_data = fixture.get("input", {})
-    state = fixture.get("state", {})
-    state_honba, state_kyotaku = _scoring_state_values(state, fixture_id)
-    expected = fixture.get("expected", {})
-    result_type = input_data.get("result_type")
-    _require(result_type == expected.get("result_type"), "scoring_error", f"{fixture_id}: input/expected result_type mismatch")
-    if result_type == "penalty":
-        payments = expected.get("payments", [])
-        derived_deltas = _payment_deltas(payments, fixture_id, "penalty")
-        _require(derived_deltas == expected.get("deltas"), "scoring_error", f"{fixture_id}: penalty deltas do not match payments")
-        _check_delta_conservation(expected.get("deltas"), fixture_id, "penalty")
-        offender = expected.get("offender")
-        _require(isinstance(offender, int) and not isinstance(offender, bool) and 0 <= offender <= 3, "scoring_error", f"{fixture_id}: penalty offender is invalid")
-        for payment in payments:
-            _require(payment.get("from") == offender and payment.get("to") != offender, "scoring_error", f"{fixture_id}: penalty payment does not originate at offender")
-        return
-    if result_type == "ryukyoku":
-        _check_delta_conservation(expected.get("deltas"), fixture_id, "ryukyoku")
-        return
-    if result_type != "hora":
-        raise ArtifactError("scoring_error", f"{fixture_id}: unknown result type")
-    wins = expected.get("wins", [])
-    winner_inputs = [input_data] + list(input_data.get("other_winners", []))
-    _require(len(wins) == len(winner_inputs), "scoring_error", f"{fixture_id}: winner/input count mismatch")
-    _require(len({win.get("actor") for win in wins}) == len(wins), "scoring_error", f"{fixture_id}: winner actors are not unique")
-    for index, winner_input in enumerate(winner_inputs):
-        winner_state = state if index == 0 else winner_input.get("state")
-        winner_honba, winner_kyotaku = _scoring_state_values(winner_state, f"{fixture_id}.winner{index}")
-        _require((winner_honba, winner_kyotaku) == (state_honba, state_kyotaku), "scoring_error", f"{fixture_id}: winner state settlement counters differ")
-    for index, win in enumerate(wins):
-        winner_input = next(w for w in winner_inputs if w["actor"] == win["actor"])
-        _check_scoring_hand(winner_input.get("hand"), f"{fixture_id}.winner{index}")
-        _check_expected_win(winner_input, win, f"{fixture_id}.winner{index}")
-    expected_deltas = expected.get("deltas")
-    combined = [sum(win.get("deltas", [0, 0, 0, 0])[i] for win in wins) for i in range(4)]
-    _require(expected_deltas == combined, "scoring_error", f"{fixture_id}: combined deltas do not match wins")
-    _require(sum(expected_deltas) == state_kyotaku * base_rules["riichi_stick_value"], "scoring_error", f"{fixture_id}: combined deltas do not conserve table sticks")
-
-    if len(wins) > 1:
-        targets = {win.get("target") for win in wins}
-        _require(len(targets) == 1, "scoring_error", f"{fixture_id}: multiple wins do not share a target")
-        _require(all(winner_input.get("win_method") == "ron" for winner_input in winner_inputs), "scoring_error", f"{fixture_id}: multiple wins contain a non-ron input")
-    extras = _expected_settlement_extras(fixture_id, input_data, wins, state, _effective_scoring_rules(base_rules, fixture))
-    for index, win in enumerate(wins):
-        incoming = sum(payment.get("points", 0) for payment in win.get("payments", []) if payment.get("to") == win.get("actor"))
-        _require(all(payment.get("from") != win.get("actor") for payment in win.get("payments", [])), "scoring_error", f"{fixture_id}.winner{index}: winner cannot be a payer")
-        expected_incoming = win.get("hand_points", 0) + extras[index]
-        _require(incoming + win.get("kyotaku_points", 0) == expected_incoming, "scoring_error", f"{fixture_id}.winner{index}: settlement allocation does not match hand_points/state")
+def _check_scoring_fixture_semantics(fixture: Mapping[str, Any], base_rules: Mapping[str, Any], schemas: SchemaSet) -> None:
+    fixture_id = fixture["id"]
+    effective_rules = {**base_rules, **fixture["rule_overrides"]}
+    schemas.validate(effective_rules, {"$ref": "urn:yamai:schema:yrc-0005:1.0-draft.4:riichi-4p-rules"})
+    try:
+        actual = calculate_scoring_fixture(dict(fixture), dict(base_rules))
+    except ScoringError as exc:
+        raise ArtifactError("scoring_error", f"{fixture_id}: {exc.code}: {exc}") from exc
+    _require(_json_equal(actual, fixture["expected"]), "scoring_error", f"{fixture_id}: calculated roles, fu, payments, scores or deposits differ from the golden result")
 
 
 def _trace_grace_ms(trace: Mapping[str, Any]) -> int | None:
@@ -1394,976 +1478,8 @@ def semantic_request_trace(trace: Mapping[str, Any]) -> None:
 def semantic_welcome_trace(trace: Mapping[str, Any]) -> None:
     _require(trace.get("resumed") is True, "invalid_message", "welcome trace is not resumed")
     _require(isinstance(trace.get("replay_from_seq"), int) and trace["replay_from_seq"] > 0, "invalid_message", "welcome replay_from_seq is invalid")
+    _require(type(trace.get("replay_through_seq")) is int and trace["replay_through_seq"] >= trace["replay_from_seq"] - 1, "invalid_message", "welcome replay frontier is invalid")
     _require(isinstance(trace.get("resume"), dict) and isinstance(trace["resume"].get("token"), str), "invalid_message", "welcome resume token is missing")
-
-
-STATEFUL_TRACE_SCHEMA_ID = "urn:yamai:schema:yrc-0003:1.0-draft.6:stateful-trace"
-STATEFUL_HOST_KINDS = {"event", "request", "ack", "error", "snapshot"}
-STATEFUL_TERMINAL_STATUSES = TERMINAL_ACK_STATUSES
-
-
-def _stateful_join_seat(join: Mapping[str, Any]) -> None:
-    """Validate the seat binding that is otherwise only observable in welcome.
-
-    A play join selects a seat before a session exists.  Keeping this check in
-    the executable trace validator makes a new join/welcome pair a closed
-    transition instead of allowing the host to choose an arbitrary seat.
-    """
-
-    mode = join.get("mode")
-    if mode == "play":
-        _require(join.get("view") == "seat", "invalid_message", "play join view must be seat")
-        if "seat" in join:
-            seat = join.get("seat")
-            _require(isinstance(seat, int) and not isinstance(seat, bool) and 0 <= seat <= 3, "invalid_message", "play join seat is invalid")
-    else:
-        _require("seat" not in join, "invalid_message", "non-play join must not select a top-level seat")
-
-
-def _stateful_view_descriptor(mode: Any, view: Any, seat: Any, context: str) -> None:
-    _check_mode_view(mode, view, seat, context=context)
-    if mode == "replay" and isinstance(view, dict):
-        _require(seat is None, "invalid_message", f"{context}: replay view object cannot set top-level seat")
-
-
-def _stateful_join_welcome_pair(
-    join: Mapping[str, Any],
-    welcome: Mapping[str, Any],
-    *,
-    session_id: str,
-    game_id: str,
-    expected_profile_hash: str | None,
-) -> None:
-    """Check the complete negotiation transition for one trace client."""
-
-    _stateful_join_seat(join)
-    _require(welcome.get("session_id") == session_id, "invalid_message", "welcome session_id differs from trace")
-    _require(welcome.get("game_id") == game_id, "invalid_message", "welcome game_id differs from trace")
-    _require(welcome.get("mode") == join.get("mode"), "invalid_message", "welcome mode differs from join")
-    _require(welcome.get("view") == join.get("view"), "invalid_message", "welcome view differs from join")
-    if join.get("mode") == "play":
-        _require(isinstance(welcome.get("seat"), int) and 0 <= welcome["seat"] <= 3, "invalid_message", "play welcome seat is invalid")
-        if "seat" in join:
-            _require(welcome.get("seat") == join.get("seat"), "invalid_message", "welcome seat differs from explicit join seat")
-    else:
-        _require(welcome.get("seat") is None and "seat" not in join, "invalid_message", "non-play welcome/join seat binding is invalid")
-    _require(welcome.get("profile") == join.get("profile"), "invalid_message", "welcome profile differs from join")
-    _require(welcome.get("profile_revision") == join.get("profile_revision"), "invalid_message", "welcome profile revision differs from join")
-    _require(welcome.get("profile_hash") == join.get("profile_hash"), "invalid_message", "welcome profile hash differs from join")
-    if expected_profile_hash is not None:
-        _require(join.get("profile_hash") == expected_profile_hash, "profile_mismatch", "join profile hash differs from release")
-
-    resumed = welcome.get("resumed")
-    resume = join.get("resume")
-    if resume is not None:
-        _require(join.get("mode") == "play", "resume_unavailable", "resume is only valid for play")
-        _require(isinstance(resume, Mapping), "resume_unavailable", "join resume is invalid")
-        _require(resumed is True, "resume_unavailable", "resume join received a non-resumed welcome")
-        _require(welcome.get("replay_from_seq") == resume.get("last_seq", -1) + 1, "invalid_message", "welcome replay_from_seq does not follow join resume")
-        _require(isinstance(welcome.get("resume"), Mapping), "invalid_message", "resumed welcome has no rotated resume token")
-    else:
-        _require(resumed is False, "invalid_message", "new join received a resumed welcome")
-        _require("replay_from_seq" not in welcome, "invalid_message", "new welcome contains replay_from_seq")
-
-    if join.get("mode") in {"spectate", "replay"}:
-        _require("resume" not in join, "resume_unavailable", "resume is forbidden for non-play mode")
-        _require("resume" not in welcome, "invalid_message", "non-play welcome exposes a resume token")
-        target = join.get("target")
-        if isinstance(target, Mapping) and target.get("type") == "game":
-            _require(target.get("id") == game_id, "invalid_message", "welcome game_id differs from join target")
-
-
-def _stateful_wire_equal(left: Mapping[str, Any], right: Mapping[str, Any]) -> bool:
-    """Compare two decoded projections without depending on object ordering."""
-
-    return canonical(left) == canonical(right)
-
-
-def _stateful_wire_message(raw: Any, message: Mapping[str, Any], context: str) -> str:
-    """Validate and return the exact UTF-8 JSON payload recorded by a trace.
-
-    A trace is an audit artifact, so its wire member is not a semantic label:
-    it is the payload bytes (represented as a UTF-8 JSON string).  Parsing the
-    bytes catches malformed payloads and comparing the decoded value catches a
-    wire/message mismatch while the returned string remains available for the
-    byte-for-byte replay check.
-    """
-
-    _require(isinstance(raw, str) and raw != "", "invalid_message", f"{context} wire is invalid")
-    try:
-        decoded = strict_load_bytes(raw.encode("utf-8"), source=f"{context}.wire")
-    except ArtifactError as exc:
-        raise ArtifactError("invalid_message", f"{context} wire is not strict JSON") from exc
-    _require(isinstance(decoded, Mapping) and _stateful_wire_equal(decoded, message), "sequence_conflict", f"{context} wire does not match message")
-    return raw
-
-
-def _stateful_group_members(message: Mapping[str, Any], context: str) -> List[Mapping[str, Any]]:
-    members = message.get("decision_group_members")
-    _require(isinstance(members, list) and members, "invalid_message", f"{context} group members are missing")
-    normalized: List[Mapping[str, Any]] = []
-    seats: List[int] = []
-    request_ids: List[str] = []
-    for index, member in enumerate(members):
-        _require(isinstance(member, Mapping), "invalid_message", f"{context} member {index} is invalid")
-        request_id = member.get("request_id")
-        seat = member.get("seat")
-        _require(isinstance(request_id, str) and ID_RE.fullmatch(request_id), "invalid_message", f"{context} member request_id is invalid")
-        _require(isinstance(seat, int) and not isinstance(seat, bool) and 0 <= seat <= 3, "invalid_message", f"{context} member seat is invalid")
-        normalized.append(member)
-        seats.append(seat)
-        request_ids.append(request_id)
-    _require(seats == sorted(seats) and len(seats) == len(set(seats)), "invalid_message", f"{context} group members are not in ascending seat order")
-    _require(len(request_ids) == len(set(request_ids)), "invalid_message", f"{context} group member request_id is duplicated")
-    return normalized
-
-
-def _stateful_operation_key(message: Mapping[str, Any]) -> Tuple[int, str]:
-    caused = message.get("caused_by_seq")
-    _require(isinstance(caused, int) and not isinstance(caused, bool) and caused > 0, "invalid_message", "operation caused_by_seq is invalid")
-    operation = message.get("decision_group_id") or message.get("request_id")
-    _require(isinstance(operation, str) and ID_RE.fullmatch(operation), "invalid_message", "operation key is invalid")
-    return caused, operation
-
-
-def _stateful_group_start(request: Mapping[str, Any], groups: Mapping[str, Dict[str, Any]]) -> int:
-    group_id = request.get("decision_group_id")
-    if isinstance(group_id, str) and group_id in groups:
-        return int(groups[group_id]["start_ms"])
-    return int(request["start_ms"])
-
-
-def _stateful_expected_bank(request: Mapping[str, Any], elapsed_ms: int, grace_ms: int) -> int:
-    timeout = request["message"].get("timeout_ms", 0)
-    prior = request["bank_before"]
-    soft_deadline = grace_ms + timeout
-    consumed = min(max(0, elapsed_ms - soft_deadline), prior)
-    return prior - consumed
-
-
-def _stateful_deadline(request: Mapping[str, Any], groups: Mapping[str, Dict[str, Any]], grace_ms: int) -> int:
-    if "individual_deadline" in request:
-        return int(request["individual_deadline"])
-    message = request["message"]
-    group_id = message.get("decision_group_id")
-    if isinstance(group_id, str) and group_id in groups:
-        return _stateful_group_start(request, groups) + message["decision_group_deadline_ms"]
-    return _stateful_group_start(request, groups) + grace_ms + message["timeout_ms"] + request["bank_before"]
-
-
-def _stateful_action_kind(request: Mapping[str, Any], action_id: str) -> str | None:
-    for candidate in request["message"].get("legal_actions", []):
-        if candidate.get("action_id") == action_id:
-            action = candidate.get("action", {})
-            return action.get("type") if isinstance(action, Mapping) else None
-    return None
-
-
-def _stateful_project_hand(hand: Any, visible: bool) -> Any:
-    if not isinstance(hand, Mapping):
-        return hand
-    if visible:
-        return json.loads(json.dumps(hand))
-    tiles = hand.get("tiles")
-    if isinstance(tiles, list):
-        return {"count": len(tiles)}
-    return json.loads(json.dumps(hand))
-
-
-def _stateful_project_private_event(event: Any, *, full: bool, visible_seat: int | None) -> Any:
-    """Project the private fields in an event-shaped snapshot member.
-
-    Snapshot ``turn.last_event``, ``pending_kan`` and meld entries use the
-    same event vocabulary as the top-level event envelope.  Keeping this in
-    one helper prevents a projection from hiding a top-level tsumo while
-    accidentally leaking the same tile through one of those recursive
-    members.
-    """
-
-    if not isinstance(event, Mapping):
-        return event
-    projected = json.loads(json.dumps(event))
-    actor = projected.get("actor")
-    event_type = projected.get("type")
-    if not full and actor != visible_seat:
-        if event_type == "tsumo":
-            projected["pai"] = None
-        if event_type in {"ankan_declared", "ankan"}:
-            consumed = projected.get("consumed")
-            if isinstance(consumed, list):
-                projected["consumed"] = [None] * len(consumed)
-    return projected
-
-
-def _stateful_project_melds(melds: Any, *, full: bool, visible_seat: int | None) -> Any:
-    if not isinstance(melds, list):
-        return melds
-    projected = []
-    for seat_melds in melds:
-        if not isinstance(seat_melds, list):
-            projected.append(seat_melds)
-            continue
-        projected.append([
-            _stateful_project_private_event(meld, full=full, visible_seat=visible_seat)
-            for meld in seat_melds
-        ])
-    return projected
-
-
-def _stateful_projection_target(mode: str, view: Any, seat: Any) -> Tuple[bool, int | None]:
-    full = mode == "replay" and view == "full"
-    if mode == "play":
-        return full, seat
-    if mode == "replay" and isinstance(view, Mapping):
-        return full, view.get("seat")
-    return full, None
-
-
-def _stateful_project_message(message: Mapping[str, Any], mode: str, view: Any, seat: Any) -> Dict[str, Any]:
-    """Apply the protocol visibility projection to an authoritative message."""
-
-    projected: Dict[str, Any] = json.loads(json.dumps(message))
-    full, visible_seat = _stateful_projection_target(mode, view, seat)
-    kind = projected.get("kind")
-    if kind == "event" and isinstance(projected.get("event"), Mapping):
-        event = projected["event"]
-        event_type = event.get("type")
-        actor = event.get("actor")
-        if event_type == "tsumo" and not full and actor != visible_seat:
-            event["pai"] = None
-        if event_type in {"ankan_declared", "ankan"} and not full and actor != visible_seat:
-            consumed = event.get("consumed")
-            if isinstance(consumed, list):
-                event["consumed"] = [None] * len(consumed)
-        if event_type == "start_kyoku" and isinstance(event.get("hands"), list):
-            event["hands"] = [
-                _stateful_project_hand(hand, full or index == visible_seat)
-                for index, hand in enumerate(event["hands"])
-            ]
-    elif kind == "snapshot" and isinstance(projected.get("state"), Mapping):
-        state = projected["state"]
-        if mode == "play" and state.get("seat") != seat and state.get("kyoku"):
-            raise ArtifactError("invalid_message", "cannot derive another seat's self_state from a private snapshot")
-        state["mode"], state["view"], state["seat"] = mode, view, seat
-        kyoku = state.get("kyoku")
-        if isinstance(kyoku, Mapping):
-            if isinstance(kyoku.get("hands"), list):
-                kyoku["hands"] = [
-                    _stateful_project_hand(hand, full or index == visible_seat)
-                    for index, hand in enumerate(kyoku["hands"])
-                ]
-            turn = kyoku.get("turn")
-            if isinstance(turn, Mapping) and isinstance(turn.get("last_event"), Mapping):
-                turn["last_event"] = _stateful_project_private_event(
-                    turn["last_event"], full=full, visible_seat=visible_seat
-                )
-            if "pending_kan" in kyoku:
-                kyoku["pending_kan"] = _stateful_project_private_event(
-                    kyoku["pending_kan"], full=full, visible_seat=visible_seat
-                )
-            if "melds" in kyoku:
-                kyoku["melds"] = _stateful_project_melds(
-                    kyoku["melds"], full=full, visible_seat=visible_seat
-                )
-            # ``self_state`` is a live play(i) secret only.  ``replay_full``
-            # may reveal recorded tiles, but it must never inherit a live
-            # client's transient furiten/time-bank state.
-            if mode != "play" or visible_seat is None:
-                kyoku.pop("self_state", None)
-        if mode == "play":
-            pending = state.get("pending_requests")
-            if isinstance(pending, list) and visible_seat is not None:
-                state["pending_requests"] = [item for item in pending if item.get("seat") == visible_seat]
-        else:
-            state.pop("pending_requests", None)
-            if isinstance(kyoku, Mapping):
-                kyoku.pop("self_state", None)
-    return projected
-
-
-def semantic_visibility_trace(trace: Mapping[str, Any]) -> None:
-    visibility = trace.get("visibility")
-    _require(isinstance(visibility, list) and visibility, "invalid_message", "visibility projection set is empty")
-    trace_session_ids = {c["session_id"] for c in trace.get("clients", [])}
-    trace_game_id = trace.get("game_id")
-    ledger_by_seq = {
-        (entry.get("message", {}).get("session_id"), entry.get("seq")): entry.get("message")
-        for entry in trace.get("ledger", [])
-        if isinstance(entry, Mapping)
-    }
-    saw_public = False
-    saw_seat = False
-    for index, record in enumerate(visibility):
-        _require(isinstance(record, Mapping), "invalid_message", f"visibility[{index}] is invalid")
-        source = record.get("source")
-        _require(isinstance(source, Mapping) and source.get("kind") in STATEFUL_HOST_KINDS, "invalid_message", f"visibility[{index}] source is invalid")
-        source_seq = source.get("seq")
-        _require(
-            source.get("session_id") in trace_session_ids and source.get("game_id") == trace_game_id,
-            "invalid_message",
-            f"visibility[{index}] source identity differs from trace",
-        )
-        _require(
-            isinstance(source_seq, int)
-            and not isinstance(source_seq, bool)
-            and source_seq > 0
-            and (source.get("session_id"), source_seq) in ledger_by_seq,
-            "sequence_conflict",
-            f"visibility[{index}] source is not the ledger payload for seq {source_seq}",
-        )
-        projections = record.get("projections")
-        _require(isinstance(projections, list) and projections, "invalid_message", f"visibility[{index}] has no projections")
-        for projection_index, projection in enumerate(projections):
-            _require(isinstance(projection, Mapping), "invalid_message", f"visibility[{index}].projections[{projection_index}] is invalid")
-            mode, view, seat = projection.get("mode"), projection.get("view"), projection.get("seat")
-            _stateful_view_descriptor(mode, view, seat, f"visibility[{index}].projections[{projection_index}]")
-            if mode in {"spectate", "replay"}:
-                _require(
-                    source.get("kind") not in {"request", "ack"},
-                    "invalid_message",
-                    f"visibility[{index}].projections[{projection_index}] sends a request/ack to a non-play view",
-                )
-            expected = _stateful_project_message(source, mode, view, seat)
-            actual = projection.get("message")
-            descriptor = next((c for c in trace.get("clients", []) if c["session_id"] == source.get("session_id") and c["mode"] == mode and c["view"] == view and c["seat"] == seat), None)
-            if descriptor:
-                _require(_stateful_wire_equal(expected, ledger_by_seq[(source["session_id"], source_seq)]), "invalid_message", "ledger contains an incorrect private projection")
-            _require(isinstance(actual, Mapping) and _stateful_wire_equal(actual, expected), "invalid_message", f"visibility[{index}].projections[{projection_index}] leaks or changes private state")
-            if mode == "play":
-                saw_seat = True
-            if view == "public":
-                saw_public = True
-            if mode == "replay":
-                _require(actual.get("kind") not in {"request", "ack", "action"}, "invalid_message", "replay visibility contains a live control message")
-    _require(saw_public and saw_seat, "invalid_message", "visibility trace must cover public and seat projections")
-
-
-def semantic_session_trace(
-    trace: Mapping[str, Any],
-    *,
-    schemas: SchemaSet | None = None,
-    root_schema: Any | None = None,
-    expected_profile_hash: str | None = None,
-) -> None:
-    """Execute the deterministic state machine represented by a session trace.
-
-    This is deliberately independent from the single-message checks.  A
-    message can satisfy JSON Schema and still be illegal because its request
-    was already terminal, its sequence conflicts with the ledger, a group is
-    resolved before all members, or a public projection exposes a private
-    tile.  The trace checker closes those temporal gaps.
-    """
-
-    _require(trace.get("trace_type") == "session", "invalid_message", "session trace type is invalid")
-    game_id = trace.get("game_id")
-    _require(isinstance(game_id, str) and ID_RE.fullmatch(game_id), "invalid_message", "invalid game_id")
-    steps, ledger = trace.get("messages"), trace.get("ledger")
-    _require(isinstance(steps, list) and steps, "invalid_message", "session trace has no messages")
-    _require(isinstance(ledger, list), "invalid_message", "session trace has no ledger")
-    grace_ms = _trace_grace_ms(trace) or 0
-    client_descriptors = {item["client_id"]: item for item in trace.get("clients", [])}
-    _require(len(client_descriptors) == len(trace.get("clients", [])) > 0, "invalid_message", "duplicate/missing clients")
-    session_ids = [item.get("session_id") for item in client_descriptors.values()]
-    _require(all(isinstance(sid, str) and ID_RE.fullmatch(sid) for sid in session_ids) and len(set(session_ids)) == len(session_ids), "invalid_message", "clients must have distinct session IDs")
-    contexts = {}
-    for client, descriptor in client_descriptors.items():
-        _stateful_view_descriptor(descriptor.get("mode"), descriptor.get("view"), descriptor.get("seat"), client)
-        sid = descriptor["session_id"]
-        start = descriptor.get("ledger_start_seq", trace.get("ledger_start_seq", 1))
-        entries = [e for e in ledger if e.get("message", {}).get("session_id") == sid]
-        by_seq, wires, by_entry = {}, {}, {}
-        for offset, entry in enumerate(entries):
-            seq, message = entry.get("seq"), entry.get("message", {})
-            _require(seq == start + offset, "sequence_gap", "session ledger is not contiguous")
-            _require(message.get("seq") == seq and message.get("kind") in STATEFUL_HOST_KINDS, "invalid_message", "invalid ledger entry")
-            by_seq[seq], by_entry[seq] = message, entry
-            wires[seq] = _stateful_wire_message(entry.get("wire"), message, "ledger")
-        initial = trace.get("initial_states", {}).get(sid, {})
-        phase = initial.get("game_phase", "NOT_STARTED")
-        contexts[client] = dict(session_id=sid, ledger_start=start, ledger_by_seq=by_seq,
-            ledger_wire=wires, ledger_entry_by_seq=by_entry, seen_delivery={}, delivered_ledger=set(),
-            snapshot_replaced_through=-1, applied_seq=start - 1, lifecycle=phase,
-            start_game_seen=phase != "NOT_STARTED", start_kyoku_seen=phase == "IN_KYOKU",
-            connection=None, resync=False, projection=Projection.from_snapshot(initial) if initial else Projection())
-    _require(sum(len(c["ledger_by_seq"]) for c in contexts.values()) == len(ledger), "invalid_message", "ledger has an undeclared session")
-
-    joins: Dict[str, Mapping[str, Any]] = {}
-    welcomes: Dict[str, Mapping[str, Any]] = {}
-    assigned_play_seats: Dict[int, str] = {}
-    hello_seen: set[str] = set()
-    requests: Dict[str, Dict[str, Any]] = {}
-    groups: Dict[str, Dict[str, Any]] = {}
-    resolved: Dict[str, Dict[str, Any]] = {}
-    cancellations: Dict[str, str] = {}
-    last_at = -1
-    last_arrival_ticket = -1
-    last_linearization_ticket = -1
-    last_operation_key: Tuple[int, str] | None = None
-    closing_group: str | None = None
-    open_group_issuance: str | None = None
-    replay_last_seq: Dict[str, int] = {}
-    replay_last_original: Dict[str, int] = {}
-
-    for index, step in enumerate(steps):
-        _require(isinstance(step, Mapping), "invalid_message", f"messages[{index}] is invalid")
-        at_ms = step.get("at_ms")
-        _require(isinstance(at_ms, int) and not isinstance(at_ms, bool) and at_ms >= 0, "invalid_message", f"messages[{index}] at_ms is invalid")
-        _require(at_ms >= last_at, "invalid_message", "session trace clock is not monotonic")
-        last_at = at_ms
-        direction = step.get("direction")
-        _require(direction in {"in", "out"}, "invalid_message", f"messages[{index}] direction is invalid")
-        client_id = step.get("client_id")
-        _require(isinstance(client_id, str) and ID_RE.fullmatch(client_id), "invalid_message", f"messages[{index}] client_id is invalid")
-        if client_descriptors:
-            _require(client_id in client_descriptors, "invalid_message", "message client_id is not declared in clients")
-        context = contexts[client_id]
-        session_id = context["session_id"]
-        ledger_start = context["ledger_start"]
-        ledger_by_seq = context["ledger_by_seq"]
-        ledger_wire = context["ledger_wire"]
-        ledger_entry_by_seq = context["ledger_entry_by_seq"]
-        seen_delivery = context["seen_delivery"]
-        delivered_ledger = context["delivered_ledger"]
-        snapshot_replaced_through = context["snapshot_replaced_through"]
-        applied_seq = context["applied_seq"]
-        lifecycle = context["lifecycle"]
-        start_game_seen = context["start_game_seen"]
-        start_kyoku_seen = context["start_kyoku_seen"]
-        connection = step.get("connection_id", "initial")
-        if context["connection"] != connection:
-            _require(step.get("message", {}).get("kind") == "hello", "invalid_message", "connection must start with hello")
-            context["connection"] = connection
-            hello_seen.discard(client_id)
-            joins.pop(client_id, None)
-            welcomes.pop(client_id, None)
-        try:
-            message = step.get("message")
-            _require(isinstance(message, Mapping), "invalid_message", f"messages[{index}] message is invalid")
-            kind = message.get("kind")
-            _stateful_wire_message(step.get("wire"), message, f"messages[{index}]")
-            arrival_ticket = step.get("arrival_ticket")
-            if arrival_ticket is not None:
-                _require(
-                    isinstance(arrival_ticket, int) and not isinstance(arrival_ticket, bool) and arrival_ticket > last_arrival_ticket,
-                    "invalid_message",
-                    f"messages[{index}] arrival_ticket is not strictly increasing",
-                )
-                last_arrival_ticket = arrival_ticket
-            linearization_ticket = step.get("linearization_ticket")
-            if linearization_ticket is not None:
-                _require(
-                    isinstance(linearization_ticket, int) and not isinstance(linearization_ticket, bool) and linearization_ticket >= last_linearization_ticket,
-                    "invalid_message",
-                    f"messages[{index}] linearization_ticket is invalid",
-                )
-                last_linearization_ticket = linearization_ticket
-
-            if schemas is not None and root_schema is not None:
-                schemas.validate(message, root_schema, f"session.messages[{index}]")
-            semantic_message(message, "session", expected_profile_hash)
-
-            if direction == "in":
-                _require(kind in {"join", "action", "error"}, "invalid_message", "input direction contains a host message")
-            else:
-                _require(kind in {"hello", "welcome"} | STATEFUL_HOST_KINDS, "invalid_message", "output direction contains a player message")
-
-            if kind == "hello":
-                _require(direction == "out", "invalid_message", "hello must be sent by the host")
-                _require(client_id not in hello_seen, "invalid_message", "client sent duplicate hello")
-                _require(client_id not in joins, "invalid_message", "hello follows join")
-                context["hello_capabilities"] = message["capabilities"]
-                hello_seen.add(client_id)
-                continue
-
-            if kind == "join":
-                _require(direction == "in", "invalid_message", "join must be sent by the client")
-                _require(client_id in hello_seen, "invalid_message", "join precedes hello")
-                _require(client_id not in joins, "invalid_message", "client sent duplicate join")
-                _stateful_join_seat(message)
-                joins[client_id] = message
-                continue
-
-            if kind == "welcome":
-                _require(direction == "out", "invalid_message", "welcome must be sent by the host")
-                _require(client_id in joins, "invalid_message", "welcome precedes join")
-                _require(client_id not in welcomes, "invalid_message", "client received duplicate welcome")
-                _stateful_join_welcome_pair(
-                    joins[client_id],
-                    message,
-                    session_id=session_id,
-                    game_id=game_id,
-                    expected_profile_hash=expected_profile_hash,
-                )
-                descriptor = client_descriptors.get(client_id)
-                if descriptor is not None:
-                    _require(
-                        descriptor.get("mode") == message.get("mode")
-                        and descriptor.get("view") == message.get("view")
-                        and descriptor.get("seat") == message.get("seat"),
-                        "invalid_message",
-                        "welcome descriptor differs from clients",
-                    )
-                if message.get("mode") == "play":
-                    welcome_seat = message.get("seat")
-                    _require(
-                        isinstance(welcome_seat, int) and not isinstance(welcome_seat, bool),
-                        "invalid_message",
-                        "play welcome seat is invalid",
-                    )
-                    if welcome_seat in assigned_play_seats and assigned_play_seats[welcome_seat] != client_id:
-                        raise ArtifactError("resource_limit", "two clients were assigned the same seat")
-                    join = joins[client_id]
-                    if "seat" not in join and not message.get("resumed"):
-                        free_seats = [seat for seat in range(4) if seat not in assigned_play_seats]
-                        _require(free_seats, "resource_limit", "no play seat remains")
-                        _require(
-                            welcome_seat == min(free_seats),
-                            "resource_limit",
-                            "omitted play seat was not assigned the minimum free seat",
-                        )
-                    assigned_play_seats[welcome_seat] = client_id
-                if message.get("resumed"):
-                    _require(start_game_seen or context.get("resync"), "invalid_message", "resume requires retained client state")
-                    _require(joins[client_id]["resume"]["last_seq"] == applied_seq, "invalid_message", "resume last_seq differs from retained prefix")
-                    context["resync"] = True
-                welcomes[client_id] = message
-                continue
-
-            if client_id not in welcomes:
-                if kind == "error":
-                    _require(
-                        "yamai" not in message and "session_id" not in message and "game_id" not in message and "seq" not in message,
-                        "invalid_message",
-                        "pre-negotiation error must not carry application envelope",
-                    )
-                    continue
-                raise ArtifactError("invalid_message", "application message precedes welcome")
-            if kind == "hello":
-                _require(direction == "out", "invalid_message", "hello must be sent by the host")
-                continue
-
-            if kind in STATEFUL_HOST_KINDS and direction == "out":
-                _require(direction == "out", "invalid_message", f"{kind} must be sent by the host")
-                _require(message.get("session_id") == session_id and message.get("game_id") == game_id, "invalid_message", "envelope identity differs from trace")
-                seq = message.get("seq")
-                _require(isinstance(seq, int) and not isinstance(seq, bool) and seq >= ledger_start, "invalid_message", "application seq is invalid")
-                ledger_message = ledger_by_seq.get(seq)
-                _require(ledger_message is not None, "sequence_gap", f"application seq {seq} is absent from the ledger")
-                if not _stateful_wire_equal(message, ledger_message):
-                    raise ArtifactError("sequence_conflict", f"application seq {seq} differs from the ledger")
-                wire = _stateful_wire_message(step.get("wire"), message, f"messages[{index}]")
-                _require(wire == ledger_wire[seq], "sequence_conflict", f"application seq {seq} wire differs from the ledger")
-                ledger_entry = ledger_entry_by_seq[seq]
-                for metadata_key in ("transaction_id", "operation_id"):
-                    step_value = step.get(metadata_key)
-                    ledger_value = ledger_entry.get(metadata_key)
-                    _require(isinstance(step_value, str) and ID_RE.fullmatch(step_value), "invalid_message", f"application seq {seq} {metadata_key} is missing")
-                    _require(step_value == ledger_value, "sequence_conflict", f"application seq {seq} {metadata_key} differs from the ledger")
-                if seq in seen_delivery:
-                    if not _stateful_wire_equal(message, seen_delivery[seq]):
-                        raise ArtifactError("sequence_conflict", f"application seq {seq} was replayed with different content")
-                    mode = welcomes[client_id].get("mode")
-                    if mode in {"spectate", "replay"}:
-                        _require(kind not in {"request", "ack"}, "invalid_message", f"{kind} was delivered to a non-play session")
-                    if mode == "replay":
-                        _require(kind == "event", "invalid_message", "replay sessions deliver events only")
-                        _require(
-                            message.get("original_seq") == replay_last_original.get(client_id)
-                            and seq == replay_last_seq.get(client_id),
-                            "sequence_conflict",
-                            "replayed event changes the replay sequence mapping",
-                        )
-                    else:
-                        _require("original_seq" not in message, "invalid_message", "original_seq is only valid for replay events")
-                    continue
-                if kind == "snapshot":
-                    initial_spectate = welcomes[client_id]["mode"] == "spectate" and applied_seq == 0 and seq == 1
-                    _require(initial_spectate or context["resync"], "invalid_message", "snapshot outside initial spectate or resync")
-                    caps = joins[client_id].get("capabilities", {})
-                    advertised = context["hello_capabilities"]
-                    _require("snapshot" in advertised.get("required", []) + advertised.get("optional", []), "unsupported_capability", "host did not advertise snapshot")
-                    _require("snapshot" in caps.get("required", []) + caps.get("optional", []), "unsupported_capability", "snapshot was not negotiated")
-                    _require(seq > applied_seq, "sequence_gap", "snapshot cannot rewind prefix")
-                    delivered_ledger.update(n for n in ledger_by_seq if n < seq)
-                else:
-                    _require(seq == applied_seq + 1, "sequence_gap", "host delivery is not the next applied_seq")
-                seen_delivery[seq] = message
-                delivered_ledger.add(seq)
-                applied_seq = seq
-                _require(seq > snapshot_replaced_through, "sequence_gap", "message from a replaced snapshot range was delivered")
-
-                mode = welcomes[client_id].get("mode")
-                if mode == "spectate" and seq == 1:
-                    _require(kind == "snapshot", "invalid_message", "spectate must start with snapshot")
-                projected = _stateful_project_message(message, mode, welcomes[client_id]["view"], welcomes[client_id]["seat"])
-                _require(_stateful_wire_equal(message, projected), "invalid_message", "session message leaks another seat's private state")
-                if mode in {"spectate", "replay"}:
-                    _require(kind not in {"request", "ack"}, "invalid_message", f"{kind} was delivered to a non-play session")
-                if mode == "replay":
-                    _require(kind == "event", "invalid_message", "replay sessions deliver events only")
-                    if kind == "event":
-                        original_seq = message.get("original_seq")
-                        _require(
-                            isinstance(original_seq, int) and not isinstance(original_seq, bool) and original_seq > 0,
-                            "invalid_message",
-                            "replay event requires original_seq",
-                        )
-                        previous_replay_seq = replay_last_seq.get(client_id, 0)
-                        _require(seq == previous_replay_seq + 1, "sequence_gap", "replay seq is not contiguous from one")
-                        _require(
-                            original_seq > replay_last_original.get(client_id, 0),
-                            "invalid_message",
-                            "replay original_seq is not strictly increasing",
-                        )
-                        replay_last_seq[client_id] = seq
-                        replay_last_original[client_id] = original_seq
-                else:
-                    _require("original_seq" not in message, "invalid_message", "original_seq is only valid for replay events")
-
-                if kind == "event":
-                    event = message.get("event")
-                    event_type = event.get("type") if isinstance(event, Mapping) else None
-                    if event_type == "start_game":
-                        _require(not start_game_seen and not start_kyoku_seen, "invalid_message", "duplicate or late start_game")
-                        _require(not requests, "invalid_message", "start_game was sent with unresolved requests")
-                        start_game_seen = True
-                        lifecycle = "READY"
-                    elif event_type == "start_kyoku":
-                        _require(lifecycle == "READY", "invalid_message", "start_kyoku requires start_game or continuing end_kyoku")
-                        _require(not requests, "invalid_message", "start_kyoku was sent with unresolved requests")
-                        start_kyoku_seen = True
-                        lifecycle = "IN_KYOKU"
-                    elif event_type == "end_game":
-                        _require(lifecycle == "ENDING", "invalid_message", "end_game requires terminal end_kyoku")
-                        lifecycle, start_kyoku_seen = "ENDED", False
-                    else:
-                        _require(start_kyoku_seen and lifecycle == "IN_KYOKU", "invalid_message", "game event outside kyoku")
-                        if event_type == "end_kyoku":
-                            lifecycle = "ENDING" if event.get("next", {}).get("type") == "end_game" else "READY"
-                            start_kyoku_seen = False
-
-            if kind == "request":
-                _require(client_id in welcomes and welcomes[client_id].get("mode") == "play", "invalid_message", "request delivered to non-play session")
-                _require(start_kyoku_seen, "invalid_message", "request precedes start_kyoku")
-                try:
-                    context["projection"].request(message["seat"])
-                except ValueError as exc:
-                    raise ArtifactError("invalid_message", str(exc)) from exc
-                _check_request(message, grace_ms=grace_ms)
-                request_id = message["request_id"]
-                _require(request_id not in requests and request_id not in resolved, "invalid_message", "request_id was already used")
-                seat = message["seat"]
-                _require(seat == welcomes[client_id].get("seat"), "invalid_message", "request seat differs from welcome seat")
-                _require(not any(item["message"].get("seat") == seat for item in requests.values()), "resource_limit", "a seat has multiple pending requests")
-                _require(len(requests) < 4, "resource_limit", "unresolved request limit exceeded")
-                caused = message["caused_by_seq"]
-                _require(caused < message["seq"] and ledger_by_seq.get(caused, {}).get("kind") == "event", "invalid_message", "request caused_by_seq is not an earlier event")
-                caused_entry = ledger_entry_by_seq[caused]
-                cause_index = caused_entry.get("game_event_index", caused)
-                operation_key = (cause_index, message.get("decision_group_id", message["request_id"]))
-                group_id = message.get("decision_group_id")
-                if group_id is not None:
-                    _require(open_group_issuance in {None, group_id}, "invalid_message", "decision-group requests are interleaved with another operation")
-                    open_group_issuance = group_id
-                else:
-                    _require(open_group_issuance is None, "invalid_message", "single request is interleaved with decision-group issuance")
-                if group_id is None or group_id not in groups:
-                    _require(last_operation_key is None or operation_key >= last_operation_key, "invalid_message", "operation key is not in linearization order")
-                    last_operation_key = operation_key
-                request_state: Dict[str, Any] = {
-                    "message": message,
-                    "client_id": client_id,
-                    "start_ms": at_ms,
-                    "bank_before": message["time_bank_ms"],
-                    "individual_deadline": at_ms + grace_ms + message["timeout_ms"] + message["time_bank_ms"],
-                    "attempted": [],
-                    "rejected": [],
-                }
-                requests[request_id] = request_state
-                if group_id is not None:
-                    members = _stateful_group_members(message, f"request {request_id}")
-                    _require(any(member.get("request_id") == request_id for member in members), "invalid_message", "request is not a member of its decision group")
-                    group = groups.setdefault(
-                        group_id,
-                        {
-                            "members": members,
-                            "deadline": message["decision_group_deadline_ms"],
-                            "close": message["decision_group_close"],
-                            "cause_index": cause_index,
-                            "start_ms": at_ms,
-                            "requests": [],
-                            "request_seats": [],
-                            "ack_seats": [],
-                            "closed": False,
-                            "request_transaction_id": None,
-                            "resolution_transaction_id": None,
-                            "operation_id": None,
-                        },
-                    )
-                    _require(group["cause_index"] == cause_index, "invalid_message", "group refers to different game events")
-                    _require(group["members"] == message["decision_group_members"], "invalid_message", "group members differ across requests")
-                    _require(group["deadline"] == message["decision_group_deadline_ms"] and group["close"] == message["decision_group_close"], "invalid_message", "group policy differs across requests")
-                    if step.get("group_start") is not None:
-                        _require(step["group_start"] >= at_ms, "invalid_message", "group_start precedes request issuance")
-                        if group["requests"]:
-                            _require(step["group_start"] == group["start_ms"], "invalid_message", "group_start differs across members")
-                        else:
-                            group["start_ms"] = step["group_start"]
-                    else:
-                        group["start_ms"] = max(group["start_ms"], at_ms)
-                    member_seat = message["seat"]
-                    _require(not group["request_seats"] or member_seat > group["request_seats"][-1], "invalid_message", "group requests are not in ascending seat order")
-                    for prior_request_id in group["requests"]:
-                        prior_request = requests.get(prior_request_id)
-                        if prior_request is not None:
-                            prior_request["start_ms"] = group["start_ms"]
-                            prior_request["individual_deadline"] = group["start_ms"] + grace_ms + prior_request["message"]["timeout_ms"] + prior_request["message"]["time_bank_ms"]
-                    request_state["start_ms"] = group["start_ms"]
-                    request_state["individual_deadline"] = group["start_ms"] + grace_ms + message["timeout_ms"] + message["time_bank_ms"]
-                    if step.get("individual_deadline") is not None:
-                        _require(step["individual_deadline"] == request_state["individual_deadline"], "invalid_message", "individual deadline differs from request clock")
-                    if step.get("prior_time_bank_ms") is not None:
-                        _require(step["prior_time_bank_ms"] == request_state["bank_before"], "invalid_message", "prior time bank differs from request")
-                    for metadata_key in ("transaction_id", "operation_id"):
-                        metadata_value = step.get(metadata_key)
-                        if metadata_value is not None:
-                            group_key = "request_transaction_id" if metadata_key == "transaction_id" else metadata_key
-                            if group[group_key] is None:
-                                group[group_key] = metadata_value
-                            _require(group[group_key] == metadata_value, "invalid_message", f"group {metadata_key} differs across requests")
-                    group["requests"].append(request_id)
-                    group["request_seats"].append(member_seat)
-                    request_state["group_id"] = group_id
-                    if len(group["requests"]) == len(group["members"]):
-                        open_group_issuance = None
-                else:
-                    if step.get("individual_deadline") is not None:
-                        _require(step["individual_deadline"] == request_state["individual_deadline"], "invalid_message", "individual deadline differs from request clock")
-                    if step.get("prior_time_bank_ms") is not None:
-                        _require(step["prior_time_bank_ms"] == request_state["bank_before"], "invalid_message", "prior time bank differs from request")
-                if closing_group is not None:
-                    raise ArtifactError("invalid_message", "new request interleaved with group resolution")
-                continue
-
-            if kind == "action":
-                _require(direction == "in", "invalid_message", "action must be sent by the client")
-                _require(not cancellations, "invalid_message", "action interleaves chombo cancellation")
-                _require(message.get("session_id") == session_id and message.get("game_id") == game_id, "invalid_message", "action envelope identity differs")
-                _require(client_id in welcomes and welcomes[client_id].get("mode") == "play", "invalid_message", "action sent by non-play session")
-                _require(start_kyoku_seen, "invalid_message", "action precedes start_kyoku")
-                _require(arrival_ticket is not None, "invalid_message", "action has no arrival ticket")
-                request_id = message["request_id"]
-                request = requests.get(request_id)
-                if request is None:
-                    terminal = resolved.get(request_id)
-                    _require(terminal is not None, "invalid_action", "action references an unknown request")
-                    _require(terminal["client_id"] == client_id, "invalid_action", "action client differs from request client")
-                    terminal["late_action"] = message["action_id"]
-                    continue
-                _require(request["client_id"] == client_id, "invalid_action", "action client differs from request client")
-                group_id = request.get("group_id")
-                if group_id is not None:
-                    group = groups[group_id]
-                    _require(
-                        len(group["requests"]) == len(group["members"]),
-                        "invalid_message",
-                        "group action arrived before all member requests were issued",
-                    )
-                    _require(at_ms >= group["start_ms"], "invalid_message", "group action arrived before group_start")
-                action_id = message["action_id"]
-                if action_id in request["attempted"]:
-                    continue
-                request["attempted"].append(action_id)
-                deadline = _stateful_deadline(request, groups, grace_ms)
-                if at_ms >= deadline:
-                    request["late"] = action_id
-                elif any(previous != action_id and previous not in request["rejected"] for previous in request["attempted"][:-1]):
-                    raise ArtifactError("request_conflict", "different action was sent before the request resolved")
-                elif request.get("first_arrival_ticket") is None:
-                    request["first_arrival_ticket"] = arrival_ticket if arrival_ticket is not None else index
-                if _stateful_action_kind(request, action_id) is None:
-                    request["rejected"].append(action_id)
-                elif at_ms < deadline and "elapsed_fixed" not in request:
-                    request["elapsed_fixed"] = at_ms - request["start_ms"]
-                continue
-
-            if kind == "ack":
-                _require(client_id in welcomes and welcomes[client_id].get("mode") == "play", "invalid_message", "ack delivered to non-play session")
-                _require(start_kyoku_seen, "invalid_message", "ack precedes start_kyoku")
-                request_id = message["request_id"]
-                request = requests.get(request_id)
-                terminal = resolved.get(request_id)
-                if request is None:
-                    _require(terminal is not None, "invalid_message", "ack references an unknown request")
-                    _require(message["status"] == "stale" and message["action_id"] == terminal.get("late_action"), "request_conflict", "stale ack must answer a late action")
-                    _require(message["elapsed_ms"] == terminal["elapsed_fixed"] and message["time_bank_ms"] == _stateful_expected_bank(terminal, terminal["elapsed_fixed"], grace_ms), "invalid_message", "stale ack changes terminal clock")
-                    continue
-                _require(request["client_id"] == client_id, "invalid_message", "ack client differs from request client")
-                status = message["status"]
-                elapsed = message["elapsed_ms"]
-                start = _stateful_group_start(request, groups)
-                fixed = request.get("elapsed_fixed", min(at_ms, _stateful_deadline(request, groups, grace_ms)) - start)
-                _require(at_ms >= start and elapsed == fixed, "invalid_message", "ack elapsed_ms differs from fixed response/expiry clock")
-                expected_bank = _stateful_expected_bank(request, elapsed, grace_ms)
-                _require(message["time_bank_ms"] == expected_bank, "invalid_message", "ack time_bank_ms does not follow the request clock")
-                group_id = request.get("group_id")
-                group = groups.get(group_id) if group_id is not None else None
-                if group is not None and status != "rejected":
-                    _require(at_ms <= group["start_ms"] + group["deadline"], "invalid_message", "ack arrives after the decision-group deadline")
-                    seat = request["message"]["seat"]
-                    _require(not group["ack_seats"] or seat > group["ack_seats"][-1], "invalid_message", "group ACKs are not in ascending seat order")
-                    for metadata_key in ("transaction_id", "operation_id"):
-                        metadata_value = step.get(metadata_key)
-                        group_key = "resolution_transaction_id" if metadata_key == "transaction_id" else metadata_key
-                        if group["operation_id"] is not None and metadata_key == "operation_id":
-                            _require(metadata_value == group[group_key], "invalid_message", f"group ACK {metadata_key} differs from request")
-                        elif metadata_value is not None and metadata_key == "transaction_id":
-                            if group[group_key] is None:
-                                group[group_key] = metadata_value
-                            _require(metadata_value == group[group_key], "invalid_message", "group ACK transaction_id differs across ACKs")
-                        elif metadata_value is not None:
-                            raise ArtifactError("invalid_message", f"group ACK {metadata_key} was not fixed at request issuance")
-                    if linearization_ticket is not None:
-                        if group.get("linearization_ticket") is None:
-                            group["linearization_ticket"] = linearization_ticket
-                        _require(group["linearization_ticket"] == linearization_ticket, "invalid_message", "group linearization ticket differs across ACKs")
-                if status == "rejected":
-                    _require(message["action_id"] in request["rejected"], "invalid_action", "rejected ack does not identify an invalid action")
-                    request["diagnosed"] = True
-                    continue
-                _require(status in STATEFUL_TERMINAL_STATUSES, "invalid_message", "ack status is not terminal")
-                action_id = message["action_id"]
-                if status == "defaulted":
-                    _require(arrival_ticket is not None, "invalid_message", "default expiry has no arrival ticket")
-                    _require(action_id == request["message"]["default_action_id"], "invalid_message", "defaulted ack does not choose default action")
-                    _require(elapsed >= grace_ms + request["message"]["timeout_ms"] + request["bank_before"], "invalid_message", "defaulted ack precedes the request deadline")
-                elif status == "cancelled":
-                    _require(action_id is None, "invalid_message", "cancelled must not execute an action")
-                    cancellations[client_id] = step["transaction_id"]
-                    _require(any(item.get("diagnosed") for item in list(requests.values()) + list(resolved.values())), "invalid_message", "cancellation requires an invalid action")
-                    _require(welcomes[client_id]["rules"]["invalid_action_policy"] == "chombo", "invalid_message", "chombo cancellation is disabled")
-                else:
-                    _require(action_id in request["attempted"], "invalid_message", "terminal ack has no matching action")
-                    _require(action_id not in request["rejected"], "invalid_action", "invalid action was terminalized")
-                    if status == "accepted":
-                        _require(_stateful_action_kind(request, action_id) != "none", "invalid_message", "none must be passed")
-                    if status == "passed":
-                        _require(_stateful_action_kind(request, action_id) == "none", "invalid_message", "passed ack does not select none")
-                    if status == "superseded":
-                        _require(request.get("group_id") is not None, "invalid_message", "superseded ack is not in a decision group")
-                if group_id is not None:
-                    group = groups[group_id]
-                    if closing_group is None:
-                        missing = [member_id for member_id in group["requests"] if member_id in requests and member_id != request_id and not requests[member_id].get("terminal")]
-                        if missing:
-                            for member_id in missing:
-                                member = requests[member_id]
-                                member_deadline = _stateful_deadline(member, groups, grace_ms)
-                                _require(status == "cancelled" or "elapsed_fixed" in member or at_ms >= member_deadline, "invalid_message", "decision group terminal ack precedes all member responses")
-                            closing_group = group_id
-                        else:
-                            closing_group = group_id
-                    else:
-                        _require(closing_group == group_id, "invalid_message", "different group interleaved with group resolution")
-                request["elapsed_fixed"] = elapsed
-                request["terminal"] = status
-                request["terminal_action"] = action_id
-                request["terminal_at_ms"] = at_ms
-                resolved[request_id] = request
-                del requests[request_id]
-                if group_id is not None:
-                    group = groups[group_id]
-                    group["ack_seats"].append(request["message"]["seat"])
-                    if all(member_id in resolved for member_id in group["requests"]):
-                        group["closed"] = True
-                        closing_group = None
-                        statuses = [resolved[member_id]["terminal"] for member_id in group["requests"]]
-                        accepted_count = statuses.count("accepted")
-                        accepted = [resolved[r] for r in group["requests"] if resolved[r]["terminal"] == "accepted"]
-                        _require(accepted_count <= 1 or all(_stateful_action_kind(r, r["terminal_action"]) == "hora" for r in accepted), "invalid_message", "multiple accepted non-ron actions")
-                continue
-
-            if kind == "snapshot":
-                _require(message["seq"] == message["replaces_through_seq"] + 1, "invalid_message", "snapshot does not replace the immediately preceding sequence")
-                _require(message["replaces_through_seq"] < message["seq"], "invalid_message", "snapshot replacement range is invalid")
-                snapshot_replaced_through = max(snapshot_replaced_through, message["replaces_through_seq"])
-                state = message.get("state", {})
-                welcome = welcomes.get(client_id)
-                _require(isinstance(state, Mapping) and isinstance(welcome, Mapping), "invalid_message", "snapshot has no negotiated client state")
-                _require(
-                    state.get("mode") == welcome.get("mode")
-                    and state.get("view") == welcome.get("view")
-                    and state.get("seat") == welcome.get("seat"),
-                    "invalid_message",
-                    "snapshot mode/view/seat differs from the negotiated welcome",
-                )
-                _stateful_view_descriptor(
-                    state.get("mode"), state.get("view"), state.get("seat"), "snapshot state"
-                )
-                if state.get("mode") == "play":
-                    pending = state.get("pending_requests", [])
-                    pending_ids = {item.get("request_id") for item in pending}
-                    active_ids = {request_id for request_id, request in requests.items() if request["client_id"] == client_id}
-                    _require(pending_ids == active_ids, "invalid_message", "snapshot pending_requests differs from the live request set")
-                    for item in pending:
-                        request = requests[item["request_id"]]
-                        for key in ("seat", "caused_by_seq", "timeout_ms", "time_bank_ms", "legal_actions", "default_action_id"):
-                            _require(item.get(key) == request["message"].get(key), "invalid_message", "snapshot changed a fixed pending request")
-                else:
-                    _require("pending_requests" not in state, "invalid_message", "public snapshot contains pending requests")
-                lifecycle = state["game_phase"]
-                start_game_seen = lifecycle != "NOT_STARTED"
-                start_kyoku_seen = lifecycle == "IN_KYOKU"
-                context["projection"] = Projection.from_snapshot(state)
-                context["resync"] = False
-                continue
-
-            if kind == "event":
-                if client_id in cancellations:
-                    _require(message["event"].get("type") == "end_kyoku" and message["event"].get("result", {}).get("type") == "penalty" and step["transaction_id"] == cancellations[client_id], "invalid_message", "cancelled ACK must be followed by penalty in the same transaction")
-                    del cancellations[client_id]
-                _require(not requests, "invalid_message", "state event was sent while a request was unresolved")
-                try:
-                    context["projection"].apply(message["event"], step.get("transaction_id"))
-                except ValueError as exc:
-                    raise ArtifactError("invalid_message", str(exc)) from exc
-                continue
-
-            if kind == "error":
-                if direction == "in" and message.get("code") == "sequence_gap":
-                    context["resync"] = True
-                if closing_group is not None:
-                    raise ArtifactError("invalid_message", "error interleaved with group resolution")
-                continue
-
-        finally:
-            context["session_id"] = session_id
-            context["ledger_start"] = ledger_start
-            context["ledger_by_seq"] = ledger_by_seq
-            context["ledger_wire"] = ledger_wire
-            context["ledger_entry_by_seq"] = ledger_entry_by_seq
-            context["seen_delivery"] = seen_delivery
-            context["delivered_ledger"] = delivered_ledger
-            context["snapshot_replaced_through"] = snapshot_replaced_through
-            context["applied_seq"] = applied_seq
-            context["lifecycle"] = lifecycle
-            context["start_game_seen"] = start_game_seen
-            context["start_kyoku_seen"] = start_kyoku_seen
-
-    _require(not cancellations, "invalid_message", "chombo transaction has no penalty event")
-    for context in contexts.values():
-        _require(set(context["ledger_by_seq"]) == context["delivered_ledger"], "sequence_gap", "ledger contains an undelivered message")
-    for group_id, group in groups.items():
-        declared = {(member["request_id"], member["seat"]) for member in group["members"]}
-        observed = {(request_id, requests[request_id]["message"]["seat"]) for request_id in group["requests"] if request_id in requests}
-        observed.update((request_id, resolved[request_id]["message"]["seat"]) for request_id in group["requests"] if request_id in resolved)
-        _require(declared == observed, "invalid_message", f"group {group_id} does not contain all member requests")
-        _require(group["closed"] or trace.get("allow_open_requests") is True, "invalid_message", f"group {group_id} was not closed")
-    _require(not requests or trace.get("allow_open_requests") is True, "invalid_message", "session trace ends with unresolved requests")
-    if client_descriptors:
-        _require(set(client_descriptors) == set(joins), "invalid_message", "clients does not match negotiated clients")
-    if "visibility" in trace:
-        semantic_visibility_trace(trace)
 
 
 def semantic_state_trace(trace: Mapping[str, Any]) -> None:
@@ -2372,47 +1488,472 @@ def semantic_state_trace(trace: Mapping[str, Any]) -> None:
         semantic_request_trace(trace)
     events = trace.get("events", [])
     _require(isinstance(events, list) and events, "invalid_message", "state trace is empty")
-    initial = trace.get("initial_state", {})
-    projection = Projection(game=initial.get("game_phase", "READY" if initial.get("game_started") else "NOT_STARTED"),
-                            turn=initial.get("phase", "idle"), actor=initial.get("actor", 0))
+    for event in events:
+        _require(isinstance(event, dict) and isinstance(event.get("type"), str), "invalid_message", "state trace event is invalid")
+    types = [event["type"] for event in events]
+    if "end_kyoku" in types and "end_game" in types:
+        _require(types.index("end_kyoku") < types.index("end_game"), "invalid_message", "end_game precedes end_kyoku")
+    if "start_kyoku" in types and "start_game" in types:
+        _require(types.index("start_game") < types.index("start_kyoku"), "invalid_message", "start_kyoku precedes start_game")
+    state = trace.get("initial_state")
+    if state is not None:
+        _require(isinstance(state, dict), "invalid_message", "initial state is invalid")
+        game_started = bool(state.get("game_started", False))
+        phase = state.get("phase", "idle")
+        pending_kan = bool(state.get("pending_kan", False))
+        wall = state.get("wall_remaining", 70)
+        rinshan = bool(state.get("rinshan", False))
+        first_turn = list(state.get("first_turn_eligible", [True, True, True, True]))
+        kan_counts = list(state.get("kan_counts", [0, 0, 0, 0]))
+        for event_index, event in enumerate(events):
+            event_type = event["type"]
+            if not game_started and event_type in {
+                "start_kyoku", "tsumo", "dahai", "chi", "pon", "daiminkan",
+                "ankan_declared", "ankan", "kakan_declared", "kakan", "dora",
+                "reach", "reach_accepted", "pao", "end_kyoku", "end_game",
+            }:
+                raise ArtifactError("invalid_message", "game event precedes start_game")
+            if event_type == "start_game":
+                _require(not game_started, "invalid_message", "duplicate start_game")
+                game_started = True
+            elif event_type == "start_kyoku":
+                _require(game_started, "invalid_message", "start_kyoku before start_game")
+                phase, pending_kan, wall = "awaiting_draw", False, 70
+                rinshan = False
+                first_turn, kan_counts = [True] * 4, [0] * 4
+            elif event_type == "tsumo":
+                _require(phase == "awaiting_draw" and (wall > 0 or rinshan), "invalid_message", "tsumo outside draw phase")
+                if not rinshan:
+                    wall -= 1
+                phase = "awaiting_action"
+            elif event_type == "dahai":
+                _require(phase == "awaiting_action", "invalid_message", "dahai outside action phase")
+                actor = event.get("actor")
+                _require(isinstance(actor, int) and 0 <= actor <= 3, "invalid_message", "dahai actor is invalid")
+                first_turn[actor] = False
+                rinshan = False
+                phase = "awaiting_responses"
+            elif event_type == "kakan_declared" or event_type == "ankan_declared":
+                _require(phase == "awaiting_action" and not pending_kan, "invalid_message", "kan declaration outside action phase")
+                pending_kan = True
+            elif event_type in {"kakan", "ankan"}:
+                _require(pending_kan, "invalid_message", "kan commit without declaration")
+                actor = event.get("actor")
+                _require(isinstance(actor, int) and 0 <= actor <= 3 and kan_counts[actor] < 4, "invalid_message", "kan count is invalid")
+                kan_counts[actor] += 1
+                _require(wall > 0 and sum(kan_counts) <= 4, "invalid_message", "kan has no replacement tile")
+                wall -= 1
+                rinshan = True
+                first_turn = [False] * 4
+                pending_kan, phase = False, "awaiting_draw"
+            elif event_type == "end_kyoku":
+                pending_kan = False
+                phase = "between_kyoku"
+            elif event_type == "end_game":
+                _require("end_kyoku" in types[: event_index + 1], "invalid_message", "end_game before end_kyoku")
+
+
+def semantic_lifecycle_trace(trace: Mapping[str, Any]) -> None:
+    """Validate a complete final observation and earlier checkpoints."""
+    grace = trace.get("grace_ms")
+    _require(type(grace) is int and 0 <= grace <= 600000, "invalid_message", "invalid lifecycle grace")
+    _require(trace.get("invalid_action_policy") in {"reject", "default", "chombo"}, "invalid_message", "invalid lifecycle policy")
+    _require(trace.get("ron_policy") in {"multiple", "head_bump", "double_only"}, "invalid_message", "invalid ron policy")
+    requests = trace.get("requests")
+    _require(isinstance(requests, list) and 1 <= len(requests) <= 4, "invalid_message", "invalid lifecycle requests")
+    semantic_request_trace({"requests": requests, "rules": {"time_control": {"grace_ms": grace}}})
+    _require(len({r["request_id"] for r in requests}) == len(requests), "invalid_message", "duplicate lifecycle request id")
+    if len(requests) > 1:
+        _require(len({r.get("decision_group_id") for r in requests}) == 1 and requests[0].get("decision_group_id") is not None, "invalid_message", "lifecycle trace needs one complete group")
+        _require(type(trace.get("target")) is int and 0 <= trace["target"] <= 3, "invalid_message", "lifecycle target is invalid")
+        _require({r["seat"] for r in requests} == set(range(4)) - {trace["target"]}, "invalid_message", "reaction group must exclude its cause actor and include every other seat")
+    steps = trace.get("steps")
+    _require(isinstance(steps, list) and steps, "invalid_message", "empty lifecycle trace")
+    for step in steps:
+        _require(isinstance(step, dict) and step.get("op") in {"submit", "advance", "resolve"}, "invalid_message", "invalid lifecycle step")
+        _require(type(step.get("at_us")) is int and step["at_us"] >= 0, "invalid_message", "invalid lifecycle timestamp")
+        if step["op"] == "submit":
+            _require(all(isinstance(step.get(k), str) and ID_RE.fullmatch(step[k]) for k in ("request_id", "action_id")), "invalid_message", "invalid lifecycle action ids")
     try:
-        for event in events:
-            _require(isinstance(event, dict) and isinstance(event.get("type"), str), "invalid_message", "invalid state event")
-            if event["type"] == "request":
-                projection.request(event["seat"])
+        observed = evaluate_request_contract(dict(trace))
+    except (KeyError, ValueError, StopIteration, TypeError) as exc:
+        raise ArtifactError("invalid_message", f"invalid lifecycle trace: {exc}") from exc
+    _require(observed[-1] == trace.get("expected"), "invalid_message", "request lifecycle final observation differs")
+    for checkpoint in trace.get("checkpoints", []):
+        step_index = checkpoint.get("step")
+        _require(type(step_index) is int and 0 <= step_index < len(observed), "invalid_message", "invalid checkpoint index")
+        _require(observed[step_index] == checkpoint.get("expected"), "invalid_message", "request lifecycle checkpoint differs")
+
+
+def semantic_game_trace(trace: Mapping[str, Any]) -> None:
+    schemas = SchemaSet()
+    rules = strict_load(ROOT / f"test-vectors/yrc-0005/{PROFILE_REVISION}/scoring.json")["rules"]
+    rules.update(deepcopy(trace.get("rule_overrides", {})))
+    schemas.validate(rules, {"$ref": f"urn:yamai:schema:yrc-0005:{PROFILE_REVISION}:riichi-4p-rules"})
+    op, data = trace["operation"], trace["input"]
+    try:
+        if op == "next_kyoku":
+            actual = next_kyoku(data["current"], data["result"], data["scores"], data["kyotaku"], rules)
+        elif op == "legal_actions":
+            actual = legal_actions(data, rules)
+            # Full candidate sets, compared independently of ID/ordering.
+            for action in [*actual, *trace["expected"]]:
+                schemas.validate(action, {"$ref": f"urn:yamai:schema:yrc-0003:{PROTOCOL}:action#/$defs/actionObject"})
+            actual = sorted(canonical_action(a) for a in actual)
+            expected = sorted(canonical_action(a) for a in trace["expected"])
+            _require(len(expected) == len(set(expected)), "invalid_message", "expected choices are duplicated")
+            _require(actual == expected, "invalid_message", "complete legal candidate set differs")
+            return
+        elif op == "furiten":
+            actual = furiten(data, rules)
+        elif op == "furiten_step":
+            actual = furiten_step(data["position"], data["operation"], rules)
+        elif op == "abortive_reason":
+            actual = abortive_reason(data, rules)
+        elif op == "kan_sequence":
+            actual = kan_sequence(**data)
+        elif op == "event_state":
+            state = EventState(rules)
+            if "snapshot" in data:
+                schemas.validate(data["snapshot"], {"$ref": f"urn:yamai:schema:yrc-0003:{PROTOCOL}:snapshot"})
+                _check_snapshot(data["snapshot"])
+                state.restore(data["snapshot"]["state"])
+            for event in data["events"]:
+                schemas.validate(event, {"$ref": f"urn:yamai:schema:yrc-0003:{PROTOCOL}:event#/properties/event"})
+                state.apply(event)
+            observed = {"game_phase":state.game_phase,"scores":state.scores,"kyotaku":state.kyotaku,
+                        "next":state.next,"round":state.round,"last_cause":state.last_cause}
+            actual = {}
+            for path in trace["observe"]:
+                value = observed
+                for key in path.split("."):
+                    value = value[int(key)] if isinstance(value,list) else value[key]
+                actual[path] = value
+        else:
+            raise ArtifactError("vector_error", "unknown game contract operation")
+    except (GameError, ScoringError, KeyError, TypeError, ValueError) as error:
+        raise ArtifactError("invalid_message", str(error)) from error
+    _require(_json_equal(actual, trace["expected"]), "invalid_message", "game contract observation differs")
+
+
+def _session_schema_validator(schemas: SchemaSet, expected_hash: str, definitions: Sequence[Mapping[str, Any]] = (), enabled: Sequence[str] = ()):
+    urn = f"urn:yamai:schema:yrc-0003:{PROTOCOL}:"
+    extension_contexts: dict[str, Sequence[str]] = {}
+    if definitions or any(cap not in {"resume", "snapshot"} for cap in enabled):
+        schemas = deepcopy(schemas)
+        registered = {definition["capability"]: definition for definition in definitions}
+        _require(len(registered) == len(definitions), "unsupported_capability", "duplicate extension capability definition")
+        private_types: set[tuple[str, str]] = set()
+        extension_schema_ids: set[str] = set()
+        def register(schema: Mapping[str, Any]) -> dict:
+            sid = schema.get("$id")
+            _require(isinstance(sid, str) and re.match(r"^[A-Za-z][A-Za-z0-9+.-]*:", sid) is not None and "#" not in sid, "unsupported_capability", "extension needs an absolute schema id without a fragment")
+            if sid in schemas.schemas:
+                _require(sid in extension_schema_ids and _json_equal(schemas.schemas[sid], schema), "unsupported_capability", "extension schema id is already bound to another definition")
+                return {"$ref": sid}
+            schemas.schemas[sid] = dict(schema)
+            extension_schema_ids.add(sid)
+            return {"$ref": sid}
+        for capability in enabled:
+            if capability in {"resume", "snapshot"}:
+                continue
+            _require(capability in registered and re.fullmatch(r"x-(?=[A-Za-z0-9_.-]{3,62}$)[A-Za-z0-9]+-[A-Za-z0-9][A-Za-z0-9_.-]*", capability), "unsupported_capability", "extension schema is not installed")
+            definition = registered[capability]
+            owner = capability.split("-", 2)[1]
+            for category, schema_name, pointer in (("event_types", "event", "event"), ("action_types", "action", "actionObject")):
+                for tag, descriptor in definition.get(category, {}).items():
+                    _require(tag.startswith("x-" + owner + "-") and CAPABILITY_RE.fullmatch(tag) is not None and (category, tag) not in private_types, "unsupported_capability", "extension type collides or changes a standard identifier")
+                    private_types.add((category, tag))
+                    body = descriptor["schema"]
+                    _require("type" in body.get("required", []) and body.get("properties", {}).get("type", {}).get("const") == tag, "unsupported_capability", "extension schema must fix its discriminator")
+                    if category == "event_types":
+                        schemas.schemas[urn + schema_name]["properties"][pointer]["oneOf"].append(register(body))
+                    else:
+                        _require("actor" in body.get("required", []), "unsupported_capability", "extension action requires its actor")
+                        contexts = descriptor.get("contexts", [])
+                        _require(bool(contexts) and set(contexts) <= {"turn", "reaction"}, "unsupported_capability", "extension action context is not declared")
+                        extension_contexts[tag] = contexts
+                        schemas.schemas[urn + schema_name]["$defs"][pointer]["oneOf"].append(register(body))
+            for kind, constraint in definition.get("message_schemas", {}).items():
+                _require(kind in {"event", "request", "action", "ack", "error", "snapshot"}, "unsupported_capability", "extension cannot add a message kind")
+                schemas.schemas[urn + kind].setdefault("allOf", []).append(register(constraint))
+        try:
+            schemas.check_refs()
+            schemas.check_keyword_support()
+        except ArtifactError as error:
+            raise ArtifactError("unsupported_capability", "extension schema cannot be loaded: " + str(error)) from error
+    proposal = {"$ref": urn + "join-proposal"}
+
+    def validate(kind: str, message: dict) -> None:
+        try:
+            if kind == "decision-cause":
+                _check_decision_cause(message["request"], message["cause"])
+                return
+            if kind == "visible-event":
+                _check_event_visibility(message["event"], message["mode"], message["view"], message["seat"])
+                return
+            if kind == "join-proposal":
+                schemas.validate(message, proposal)
+                _check_capabilities(message["capabilities"])
+                return
+            if kind == "host-application":
+                _require(message.get("kind") in {"event", "request", "ack", "error", "snapshot"}, "invalid_message", "unexpected host application kind")
+                schemas.validate(message, {"$ref": urn + "host-message"})
+            elif kind == "player-application":
+                _require(message.get("kind") in {"action", "error"}, "invalid_message", "unexpected player application kind")
+                schemas.validate(message, {"$ref": urn + "player-message"})
             else:
-                projection.apply(event, event.get("transaction_id"))
-        _require(projection.compound is None, "invalid_message", "incomplete compound event")
-    except ValueError as exc:
-        raise ArtifactError("invalid_message", str(exc)) from exc
+                schemas.validate(message, {"$ref": urn + kind})
+            if message.get("kind") == "request":
+                _check_request(message, extension_contexts=extension_contexts)
+            elif message.get("kind") == "snapshot":
+                _check_snapshot(message, extension_contexts)
+            else:
+                semantic_message(message, "session-contract", expected_hash)
+        except ArtifactError as error:
+            raise SessionError(error.code, str(error)) from error
+    return validate
 
 
-def semantic_round_trace(trace: Mapping[str, Any]) -> None:
-    _check_rules(trace.get("rules"))
-    actual = next_round(trace["rules"], trace["kyoku"], trace["scores"],
-                        dealer_continues=trace["dealer_continues"], dealer_won=trace["dealer_won"])
-    _require(list(actual) == trace.get("expected"), "invalid_message", "incorrect next round")
+def semantic_session_trace(trace: Mapping[str, Any], expected_hash: str) -> None:
+    schemas = SchemaSet()
+    validate = _session_schema_validator(schemas, expected_hash)
+    kind = trace["trace_type"]
+    try:
+        if kind == "negotiation":
+            actual = negotiate(trace["hello"], trace["join"], trace["welcome"], trace.get("context", {}), validate, PROTOCOL, PROFILE_REVISION, expected_hash)
+        elif kind == "resume_tokens":
+            actual = check_token_trace(dict(trace), validate, PROTOCOL, PROFILE_REVISION, expected_hash)
+        elif kind == "resource_clock":
+            actual = resource_trace(dict(trace))
+        elif kind == "wire_direction":
+            validate(trace["direction"] + "-application", trace["message"])
+            actual = "valid"
+        elif kind == "input_error":
+            actual = classify_player_input(trace["message"], trace["context"], validate)
+        elif kind == "extension_message":
+            extended = _session_schema_validator(schemas, expected_hash, trace["definitions"], trace["enabled_capabilities"])
+            extended(trace["direction"] + "-application", trace["message"])
+            actual = "valid"
+        elif kind == "replay_plan":
+            history = [None if raw is None else raw.encode("utf-8") for raw in trace["history"]]
+            for seq, raw in enumerate(history, 1):
+                if raw is not None:
+                    message = strict_load_bytes(raw, max_bytes=1048576)
+                    validate("host-application", message)
+                    _require(message["seq"] == seq, "invalid_message", "retained history sequence differs")
+            plan = replay_plan(history, trace["expected_seq"], trace["received_seq"], snapshot=trace.get("snapshot", False))
+            for raw in trace.get("append_after_plan", []):
+                history.append(raw.encode("utf-8"))
+            actual = {key: [p.decode("utf-8") for p in value] if key == "payloads" else value for key, value in plan.items()}
+        elif kind == "receiver":
+            validate("welcome", trace["welcome"])
+            receiver = Receiver(trace["welcome"], lambda raw: strict_load_bytes(raw, max_bytes=1048576), validate, initial_snapshot=trace.get("initial_snapshot", False))
+            actual = []
+            for step in trace["steps"]:
+                outcome = None
+                try:
+                    if step["op"] == "resume":
+                        receiver.begin_resume(step["welcome"])
+                        outcome = "resumed"
+                    else:
+                        _require(step["op"] == "receive", "invalid_message", "unknown receiver operation")
+                        raw = step["raw"] if "raw" in step else json.dumps(step["message"], ensure_ascii=False, separators=(",", ":"))
+                        outcome = receiver.receive(raw.encode("utf-8"))
+                except (SessionError, ArtifactError) as error:
+                    outcome = error.code
+                    if getattr(error, "severity", "fatal") == "fatal":
+                        receiver.closed = True
+                actual.append({"outcome":outcome,"applied_seq":receiver.applied,"active_requests":sorted(receiver.active_requests),
+                               "ended":receiver.ended,"closed":receiver.closed,"original_seq":receiver.original_seq,
+                               "recovering":receiver.recovery is not None})
+        elif kind == "multi_session":
+            actual = []
+            seen_sessions, seen_games, retired = [], [], []
+            previous = None
+            for session in trace["sessions"]:
+                _require(previous is None or (previous.ended and not previous.closed), "invalid_message", "same transport started a new session before end_game")
+                context = {"used_session_ids": seen_sessions, "finished_game_ids": seen_games, **session.get("context", {})}
+                negotiate(session["hello"], session["join"], session["welcome"], context, validate, PROTOCOL, PROFILE_REVISION, expected_hash)
+                w = session["welcome"]
+                identity = {key:w[key] for key in ("yamai", "session_id", "game_id")}
+                for action in session.get("old_actions", []):
+                    result = classify_player_input(action, {"identity":identity,"known_request_ids":[],"retired_sessions":retired}, validate)
+                    _require(result["code"] == "ignored", "invalid_message", "retired session affected new negotiation")
+                receiver = Receiver(w, lambda raw: strict_load_bytes(raw, max_bytes=1048576), validate)
+                for message in session["messages"]:
+                    receiver.receive(json.dumps(message, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+                actual.append({"session_id":w["session_id"],"game_id":w["game_id"],"last_seq":receiver.applied,"ended":receiver.ended})
+                seen_sessions.append(w["session_id"])
+                seen_games.append(w["game_id"])
+                retired.append(identity)
+                previous = receiver
+        else:
+            raise ArtifactError("vector_error", "unknown session trace")
+    except SessionError as error:
+        raise ArtifactError(error.code, str(error)) from error
+    _require(_json_equal(actual, trace.get("expected")), "invalid_message", "session contract result differs")
+
+
+def semantic_ledger_trace(trace: Mapping[str, Any], expected_hash: str) -> None:
+    """Audit one peer's timestamped payloads and immutable ledger records.
+
+    Shared group choices are verified by request_lifecycle traces. This peer
+    capture cannot observe another session's private requests or ACKs.
+    """
+    schemas = SchemaSet()
+    schemas.validate(trace, {"$ref": f"urn:yamai:schema:yrc-0003:{PROTOCOL}:stateful-trace"})
+    validate = _session_schema_validator(schemas, expected_hash)
+    clients = trace.get("clients", [])
+    _require(len(clients) == 1, "invalid_message", "ledger capture describes one peer session")
+    client = clients[0]
+    ledger, previous, finished_transactions = {}, trace.get("ledger_start_seq", 1) - 1, set()
+    current_transaction = None
+    for entry in trace["ledger"]:
+        msg, seq = entry["message"], entry["seq"]
+        raw = entry["wire"].encode("utf-8")
+        _require(_json_equal(strict_load_bytes(raw, max_bytes=1048576), msg), "sequence_conflict", "ledger bytes differ from decoded message")
+        _require(msg.get("session_id") == trace["session_id"] and msg.get("game_id") == trace["game_id"] and msg.get("seq") == seq, "invalid_message", "ledger identity differs")
+        _require(seq == previous + 1 or (msg.get("kind") == "snapshot" and msg["replaces_through_seq"] >= previous and seq == msg["replaces_through_seq"] + 1), "invalid_message", "ledger has an unexplained gap")
+        tx = entry["transaction_id"]
+        if tx != current_transaction:
+            _require(tx not in finished_transactions, "invalid_message", "transaction is interleaved")
+            if current_transaction is not None:
+                finished_transactions.add(current_transaction)
+            current_transaction = tx
+        ledger[seq], previous = entry, seq
+    hello = join = receiver = None
+    now, seen = -1, set()
+    starts, first_actions = {}, {}
+    pending_transaction = None
+    try:
+        for step in trace["messages"]:
+            _require(step["at_ms"] >= now, "invalid_message", "capture clock moved backwards")
+            now = step["at_ms"]
+            _require(step["client_id"] == client["client_id"], "invalid_message", "message belongs to another capture")
+            msg, raw = step["message"], step["wire"].encode("utf-8")
+            _require(_json_equal(strict_load_bytes(raw, max_bytes=1048576), msg), "sequence_conflict", "captured bytes differ from decoded message")
+            kind = msg["kind"]
+            if kind == "hello":
+                _require(step["direction"] == "out" and receiver is None, "invalid_message", "unexpected hello")
+                validate("hello", msg)
+                hello = msg
+            elif kind == "join":
+                _require(step["direction"] == "in" and hello is not None and receiver is None, "invalid_message", "unexpected join")
+                join = msg
+            elif kind == "welcome":
+                _require(step["direction"] == "out" and join is not None and receiver is None, "invalid_message", "unexpected welcome")
+                negotiate(hello, join, msg, trace.get("context", {}), validate, PROTOCOL, PROFILE_REVISION, expected_hash)
+                _require(all(msg[k] == client[k] for k in ("mode", "view", "seat")), "invalid_message", "capture descriptor differs from welcome")
+                _require(msg["session_id"] == trace["session_id"] and msg["game_id"] == trace["game_id"], "invalid_message", "welcome differs from capture identity")
+                receiver = Receiver(msg, strict_load_bytes, validate, initial_snapshot=msg["mode"] == "spectate" and trace.get("context", {}).get("game_started", False))
+            elif step["direction"] == "in":
+                _require(receiver is not None, "invalid_message", "input before welcome")
+                validate("player-application", msg)
+                _require(msg["session_id"] == trace["session_id"] and msg["game_id"] == trace["game_id"], "invalid_message", "input session differs")
+                if kind == "action":
+                    rid = msg["request_id"]
+                    _require(rid in receiver.requests, "invalid_action", "action references an unknown request")
+                    first_actions.setdefault(rid, (msg["action_id"], now))
+            else:
+                _require(receiver is not None, "invalid_message", "application message before welcome")
+                seq = msg["seq"]
+                _require(seq in ledger and raw.decode("utf-8") == ledger[seq]["wire"], "sequence_conflict", "wire retransmission differs from immutable ledger")
+                _require(all(step.get(k) == ledger[seq][k] for k in ("transaction_id", "operation_id")), "invalid_message", "message changed its transaction or operation")
+                duplicate = seq in seen
+                terminalizing = kind == "ack" and msg["request_id"] in receiver.active_requests and msg["status"] != "rejected"
+                if not duplicate and pending_transaction is not None:
+                    _require(kind == "event" and (step["transaction_id"], step["operation_id"]) == pending_transaction, "invalid_message", "terminal ACK and result events belong to different transactions")
+                if kind == "request" and not duplicate:
+                    starts[msg["request_id"]] = step.get("group_start", now)
+                    _require(starts[msg["request_id"]] >= now, "invalid_message", "group clock starts before request recording")
+                if kind == "ack" and not duplicate and msg["request_id"] in starts:
+                    request = receiver.requests[msg["request_id"]]
+                    if "decision_group_id" not in request:
+                        grace = receiver.welcome["rules"]["time_control"]["grace_ms"]
+                        deadline = grace + request["timeout_ms"] + request["time_bank_ms"]
+                        action = first_actions.get(msg["request_id"])
+                        if msg["status"] == "accepted":
+                            _require(action is not None and action[0] == msg["action_id"], "invalid_message", "ACK differs from captured choice")
+                            elapsed = action[1] - starts[msg["request_id"]]
+                            _require(0 <= elapsed < deadline and msg["elapsed_ms"] == elapsed, "invalid_message", "captured action deadline or elapsed time differs")
+                        elif msg["status"] == "defaulted" and action is None:
+                            _require(now >= starts[msg["request_id"]] + deadline and msg["elapsed_ms"] == deadline, "invalid_message", "timeout precedes its original deadline")
+                outcome = receiver.receive(raw)
+                _require(outcome in {"applied", "duplicate"}, "invalid_message", "capture contains an unapplied host message")
+                if not duplicate:
+                    if terminalizing:
+                        pending_transaction = (step["transaction_id"], step["operation_id"])
+                    elif kind == "event" and msg["event"]["type"] in {"dahai", "tsumo", "end_kyoku", "end_game"}:
+                        pending_transaction = None
+                seen.add(seq)
+        _require(receiver is not None and set(ledger) == seen, "invalid_message", "capture omits ledger messages")
+        _require(trace.get("allow_open_requests", False) or (not receiver.active_requests and not receiver.awaiting_request), "invalid_message", "capture ends with an unresolved decision")
+        for lifecycle in trace.get("request_lifecycles", []):
+            semantic_lifecycle_trace(lifecycle)
+            _require(lifecycle["grace_ms"] == receiver.welcome["rules"]["time_control"]["grace_ms"] and all(lifecycle[k] == receiver.welcome["rules"][k] for k in ("ron_policy", "invalid_action_policy")), "invalid_message", "lifecycle rules differ from negotiation")
+            bound = [r for r in lifecycle["requests"] if r["request_id"] in receiver.requests]
+            _require(bool(bound), "invalid_message", "lifecycle has no request in this capture")
+            for request in bound:
+                actual_request = receiver.requests[request["request_id"]]
+                _require(all(_json_equal(actual_request.get(k), value) for k, value in request.items()), "invalid_message", "lifecycle request differs from captured wire")
+                rid = request["request_id"]
+                submitted = [(s["action_id"], s["at_us"] // 1000) for s in lifecycle["steps"] if s["op"] == "submit" and s["request_id"] == rid]
+                captured = [(s["message"]["action_id"], max(0, s["at_ms"] - starts[rid])) for s in trace["messages"] if s["direction"] == "in" and s["message"].get("kind") == "action" and s["message"]["request_id"] == rid]
+                _require(submitted == captured, "invalid_message", "lifecycle submissions differ from captured actions")
+                captured_acks = [{k:step["message"][k] for k in ("kind", "action_id", "status", "elapsed_ms", "time_bank_ms")} for step in trace["messages"] if step["message"].get("kind") == "ack" and step["message"].get("request_id") == request["request_id"]]
+                _require(_json_equal(captured_acks, lifecycle["expected"]["messages"][request["request_id"]]), "invalid_message", "lifecycle ACK differs from captured wire")
+                cause = ledger[request["caused_by_seq"]]["message"]["event"]
+                for member in lifecycle["requests"]:
+                    _check_decision_cause(member, cause)
+        for record in trace.get("visibility", []):
+            for target in record["projections"]:
+                projection = deepcopy(record["source"])
+                if projection["kind"] == "event":
+                    event = projection["event"]
+                    full = target["mode"] == "replay" and target["view"] == "full"
+                    seat = target["seat"] if target["mode"] == "play" else target["view"].get("seat") if isinstance(target["view"], dict) else None
+                    if event["type"] == "tsumo" and not full and event["actor"] != seat:
+                        event["pai"] = None
+                    if event["type"] == "start_kyoku":
+                        event["hands"] = [h if full or actor == seat else {"count": len(h["tiles"])} for actor, h in enumerate(event["hands"])]
+                    _check_event_visibility(target["message"]["event"], target["mode"], target["view"], target["seat"])
+                elif projection["kind"] == "snapshot":
+                    state = projection["state"]
+                    state.update(mode=target["mode"], view=target["view"], seat=target["seat"])
+                    full = target["mode"] == "replay" and target["view"] == "full"
+                    seat = target["seat"] if target["mode"] == "play" else target["view"].get("seat") if isinstance(target["view"], dict) else None
+                    if target["mode"] != "play":
+                        state.pop("pending_requests", None)
+                        state.pop("time_bank_ms", None)
+                    if target["mode"] != "replay":
+                        state.pop("original_seq", None)
+                    kyoku = state["kyoku"]
+                    if kyoku is not None:
+                        kyoku["hands"] = [h if full or actor == seat else {"count": len(h["tiles"]) if "tiles" in h else h["count"]} for actor,h in enumerate(kyoku["hands"])]
+                        event = kyoku["turn"]["last_event"]
+                        if event["type"] == "tsumo" and not full and event["actor"] != seat:
+                            event["pai"] = None
+                        if target["mode"] != "play":
+                            kyoku.pop("self_state", None)
+                    _check_snapshot(target["message"])
+                _require(_json_equal(projection, target["message"]), "invalid_message", "visibility projection differs from captured source")
+    except SessionError as error:
+        raise ArtifactError(error.code, str(error)) from error
 
 
 def check_vectors(schemas: SchemaSet, manifest: Dict[str, Any]) -> int:
     vectors = strict_load(ROOT / manifest["vectors"])
     root_schema = schema_by_id(schemas, "urn:yamai:schema:yrc-0003:1.0-draft.6:message")
     checked = 0
+    session_types = {"negotiation", "resume_tokens", "resource_clock", "wire_direction", "input_error", "replay_plan", "receiver", "multi_session", "extension_message"}
+    error_codes = {item["id"] for item in strict_load(ROOT / f"registry/yrc-0003/{PROTOCOL}/registry.json")["error_codes"]}
     for entry in manifest["cases"]:
         case_id = entry["id"]
         case = vectors[case_id]
         if case.get("negative_expect") != entry["expect_negative"]:
             raise ArtifactError("vector_error", f"{case_id}: manifest negative expectation mismatch")
-        if case.get("negative_expect") not in {
-            "invalid_frame",
-            "invalid_json",
-            "invalid_message",
-            "profile_mismatch",
-            "request_conflict",
-            "sequence_conflict",
-            "resource_limit",
-            "resume_unavailable",
-        }:
+        if case.get("negative_expect") not in error_codes:
             raise ArtifactError("vector_error", f"{case_id}: unsupported negative expectation")
         if "negative_profile_hash" in case and case.get("negative", {}).get("profile_hash") != case["negative_profile_hash"]:
             raise ArtifactError("vector_error", f"{case_id}: negative profile hash metadata mismatch")
@@ -2431,10 +1972,7 @@ def check_vectors(schemas: SchemaSet, manifest: Dict[str, Any]) -> int:
             positive_checked = True
             trace = positive["trace"]
             trace_type = trace.get("trace_type")
-            if trace_type == "session":
-                schemas.validate(trace, schema_by_id(schemas, STATEFUL_TRACE_SCHEMA_ID), case_id + ".positive.trace")
-                semantic_session_trace(trace, schemas=schemas, root_schema=root_schema, expected_profile_hash=manifest["profile_hash"])
-            elif trace_type == "event_order":
+            if trace_type == "event_order":
                 semantic_event_trace(trace)
             elif trace_type == "resource":
                 semantic_resource_trace(trace)
@@ -2448,8 +1986,6 @@ def check_vectors(schemas: SchemaSet, manifest: Dict[str, Any]) -> int:
                 semantic_scoring_trace(trace)
             elif trace_type == "welcome":
                 semantic_welcome_trace(trace)
-            elif trace_type == "round":
-                semantic_round_trace(trace)
             elif trace_type == "state_machine":
                 semantic_state_trace(trace)
             elif trace_type == "noten":
@@ -2458,6 +1994,14 @@ def check_vectors(schemas: SchemaSet, manifest: Dict[str, Any]) -> int:
                 semantic_ack_trace(trace)
             elif trace_type == "composite":
                 semantic_composite_trace(trace)
+            elif trace_type == "request_lifecycle":
+                semantic_lifecycle_trace(trace)
+            elif trace_type == "game_contract":
+                semantic_game_trace(trace)
+            elif trace_type == "session":
+                semantic_ledger_trace(trace, manifest["profile_hash"])
+            elif trace_type in session_types:
+                semantic_session_trace(trace, manifest["profile_hash"])
             else:
                 semantic_score_trace(trace)
         if not positive_checked:
@@ -2543,10 +2087,7 @@ def check_vectors(schemas: SchemaSet, manifest: Dict[str, Any]) -> int:
             caught = None
             try:
                 trace = case["negative"]["trace"]
-                if trace.get("trace_type") == "session":
-                    schemas.validate(trace, schema_by_id(schemas, STATEFUL_TRACE_SCHEMA_ID), case_id + ".negative.trace")
-                    semantic_session_trace(trace, schemas=schemas, root_schema=root_schema, expected_profile_hash=manifest["profile_hash"])
-                elif trace.get("trace_type") == "event_order":
+                if trace.get("trace_type") == "event_order":
                     semantic_event_trace(trace)
                 elif trace.get("trace_type") == "resource":
                     semantic_resource_trace(trace)
@@ -2568,6 +2109,14 @@ def check_vectors(schemas: SchemaSet, manifest: Dict[str, Any]) -> int:
                     semantic_ack_trace(trace)
                 elif trace.get("trace_type") == "composite":
                     semantic_composite_trace(trace)
+                elif trace.get("trace_type") == "request_lifecycle":
+                    semantic_lifecycle_trace(trace)
+                elif trace.get("trace_type") == "game_contract":
+                    semantic_game_trace(trace)
+                elif trace.get("trace_type") == "session":
+                    semantic_ledger_trace(trace, manifest["profile_hash"])
+                elif trace.get("trace_type") in session_types:
+                    semantic_session_trace(trace, manifest["profile_hash"])
                 else:
                     semantic_score_trace(trace)
             except ArtifactError as exc:
@@ -2594,7 +2143,7 @@ def check_vectors(schemas: SchemaSet, manifest: Dict[str, Any]) -> int:
     return checked
 
 
-def check_scoring(schemas: SchemaSet, rules_registry: Mapping[str, Any]) -> Tuple[int, int]:
+def check_scoring(schemas: SchemaSet, rules_registry: Mapping[str, Any]) -> Tuple[int, int, int]:
     data = strict_load(ROOT / "test-vectors/yrc-0005/1.0-draft.4/scoring.json")
     scoring_schema_id = "urn:yamai:schema:yrc-0005:1.0-draft.4:scoring-vectors"
     if scoring_schema_id in schemas.schemas:
@@ -2626,14 +2175,68 @@ def check_scoring(schemas: SchemaSet, rules_registry: Mapping[str, Any]) -> Tupl
     base_rules = data.get("rules", {})
     _require(isinstance(base_rules, Mapping), "scoring_error", "scoring rules are not an object")
     for fixture in fixtures:
-        _check_scoring_fixture_semantics(fixture, base_rules)
+        _check_scoring_fixture_semantics(fixture, base_rules, schemas)
     expected_fixture_count = rules_registry.get("scoring_fixture_count")
     if isinstance(expected_fixture_count, int) and len(fixtures) != expected_fixture_count:
         raise ArtifactError("scoring_error", "scoring fixture count does not match registry")
+    negatives = data["negative_fixtures"]
+    negative_ids = [fixture["id"] for fixture in negatives]
+    _require(len(negative_ids) == len(set(negative_ids)) and not set(negative_ids).intersection(fixture_ids), "scoring_error", "duplicate negative scoring fixture id")
+    _require(len(negatives) == rules_registry.get("scoring_negative_fixture_count"), "scoring_error", "negative scoring fixture count differs from registry")
+    for fixture in negatives:
+        caught = None
+        try:
+            schemas.validate(fixture["input"], {"$ref": scoring_schema_id + "#/$defs/input"})
+            schemas.validate(fixture["state"], {"$ref": scoring_schema_id + "#/$defs/state"})
+            schemas.validate(fixture["rule_overrides"], {"$ref": scoring_schema_id + "#/$defs/rule_overrides"})
+            effective = {**base_rules, **fixture["rule_overrides"]}
+            schemas.validate(effective, {"$ref": "urn:yamai:schema:yrc-0005:1.0-draft.4:riichi-4p-rules"})
+            calculate_scoring_fixture(fixture, base_rules)
+        except (ScoringError, ArtifactError) as exc:
+            caught = exc.code
+        _require(caught == fixture["expected_error"], "scoring_error", f"{fixture['id']}: expected {fixture['expected_error']}, got {caught}")
 
     coverage = rules_registry.get("fixture_coverage", {})
     observed_yakus = set()
     fixtures_by_id = {fixture["id"]: fixture for fixture in fixtures}
+    for summary in vector_items:
+        sid = summary["id"]
+        rules = {**base_rules, **summary.get("rule_overrides", {})}
+        schemas.validate(rules, {"$ref": "urn:yamai:schema:yrc-0005:1.0-draft.4:riichi-4p-rules"})
+        if all(key in summary for key in ("fu", "han", "dealer", "tsumo")):
+            basic = basic_points(summary["fu"], summary["han"], 0, rules)
+            actor = 0 if summary["dealer"] else 1
+            target = actor if summary["tsumo"] else 1 - actor
+            points = sum(normal_payments(basic, actor, target, 0).values())
+            _require((basic, points) == (summary["basic_points"], summary["hand_points"]), "scoring_error", f"{sid}: arithmetic summary differs")
+            continue
+        if "yakuman_value" in summary:
+            _require(basic_points(0, 0, summary["yakuman_value"], rules) == summary["basic_points"], "scoring_error", f"{sid}: yakuman summary differs")
+            continue
+        links = summary.get("fixture_ids", [])
+        _require(bool(links) and all(link in fixtures_by_id for link in links), "scoring_error", f"{sid}: summary has no executable fixture")
+        linked = [fixtures_by_id[link] for link in links]
+        for fixture in linked:
+            effective = {**base_rules, **fixture["rule_overrides"]}
+            expected = fixture["expected"]
+            for field in ("honba", "kyotaku"):
+                if field in summary:
+                    _require(summary[field] == effective["multiple_ron_settlement"][field], "scoring_error", f"{sid}: linked settlement policy differs")
+            if "min_winners" in summary:
+                _require(len(expected.get("wins", [])) >= summary["min_winners"], "scoring_error", f"{sid}: linked fixture lacks multiple winners")
+            if "pao_ron" in summary:
+                _require(effective["pao"]["ron"] == summary["pao_ron"] and any(win["pao"] for win in expected.get("wins", [])), "scoring_error", f"{sid}: linked pao policy differs")
+            if "total_points" in summary:
+                value = effective["chombo"]["penalty_points"] if fixture["input"]["type"] == "penalty" else effective["noten_payment"]["total_points"]
+                _require(summary["total_points"] == value, "scoring_error", f"{sid}: linked point amount differs")
+            if "conserves_points" in summary:
+                _require(summary["conserves_points"] is True and sum(expected["deltas"]) + (expected["kyotaku"] - fixture["state"]["kyotaku"]) * effective["riichi_stick_value"] == 0, "scoring_error", f"{sid}: conservation summary differs")
+        if "cases" in summary:
+            _require(all(isinstance(f["expected"].get("tenpai"), list) for f in linked), "scoring_error", f"{sid}: linked draw does not classify tenpai")
+            _require(summary["cases"] == sorted(sum(f["expected"]["tenpai"]) for f in linked), "scoring_error", f"{sid}: tenpai coverage summary differs")
+        if "bonus_ids" in summary:
+            actual = {b["id"] for f in linked for w in f["expected"].get("wins", []) for b in w["bonuses"]}
+            _require(len(summary["bonus_ids"]) == len(set(summary["bonus_ids"])) and set(summary["bonus_ids"]) == actual, "scoring_error", f"{sid}: bonus coverage summary differs")
     for fixture in fixtures:
         expected = fixture.get("expected", {})
         for win in expected.get("wins", []) if isinstance(expected, dict) else []:
@@ -2657,7 +2260,34 @@ def check_scoring(schemas: SchemaSet, rules_registry: Mapping[str, Any]) -> Tupl
             expected_category = expected_categories.get(fixture_id)
             if fixture is None or (expected_category is not None and fixture.get("category") != expected_category):
                 raise ArtifactError("scoring_error", f"fixture coverage is incomplete for {coverage_key}: {fixture_id}")
-    return len(vectors), len(fixtures)
+    return len(vectors), len(fixtures), len(negatives)
+
+
+def check_document_examples(schemas: SchemaSet, expected_hash: str) -> int:
+    count = 0
+    urn = f"urn:yamai:schema:yrc-0003:{PROTOCOL}:"
+    for path in (ROOT / "docs/yamai-protocol.md",):
+        for match in re.finditer(r"```json\n(.*?)\n```", path.read_text(), re.S):
+            line = path.read_text()[:match.start()].count("\n") + 1
+            context = f"{path.name}:{line}"
+            obj = strict_load_bytes(match[1].encode("utf-8"), source=context)
+            _require(isinstance(obj, dict), "vector_error", f"{context}: example is not an object")
+            if "kind" in obj:
+                schemas.validate(obj, {"$ref": urn + "message"}, context)
+                semantic_message(obj, context, expected_hash)
+            elif "type" in obj:
+                schemas.validate(obj, {"$ref": urn + "event#/properties/event"}, context)
+                semantic_message({"kind": "event", "event": obj}, context)
+            elif "action_id" in obj:
+                schemas.validate(obj, {"$ref": urn + "action#/$defs/actionCandidate"}, context)
+                _check_action_object(obj["action"])
+            elif set(obj) == {"hands"}:
+                schemas.validate(obj["hands"], {"$ref": urn + "common#/$defs/hands"}, context)
+            else:
+                raise ArtifactError("vector_error", f"{context}: unclassified JSON example")
+            count += 1
+    _require(count > 0, "vector_error", "normative JSON examples are missing")
+    return count
 
 
 def main() -> int:
@@ -2679,8 +2309,9 @@ def main() -> int:
         manifest = check_manifest(schemas, p, r)
         check_release_manifest(manifest, p, r)
         vector_count = check_vectors(schemas, manifest)
-        scoring_count, scoring_fixture_count = check_scoring(schemas, r)
-        print(f"OK: schemas={len(schemas.schemas)} vectors={vector_count} scoring_vectors={scoring_count} scoring_fixtures={scoring_fixture_count} profile_hash={manifest['profile_hash']}")
+        scoring_count, scoring_fixture_count, scoring_negative_count = check_scoring(schemas, r)
+        example_count = check_document_examples(schemas, manifest["profile_hash"])
+        print(f"OK: schemas={len(schemas.schemas)} vectors={vector_count} scoring_vectors={scoring_count} scoring_fixtures={scoring_fixture_count} scoring_negative_fixtures={scoring_negative_count} json_examples={example_count} profile_hash={manifest['profile_hash']}")
         return 0
     except ArtifactError as exc:
         print(f"FAIL [{exc.code}]: {exc}", file=sys.stderr)

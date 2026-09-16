@@ -2,12 +2,26 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:yamai:schema:yrc-0003:1.0-draft.6:host-message",
   "oneOf": [
-    {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.6:hello"},
-    {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.6:welcome"},
-    {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.6:event"},
-    {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.6:request"},
-    {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.6:ack"},
-    {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.6:error"},
-    {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.6:snapshot"}
+    {
+      "$ref": "urn:yamai:schema:yrc-0003:1.0-draft.6:hello"
+    },
+    {
+      "$ref": "urn:yamai:schema:yrc-0003:1.0-draft.6:welcome"
+    },
+    {
+      "$ref": "urn:yamai:schema:yrc-0003:1.0-draft.6:event"
+    },
+    {
+      "$ref": "urn:yamai:schema:yrc-0003:1.0-draft.6:request"
+    },
+    {
+      "$ref": "urn:yamai:schema:yrc-0003:1.0-draft.6:ack"
+    },
+    {
+      "$ref": "urn:yamai:schema:yrc-0003:1.0-draft.6:error#/$defs/hostMessage"
+    },
+    {
+      "$ref": "urn:yamai:schema:yrc-0003:1.0-draft.6:snapshot"
+    }
   ]
 }

@@ -1,28 +1,28 @@
 {
   "release_id": "yamai-1.0-draft.6",
   "release_status": "draft",
-  "release_date": "2026-09-16",
+  "release_date": "2026-09-12",
   "published": false,
   "required_git_tag": "yamai-1.0-draft.6",
   "protocol": {
     "name": "yamai",
     "version": "1.0-draft.6",
     "document": "docs/yamai-protocol.md",
-    "message_schema_root": "schemas/yrc-0003/1.0-draft.6/message.schema.json"
+    "message_schema_root": "schemas/yrc-0003/1.0-draft.6/message.schema.json",
+    "proposal_schema": "schemas/yrc-0003/1.0-draft.6/negotiation/join-proposal.schema.json"
   },
   "profiles": [
     {
       "name": "riichi-4p",
       "revision": "1.0-draft.4",
       "document": "docs/yamai-protocol.md",
-      "profile_hash": "sha256:ec1cc41fbea385eccd88a5020c62e6f5e523669d5e2c42ac2f55847dca7f0726"
+      "profile_hash": "sha256:43bd887586659141bb0b0f5de65aa308548533cb1625e3ef7b1053f2c91a6d48"
     }
   ],
   "normative_documents": [
     "docs/yamai-protocol.md"
   ],
   "informational_documents": [
-    "docs/riichi-4p-rules.md",
     "docs/mjai-protocol.md",
     "docs/mjai-problems.md",
     "docs/mjai-implementations.md"
@@ -38,16 +38,17 @@
     "schemas/yrc-0003/1.0-draft.6/host-message.schema.json",
     "schemas/yrc-0003/1.0-draft.6/message.schema.json",
     "schemas/yrc-0003/1.0-draft.6/negotiation/hello.schema.json",
+    "schemas/yrc-0003/1.0-draft.6/negotiation/join-proposal.schema.json",
     "schemas/yrc-0003/1.0-draft.6/negotiation/join.schema.json",
     "schemas/yrc-0003/1.0-draft.6/negotiation/welcome.schema.json",
     "schemas/yrc-0003/1.0-draft.6/player-message.schema.json",
     "schemas/yrc-0003/1.0-draft.6/profile/riichi-4p.schema.json",
     "schemas/yrc-0003/1.0-draft.6/profile/snapshot-state.schema.json",
-    "schemas/yrc-0003/1.0-draft.6/stateful-trace.schema.json",
     "schemas/yrc-0003/1.0-draft.6/vector-manifest.schema.json",
     "schemas/yrc-0005/1.0-draft.4/riichi-4p-rules.schema.json",
     "schemas/yrc-0005/1.0-draft.4/scoring-result.schema.json",
-    "schemas/yrc-0005/1.0-draft.4/scoring-vectors.schema.json"
+    "schemas/yrc-0005/1.0-draft.4/scoring-vectors.schema.json",
+    "schemas/yrc-0003/1.0-draft.6/stateful-trace.schema.json"
   ],
   "registries": [
     "registry/yrc-0003/1.0-draft.6/registry.json",
@@ -60,26 +61,26 @@
   ],
   "validator": {
     "path": "scripts/validate_artifacts.py",
-    "command": "rtk python3 scripts/validate_artifacts.py",
+    "support_files": [
+      "scripts/request_contract.py",
+      "scripts/scoring_reference.py",
+      "scripts/session_contract.py",
+      "scripts/game_contract.py",
+      "scripts/test_scoring_reference.py",
+      "scripts/test_session_contract.py",
+      "scripts/test_game_contract.py",
+      "scripts/test_validator.py",
+      "scripts/check_jsonschema.py",
+      "scripts/score_oracle.py",
+      "tests/test_regressions.py"
+    ],
+    "command": "python3 scripts/validate_artifacts.py",
+    "full_conformance": false,
     "scoring_oracle": {
       "path": "scripts/score_oracle.py",
-      "command": "rtk python3 scripts/score_oracle.py"
-    },
-    "full_conformance": false,
-    "modules": [
-      "scripts/protocol_state.py"
-    ],
-    "regression_tests": {
-      "path": "tests/test_regressions.py",
-      "command": "rtk python3 -B -m unittest discover -s tests -v"
+      "command": "python3 scripts/score_oracle.py",
+      "backend": "scripts/scoring_reference.py"
     }
-  },
-  "formal_verification": {
-    "canonical_model": "verification/quint/yamai_protocol_core.qnt",
-    "bounded_model": "verification/quint/yamai_protocol_core_bounded.qnt",
-    "refinement_mapping": "yamai_protocol_core::refinement_mapping",
-    "scope": "bounded",
-    "session_ledger_model": "verification/quint/yamai_session_ledgers.qnt"
   },
   "profile_hash_scope": {
     "canonicalization": "RFC8785-JCS",
@@ -94,10 +95,11 @@
     ],
     "normalization": {
       "yrc0003_registry": "remove profiles[].hash",
-      "official_vectors": "replace every profile_hash value, every hello.profiles[].hashes value, and each corresponding hash literal in wire strings with sha256: followed by 64 zeroes"
+      "official_vectors": "normalize valid identity hash strings in hello advertisements and join/welcome, including matching wire string tokens; preserve other bytes, schema properties and malformed test values"
     },
     "protocol_version_pins": [
-      "schemas/yrc-0003/1.0-draft.6/message.schema.json"
+      "schemas/yrc-0003/1.0-draft.6/message.schema.json",
+      "schemas/yrc-0003/1.0-draft.6/negotiation/join-proposal.schema.json"
     ],
     "protocol_schema_ref_closure": true,
     "excluded_from_profile_hash": [
@@ -114,5 +116,16 @@
   "security_scope": {
     "authentication_defined": false,
     "public_spectate_replay_requires_separate_authorization_profile": true
+  },
+  "formal_verification": {
+    "models": [
+      "verification/quint/yamai_protocol.qnt",
+      "verification/quint/yamai_protocol_extended.qnt",
+      "verification/quint/yamai_request_liveness.qnt",
+      "verification/quint/yamai_resume_delivery.qnt",
+      "verification/quint/yamai_session_ledgers.qnt"
+    ],
+    "documentation": "verification/README.md",
+    "scope": "bounded control-flow models; no implementation refinement or model composition proof"
   }
 }
