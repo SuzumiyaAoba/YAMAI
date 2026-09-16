@@ -456,7 +456,7 @@ class EventState:
 
     def apply(self, event: dict) -> None:
         kind = event["type"]
-        if kind.startswith("x_"):
+        if kind.startswith("x-"):
             return  # The negotiated owner validates extension state separately.
         if kind == "start_game":
             require(self.game_phase == "not_started", "duplicate start_game")

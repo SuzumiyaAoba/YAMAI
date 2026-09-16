@@ -1,8 +1,9 @@
 // Draft.6 regression model: two independent session ledgers, one game.
 // The finite state space includes a rejected attempt, atomic cancellation,
-// a late stale response, head-equal resume, initial spectate, and replay 1->1.
+// a late stale response (including one queued before end_game), head-equal
+// resume, initial spectate, and replay 1->1.
 // Payload bytes, scoring, wall state and timers remain outside this model.
-// Cancelled is an internal terminal state: draft.7 sends status=stale for
+// Cancelled is an internal terminal state: draft.8 sends status=stale for
 // cancellation. A later stale diagnostic leaves that terminal state unchanged.
 // A and B project two peer ledgers; the third reaction member is abstracted out.
 module yamai_session_ledgers {
@@ -15,7 +16,7 @@ module yamai_session_ledgers {
     previousA: Set[int], previousB: Set[int],
     requestA: Terminal, requestB: Terminal,
     resumed: bool, resumeGame: Game, resumeHead: int,
-    stale: bool,
+    stale: bool, pendingStale: bool,
     spectateSeq: int, spectateReplaces: int, spectatePending: int,
     replaySeq: int, originalSeq: int,
   }
@@ -26,7 +27,7 @@ module yamai_session_ledgers {
     ledgerA: Set(), ledgerB: Set(), previousA: Set(), previousB: Set(),
     requestA: Empty, requestB: Empty,
     resumed: false, resumeGame: NotStarted, resumeHead: 0,
-    stale: false, spectateSeq: 0, spectateReplaces: 0, spectatePending: 0,
+    stale: false, pendingStale: false, spectateSeq: 0, spectateReplaces: 0, spectatePending: 0,
     replaySeq: 0, originalSeq: 0,
   }
 
@@ -70,9 +71,18 @@ module yamai_session_ledgers {
     s' = { resumed: true, resumeGame: s.game, resumeHead: s.headA, ...s },
   }
   action staleAttempt = all {
-    s.stage == 6, s.resumed, not(s.stale),
+    s.stage == 6, s.resumed, not(s.stale), not(s.pendingStale),
     s' = { stale: true, headA: 7, previousA: s.ledgerA,
       ledgerA: s.ledgerA.union(Set(7)), ...s },
+  }
+  action queueLateAttempt = all {
+    s.stage == 6, s.resumed, not(s.stale), not(s.pendingStale),
+    s' = { pendingStale: true, ...s },
+  }
+  action flushLateAttempt = all {
+    s.stage == 7, s.game == Ended, s.pendingStale, not(s.stale),
+    s' = { pendingStale: false, stale: true, headA: s.headA + 1,
+      previousA: s.ledgerA, ledgerA: s.ledgerA.union(Set(s.headA + 1)), ...s },
   }
   action initialSpectate = all {
     s.stage.in(2.to(6)), s.spectateSeq == 0,
@@ -83,19 +93,20 @@ module yamai_session_ledgers {
     s' = { replaySeq: 1, originalSeq: 1, ...s },
   }
   action endGame = all {
-    s.stage == 6, s.stale,
-    s' = { stage: 7, game: Ended, headA: 8, headB: 6,
+    s.stage == 6, s.stale or s.pendingStale,
+    s' = { stage: 7, game: Ended, headA: s.headA + 1, headB: 6,
       previousA: s.ledgerA, previousB: s.ledgerB,
-      ledgerA: s.ledgerA.union(Set(8)), ledgerB: s.ledgerB.union(Set(6)), ...s },
+      ledgerA: s.ledgerA.union(Set(s.headA + 1)), ledgerB: s.ledgerB.union(Set(6)), ...s },
   }
   action step = any {
     startGame, firstKyoku, issueGroup, rejectAttempt, cancelGroup, penalty,
-    resumeAtHead, staleAttempt, initialSpectate, firstReplay, endGame,
+    resumeAtHead, staleAttempt, queueLateAttempt, flushLateAttempt, initialSpectate, firstReplay, endGame,
     s' = s,
   }
 
   val protocol_invariant = and {
     s.stage.in(0.to(7)),
+    s.headA.in(0.to(8)), s.headB.in(0.to(6)),
     s.ledgerA == (if (s.headA == 0) Set() else 1.to(s.headA)),
     s.ledgerB == (if (s.headB == 0) Set() else 1.to(s.headB)),
     s.previousA.subseteq(s.ledgerA), s.previousB.subseteq(s.ledgerB),
@@ -106,8 +117,18 @@ module yamai_session_ledgers {
     s.spectatePending == 0,
     s.replaySeq == s.originalSeq,
     s.stale implies s.requestA == Cancelled,
+    s.pendingStale implies and { not(s.stale), s.requestA == Cancelled },
+    s.game == Ended implies and { s.stage == 7, s.headB == 6,
+      s.headA == (if (s.stale) 8 else 7) },
   }
   val witness_complete = and {
     s.stage == 7, s.resumed, s.stale, s.spectateSeq == 1, s.replaySeq == 1,
   }
+
+  run queuedStaleAfterEndTest = init.then(startGame).then(firstKyoku)
+    .then(issueGroup).then(rejectAttempt).then(cancelGroup).then(penalty)
+    .then(resumeAtHead).then(queueLateAttempt).then(endGame)
+    .then(all { assert(s.game == Ended), assert(s.pendingStale), assert(s.headA == 7), s' = s })
+    .then(flushLateAttempt)
+    .then(all { assert(s.game == Ended), assert(s.stale), assert(s.headA == 8), assert(protocol_invariant), s' = s })
 }

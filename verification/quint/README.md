@@ -1,6 +1,6 @@
 # YAMAI の Quint 検証モデル
 
-このディレクトリはYRC 0003 draft.7の制御フローを有限状態へ射影した5モデルを収録する。JSON parser、麻雀の合法手・点数エンジン、認証実装を置き換えるものではない。実際のwireと採点の検査範囲は[検証ガイド](../README.md)および公式vectorを併せて確認する。
+このディレクトリはYRC 0003 draft.8の制御フローを有限状態へ射影した5モデルを収録する。JSON parser、麻雀の合法手・点数エンジン、認証実装を置き換えるものではない。実際のwireと採点の検査範囲は[検証ガイド](../README.md)および公式vectorを併せて確認する。
 
 ## 5モデルの範囲
 
@@ -10,7 +10,7 @@
 | [yamai_protocol_extended.qnt](yamai_protocol_extended.qnt) | version/profile/hash/capabilityの交渉、gap/重複/衝突、要求、未配送の履歴範囲、snapshot、終局 | seq上限8、2人の変動する反応者と1人の確定済みnone。交渉値・payload同一性は有限tag。安全性と到達性を検査する |
 | [yamai_request_liveness.qnt](yamai_request_liveness.qnt) | 1人の自摸判断または**3人全員**の反応group、個別期限、3種類のron policy、ACK順序、原子的な結果公開 | 1 decision/run、放銃者0、他家1～3、各peerの相対seq 0～3、期限0～2、接続は常時安定 |
 | [yamai_resume_delivery.qnt](yamai_resume_delivery.qnt) | 1peerの履歴・受信位置、有限replay範囲、追加backlog、snapshot、切断中の内部処理、一度だけの適用 | 最大6message、1decision、切断1回、gap1回、snapshot1回。他のgroup memberはothers_readyで要約する。履歴はmessage種別の固定tagを保持する |
-| [yamai_session_ledgers.qnt](yamai_session_ledgers.qnt) | 個別sessionのseq、取消し後の後着診断、先頭位置での再開、初回観戦snapshot、replayの番号一致 | 2peerのledger、seq上限8と6、1局・1取消し。3人目の反応者と牌山・時計・payloadを省略する。内部状態Cancelledはwireの終端staleに対応する |
+| [yamai_session_ledgers.qnt](yamai_session_ledgers.qnt) | 個別sessionのseq、取消し後の後着診断、終局前に受け付けて終局後に記録する通知、先頭位置での再開、初回観戦snapshot、replayの番号一致 | 2peerのledger、seq上限8と6、1局・1取消し。3人目の反応者と牌山・時計・payloadを省略する。内部状態Cancelledはwireの終端staleに対応する |
 
 baseline/extendedの2反応者は実対局の2人groupを許可する意味ではない。実対局ではYRC 0003に従って3人全員へ要求する。3人目の応答・期限も変動する場合と三家和はrequest_livenessで検査する。baseline/extendedのseqをそのまま4本のwireへ割り当ててはならない。peerごとのseqはrequest_liveness、実際にどこまで届いたかはresume_deliveryが扱う。
 

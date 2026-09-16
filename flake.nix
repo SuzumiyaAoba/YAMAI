@@ -655,6 +655,7 @@
             quint typecheck "$model" > "$out/quint-typecheck.log" 2>&1
             quint verify --backend tlc --invariants protocol_invariant \
               --verbosity 1 "$model" > "$out/quint-verify.log" 2>&1
+            quint test "$model" > "$out/quint-tests.log" 2>&1
             quint run --invariants protocol_invariant --witnesses witness_complete \
               --max-steps 40 --max-samples 100 --seed 0x79616d616936 \
               --verbosity 1 "$model" > "$out/quint-witness.log" 2>&1

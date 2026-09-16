@@ -19,6 +19,15 @@ class ValidatorBoundaries(unittest.TestCase):
                 self.assertEqual(type(value['seq']), int)
                 self.assertEqual(value['seq'], 1)
 
+    def test_id_schema_matches_the_entire_decoded_string(self):
+        schemas = v.SchemaSet()
+        schema = {'$ref':f'urn:yamai:schema:yrc-0003:{v.PROTOCOL}:common#/$defs/id'}
+        for value in ('a', 'A0._:-', 'a'*64):
+            schemas.validate(value, schema)
+        for value in ('', 'a'*65, 'a\n', 'a\r\n', 'a ', 'a\u2028', 'a\u2029', 'あ'):
+            with self.subTest(value=repr(value)):
+                self.assert_error('invalid_message', schemas.validate, value, schema)
+
     def test_json_fraction_does_not_round_to_integer(self):
         value = v.strict_load_bytes(b'{"seq":1.00000000000000000000001}')
         self.assertEqual(value['seq'], Decimal('1.00000000000000000000001'))

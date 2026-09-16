@@ -4,7 +4,7 @@ import json
 import unittest
 
 import validate_artifacts as v
-from session_contract import Receiver, SessionError
+from session_contract import Receiver, SessionError, classify_player_input, negotiate
 
 
 class SessionInvariants(unittest.TestCase):
@@ -44,7 +44,7 @@ class SessionInvariants(unittest.TestCase):
             receiver.receive(self.raw(repeated_start))
         self.assertEqual((receiver.applied, receiver.original_seq, sorted(receiver.known)), (1,1,[1]))
 
-    def test_empty_resume_accepts_one_snapshot_without_waiting_forever(self):
+    def test_empty_resume_consumes_permission_to_jump(self):
         trace = self.trace('wire_complete_game')
         receiver = self.receiver(trace['welcome'])
         for step in trace['steps'][:4]:
@@ -58,10 +58,162 @@ class SessionInvariants(unittest.TestCase):
         snapshot = deepcopy(self.vectors['V18_snapshot_state']['positive'])
         self.assertEqual(receiver.receive(self.raw(snapshot)), 'applied')
         self.assertEqual(receiver.receive(self.raw(snapshot)), 'duplicate')
-        snapshot.update(seq=6, replaces_through_seq=5)
+        snapshot.update(seq=7, replaces_through_seq=6)
         with self.assertRaises(SessionError):
             receiver.receive(self.raw(snapshot))
         self.assertEqual(receiver.applied, 5)
+
+    def snapshot_history(self):
+        trace = self.trace('wire_complete_game')
+        messages = [step['message'] for step in trace['steps'][:4]]
+        messages.append(deepcopy(self.vectors['V18_snapshot_state']['positive']))
+        for step in trace['steps'][4:]:
+            message = step['message']
+            message['seq'] += 1
+            messages.append(message)
+        return trace['welcome'], messages
+
+    def test_resume_replays_historical_snapshot_without_finishing_early(self):
+        welcome, messages = self.snapshot_history()
+        # First deliver this exact ledger through an authorized live recovery.
+        live = self.receiver(welcome)
+        for message in messages[:4]:
+            live.receive(self.raw(message))
+        resumed = deepcopy(welcome)
+        resumed.update(resumed=True, replay_from_seq=5, replay_through_seq=4)
+        live.begin_resume(resumed)
+        for message in messages[4:]:
+            live.receive(self.raw(message))
+        self.assertTrue(live.ended)
+        resumed.update(replay_from_seq=1, replay_through_seq=9, scores=live.game.scores)
+        receiver = self.receiver(resumed)
+        for message in messages:
+            self.assertEqual(receiver.receive(self.raw(message)), 'applied')
+            self.assertEqual(receiver.recovery, 'resume' if message['seq'] < 9 else None)
+            if message['kind'] == 'snapshot':
+                self.assertEqual(receiver.receive(self.raw(message)), 'duplicate')
+                self.assertEqual(receiver.active_requests, {'r1'})
+        self.assertEqual(receiver.game.scores, live.game.scores)
+        self.assertEqual(receiver.applications, list(range(1, 10)))
+
+    def test_gap_replays_snapshot_before_or_after_observed_gap_frontier(self):
+        welcome, messages = self.snapshot_history()
+        for frontier in (4, 8):
+            with self.subTest(frontier=frontier):
+                receiver = self.receiver(welcome)
+                receiver.receive(self.raw(messages[0]))
+                self.assertEqual(receiver.receive(self.raw(messages[frontier-1])), 'sequence_gap')
+                for message in messages[1:]:
+                    self.assertEqual(receiver.receive(self.raw(message)), 'applied')
+                    self.assertEqual(receiver.recovery, 'gap' if message['seq'] < frontier else None)
+                self.assertTrue(receiver.ended)
+
+    def test_snapshot_jump_must_cover_entire_resume_frontier(self):
+        welcome, messages = self.snapshot_history()
+        welcome.update(resumed=True, replay_from_seq=1, replay_through_seq=9)
+        receiver = self.receiver(welcome)
+        with self.assertRaises(SessionError):
+            receiver.receive(self.raw(messages[4]))
+        self.assertEqual(receiver.applied, 0)
+
+    def test_gap_during_resume_preserves_both_recovery_frontiers(self):
+        for through, received in ((9, 4), (6, 8)):
+            with self.subTest(through=through, received=received):
+                welcome, messages = self.snapshot_history()
+                welcome.update(resumed=True, replay_from_seq=1, replay_through_seq=through)
+                receiver = self.receiver(welcome)
+                receiver.receive(self.raw(messages[0]))
+                self.assertEqual(receiver.receive(self.raw(messages[received-1])), 'sequence_gap')
+                for message in messages[1:]:
+                    self.assertEqual(receiver.receive(self.raw(message)), 'applied')
+                    self.assertEqual(receiver.recovery is not None, message['seq'] < max(through, received))
+                self.assertTrue(receiver.ended)
+
+    def test_contiguous_snapshot_still_requires_capability(self):
+        welcome, messages = self.snapshot_history()
+        welcome['capabilities'].remove('snapshot')
+        receiver = self.receiver(welcome)
+        for message in messages[:4]:
+            receiver.receive(self.raw(message))
+        with self.assertRaises(SessionError):
+            receiver.receive(self.raw(messages[4]))
+        self.assertEqual(receiver.applied, 4)
+
+    def test_negotiated_extension_is_received_between_and_during_rounds(self):
+        extension = self.trace('active_extension_needs_schema')
+        trace = self.trace('wire_complete_game')
+        welcome = trace['welcome']
+        welcome['capabilities'] = sorted(welcome['capabilities'] + extension['enabled_capabilities'])
+        validate = v._session_schema_validator(self.schemas, self.digest, extension['definitions'], welcome['capabilities'])
+        for during_round in (False, True):
+            with self.subTest(during_round=during_round):
+                receiver = Receiver(welcome, v.strict_load_bytes, validate)
+                for step in trace['steps'][:2 if during_round else 1]:
+                    receiver.receive(self.raw(step['message']))
+                before = deepcopy(vars(receiver.game))
+                message = deepcopy(extension['message'])
+                message['seq'] = receiver.applied + 1
+                self.assertEqual(receiver.receive(self.raw(message)), 'applied')
+                self.assertEqual(vars(receiver.game), before)
+                self.assertEqual(receiver.receive(self.raw(message)), 'duplicate')
+        # The same wire type is still fatal without negotiation.
+        plain_welcome = deepcopy(trace['welcome'])
+        plain_welcome['capabilities'] = ['resume', 'snapshot']
+        plain = self.receiver(plain_welcome)
+        plain.receive(self.raw(trace['steps'][0]['message']))
+        with self.assertRaises(SessionError):
+            plain.receive(self.raw(extension['message']))
+
+    def test_invalid_id_is_a_schema_error_under_every_action_policy(self):
+        trace = self.trace('wire_complete_game')
+        identity = {key:trace['welcome'][key] for key in ('yamai', 'session_id', 'game_id')}
+        for policy in ('reject', 'default', 'chombo'):
+            for suffix in ('\n', '\r\n', ' ', '\t', '\u2028', '\u2029', '\u0000', 'あ'):
+                with self.subTest(policy=policy, suffix=repr(suffix)):
+                    trace['welcome']['rules']['invalid_action_policy'] = policy
+                    validate = v._session_schema_validator(self.schemas, self.digest)
+                    message = dict(identity, kind='action', request_id='r1', action_id='a1'+suffix)
+                    result = classify_player_input(message, {'identity':identity,'known_request_ids':['r1']}, validate)
+                    self.assertEqual(result, {'code':'invalid_message','severity':'recoverable'})
+
+    def test_queued_stale_after_end_game_does_not_change_final_state(self):
+        trace = self.trace('wire_complete_game')
+        trace['steps'][4]['message'].update(status='defaulted', elapsed_ms=21000, time_bank_ms=0)
+        receiver = self.receiver(trace['welcome'])
+        for step in trace['steps']:
+            receiver.receive(self.raw(step['message']))
+        before = deepcopy((vars(receiver.game), receiver.time_bank_ms, receiver.terminal_acks))
+        late = deepcopy(trace['steps'][4]['message'])
+        late.update(seq=9, status='stale', action_id='d0')
+        self.assertEqual(receiver.receive(self.raw(late)), 'applied')
+        self.assertEqual(receiver.receive(self.raw(late)), 'duplicate')
+        self.assertEqual((vars(receiver.game), receiver.time_bank_ms, receiver.terminal_acks), before)
+        identity = {key:trace['welcome'][key] for key in ('yamai','session_id','game_id')}
+        validate = v._session_schema_validator(self.schemas, self.digest)
+        for rid in ('r1', 'unknown'):
+            action = dict(identity, kind='action', request_id=rid, action_id='a1')
+            result = classify_player_input(action, {'identity':identity,'known_request_ids':['r1'],'game_ended':True}, validate)
+            self.assertEqual(result, {'code':'ignored','severity':None})
+        malformed = dict(identity, kind='action', request_id='r1', action_id='a1\n')
+        result = classify_player_input(malformed, {'identity':identity,'known_request_ids':['r1'],'game_ended':True}, validate)
+        self.assertEqual(result, {'code':'invalid_message','severity':'recoverable'})
+        diagnostic = dict(identity, kind='error', seq=10, message='invalid action ID', **result)
+        self.assertEqual(receiver.receive(self.raw(diagnostic)), 'applied')
+        self.assertEqual((vars(receiver.game), receiver.time_bank_ms, receiver.terminal_acks), before)
+        forbidden = deepcopy(trace['steps'][1]['message'])
+        forbidden['seq'] = 11
+        with self.assertRaises(SessionError):
+            receiver.receive(self.raw(forbidden))
+
+    def test_unsupported_mode_or_view_has_a_distinct_error(self):
+        trace = self.trace('unsupported_mode')
+        for context in ({'supported_modes':[]}, {'supported_views':{trace['join']['mode']:[]}}):
+            with self.subTest(context=context):
+                validate = v._session_schema_validator(self.schemas, self.digest)
+                with self.assertRaises(SessionError) as caught:
+                    negotiate(trace['hello'], trace['join'], trace['welcome'], context,
+                              validate, v.PROTOCOL, v.PROFILE_REVISION, self.digest)
+                self.assertEqual(caught.exception.code, 'unsupported_view')
 
     def test_fatal_session_cannot_be_reopened_by_resume(self):
         trace = self.trace('fatal_error_stops_buffered_messages')

@@ -4,7 +4,7 @@
 
 YAMAI は、4人リーチ麻雀の対局ホストと AI プレイヤーが、対局イベント・行動要求・局結果を交換するためのプロトコル仕様提案です。MJAI の牌表記と主要イベント名を引き継ぎ、版交渉、要求と応答の対応、ルール、終局精算、再接続、エラー処理を定義します。
 
-現在の提案は **Protocol `1.0-draft.7` / `riichi-4p` profile `1.0-draft.5`** です。実装と相互運用試験を目的とする Draft であり、安定版の公開には二つ以上の独立実装による検証が必要です。
+現在の提案は **Protocol `1.0-draft.8` / `riichi-4p` profile `1.0-draft.6`** です。実装と相互運用試験を目的とする Draft であり、安定版の公開には二つ以上の独立実装による検証が必要です。
 
 ## 仕様と背景資料
 
@@ -36,9 +36,9 @@ Schema、registry、公式テストベクトル、検査実装は規範本文に
 
 | 成果物 | プロトコル | `riichi-4p` のルール・採点 |
 |---|---|---|
-| JSON Schema | [メッセージと参照先](schemas/yrc-0003/1.0-draft.7/message.schema.json) | [ルール](schemas/yrc-0005/1.0-draft.5/riichi-4p-rules.schema.json)、[採点結果](schemas/yrc-0005/1.0-draft.5/scoring-result.schema.json) |
-| Registry | [識別子と許可値](registry/yrc-0003/1.0-draft.7/registry.json) | [役・符・点数](registry/yrc-0005/1.0-draft.5/registry.json) |
-| テストベクトル | [索引](test-vectors/yrc-0003/1.0-draft.7/manifest.json)、[正例と負例](test-vectors/yrc-0003/1.0-draft.7/vectors.json) | [採点入力と期待結果](test-vectors/yrc-0005/1.0-draft.5/scoring.json) |
+| JSON Schema | [メッセージと参照先](schemas/yrc-0003/1.0-draft.8/message.schema.json) | [ルール](schemas/yrc-0005/1.0-draft.6/riichi-4p-rules.schema.json)、[採点結果](schemas/yrc-0005/1.0-draft.6/scoring-result.schema.json) |
+| Registry | [識別子と許可値](registry/yrc-0003/1.0-draft.8/registry.json) | [役・符・点数](registry/yrc-0005/1.0-draft.6/registry.json) |
+| テストベクトル | [索引](test-vectors/yrc-0003/1.0-draft.8/manifest.json)、[正例と負例](test-vectors/yrc-0003/1.0-draft.8/vectors.json) | [採点入力と期待結果](test-vectors/yrc-0005/1.0-draft.6/scoring.json) |
 
 Protocol Version はメッセージ Schema とその参照先を固定します。`profile_revision` と `profile_hash` は profile 成果物を識別し、hash の対象と正規化方法は release manifest に記載します。採点成果物のパスと Schema ID には `yrc-0005` 名前空間を使用します。
 

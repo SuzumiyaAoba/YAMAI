@@ -32,10 +32,12 @@ def negotiate(hello: dict, join: dict, welcome: dict, context: dict,
     profiles = {p["name"]: p for p in hello["profiles"]}
     require(join["profile"] == "riichi-4p" and join["profile"] in profiles, "unsupported_profile", "profile is not advertised")
     profile = profiles[join["profile"]]
-    require(join["mode"] in context.get("supported_modes", ["play", "spectate", "replay"]), "unsupported_profile", "host does not implement the requested mode")
     require(join["profile_revision"] == revision and join["profile_revision"] in profile["revisions"], "profile_mismatch", "profile revision differs")
     require(join["version"] in profile["protocol_versions"][revision], "profile_mismatch", "profile revision does not support the selected protocol")
     require(join["profile_hash"] == profile_hash == profile["hashes"][revision], "profile_mismatch", "profile hash differs")
+    require(join["mode"] in context.get("supported_modes", ["play", "spectate", "replay"]), "unsupported_view", "host does not implement the requested mode")
+    supported_views = context.get("supported_views", {}).get(join["mode"])
+    require(supported_views is None or join["view"] in supported_views, "unsupported_view", "host does not implement the requested view")
     host = set(hello["capabilities"]["required"] + hello["capabilities"]["optional"])
     player = set(join["capabilities"]["required"] + join["capabilities"]["optional"])
     required = set(hello["capabilities"]["required"] + join["capabilities"]["required"])
@@ -209,8 +211,13 @@ class Receiver:
         self.validate("host-application", message)
         kind = message["kind"]
         if kind == "snapshot":
-            require("snapshot" in self.welcome["capabilities"] and (self.recovery is not None or self.resume_snapshot_allowed), "invalid_message", "snapshot was not requested")
-            required_floor = max(self.applied, self.gap_received, self.through if self.resume_snapshot_allowed else 0)
+            require("snapshot" in self.welcome["capabilities"], "invalid_message", "snapshot capability is not enabled")
+            contiguous = seq == self.applied + 1
+            # A retained snapshot is an ordinary ledger entry. Its old prefix
+            # need not cover the current recovery frontier, and applying it
+            # must not end replay early. Only a jump needs recovery authority.
+            require((contiguous and self.started) or self.recovery is not None or self.resume_snapshot_allowed, "invalid_message", "snapshot lacks bootstrap or recovery authorization")
+            required_floor = self.applied if contiguous else max(self.applied, self.gap_received, self.through if self.resume_snapshot_allowed else 0)
             require(message["replaces_through_seq"] >= required_floor and seq == message["replaces_through_seq"] + 1, "invalid_message", "snapshot replacement range is insufficient")
             state = message["state"]
             require(all(state[key] == self.welcome[key] for key in ("mode", "view", "seat", "players")), "invalid_message", "snapshot changed session identity")
@@ -237,9 +244,8 @@ class Receiver:
             self.active_requests = {r["request_id"] for r in state.get("pending_requests", [])}
             self.awaiting_request = False
             self.request_ids |= self.active_requests
-            self.recovery = None
-            self.resume_snapshot_allowed = False
-            self.gap_received = 0
+            if self.recovery == "initial":
+                self.recovery = None
         else:
             if seq != self.applied + 1:
                 self.gap_received = max(self.gap_received, seq)
@@ -333,13 +339,12 @@ class Receiver:
                             self.game.round["self_state"]["time_bank_ms"] = remaining
             elif kind == "error" and message["severity"] == "fatal":
                 self.closed = True
-            if self.recovery == "resume" and seq >= self.through:
-                self.recovery = None
-            if self.recovery == "gap" and seq >= self.gap_received:
-                self.recovery = None
-                self.gap_received = 0
-            if seq > self.through:
-                self.resume_snapshot_allowed = False
+        recovery_through = max(self.gap_received, self.through if self.resume_snapshot_allowed else 0)
+        if self.recovery in {"resume", "gap"} and seq >= recovery_through:
+            self.recovery = None
+            self.gap_received = 0
+        if seq > self.through:
+            self.resume_snapshot_allowed = False
         self.applied = seq
         self.known[seq] = raw
         self.applications.append(seq)
@@ -371,6 +376,8 @@ def classify_player_input(message: dict, context: dict, validate: Callable[[str,
         validate("player-application", message)
     except SessionError:
         return {"code": "invalid_message", "severity": "recoverable" if known else "fatal"}
+    if context.get("game_ended", False):
+        return {"code": "ignored", "severity": None}
     return {"code": "valid" if known else "invalid_action", "severity": None if known else "recoverable"}
 
 

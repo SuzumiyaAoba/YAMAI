@@ -29,6 +29,15 @@ def main():
         for message in case.get("positive_messages", []):
             check(message, protocol + "message")
             count += 1
+        if case.get("schema_negative", False):
+            negatives = case.get("negative_variants", []) + case.get("negative_messages", [])
+            if "negative" in case:
+                negatives = [case["negative"], *negatives]
+            for message in negatives:
+                validator = Draft202012Validator({"$ref":protocol + "message"}, registry=registry)
+                if validator.is_valid(message):
+                    raise AssertionError("Schema accepted a designated negative message")
+                count += 1
         trace = positive.get("trace", {})
         if trace.get("trace_type") == "session":
             check(trace, protocol + "stateful-trace")

@@ -1,22 +1,22 @@
 {
-  "release_id": "yamai-1.0-draft.7",
+  "release_id": "yamai-1.0-draft.8",
   "release_status": "draft",
   "release_date": "2026-09-16",
   "published": false,
-  "required_git_tag": "yamai-1.0-draft.7",
+  "required_git_tag": "yamai-1.0-draft.8",
   "protocol": {
     "name": "yamai",
-    "version": "1.0-draft.7",
+    "version": "1.0-draft.8",
     "document": "docs/yamai-protocol.md",
-    "message_schema_root": "schemas/yrc-0003/1.0-draft.7/message.schema.json",
-    "proposal_schema": "schemas/yrc-0003/1.0-draft.7/negotiation/join-proposal.schema.json"
+    "message_schema_root": "schemas/yrc-0003/1.0-draft.8/message.schema.json",
+    "proposal_schema": "schemas/yrc-0003/1.0-draft.8/negotiation/join-proposal.schema.json"
   },
   "profiles": [
     {
       "name": "riichi-4p",
-      "revision": "1.0-draft.5",
+      "revision": "1.0-draft.6",
       "document": "docs/yamai-protocol.md",
-      "profile_hash": "sha256:fb9e4ec3b921ca7835cfec5855cf05c091f0f373d6a290e36960686d2a370d2e"
+      "profile_hash": "sha256:c73126a8faef11b166b4e495c58a18b9e39abf49129e1a6cbb05cfddaa1beed9"
     }
   ],
   "normative_documents": [
@@ -28,36 +28,36 @@
     "docs/mjai-implementations.md"
   ],
   "schemas": [
-    "schemas/yrc-0003/1.0-draft.7/application/ack.schema.json",
-    "schemas/yrc-0003/1.0-draft.7/application/action.schema.json",
-    "schemas/yrc-0003/1.0-draft.7/application/error.schema.json",
-    "schemas/yrc-0003/1.0-draft.7/application/event.schema.json",
-    "schemas/yrc-0003/1.0-draft.7/application/request.schema.json",
-    "schemas/yrc-0003/1.0-draft.7/application/snapshot.schema.json",
-    "schemas/yrc-0003/1.0-draft.7/common.schema.json",
-    "schemas/yrc-0003/1.0-draft.7/host-message.schema.json",
-    "schemas/yrc-0003/1.0-draft.7/message.schema.json",
-    "schemas/yrc-0003/1.0-draft.7/negotiation/hello.schema.json",
-    "schemas/yrc-0003/1.0-draft.7/negotiation/join-proposal.schema.json",
-    "schemas/yrc-0003/1.0-draft.7/negotiation/join.schema.json",
-    "schemas/yrc-0003/1.0-draft.7/negotiation/welcome.schema.json",
-    "schemas/yrc-0003/1.0-draft.7/player-message.schema.json",
-    "schemas/yrc-0003/1.0-draft.7/profile/riichi-4p.schema.json",
-    "schemas/yrc-0003/1.0-draft.7/profile/snapshot-state.schema.json",
-    "schemas/yrc-0003/1.0-draft.7/vector-manifest.schema.json",
-    "schemas/yrc-0005/1.0-draft.5/riichi-4p-rules.schema.json",
-    "schemas/yrc-0005/1.0-draft.5/scoring-result.schema.json",
-    "schemas/yrc-0005/1.0-draft.5/scoring-vectors.schema.json",
-    "schemas/yrc-0003/1.0-draft.7/stateful-trace.schema.json"
+    "schemas/yrc-0003/1.0-draft.8/application/ack.schema.json",
+    "schemas/yrc-0003/1.0-draft.8/application/action.schema.json",
+    "schemas/yrc-0003/1.0-draft.8/application/error.schema.json",
+    "schemas/yrc-0003/1.0-draft.8/application/event.schema.json",
+    "schemas/yrc-0003/1.0-draft.8/application/request.schema.json",
+    "schemas/yrc-0003/1.0-draft.8/application/snapshot.schema.json",
+    "schemas/yrc-0003/1.0-draft.8/common.schema.json",
+    "schemas/yrc-0003/1.0-draft.8/host-message.schema.json",
+    "schemas/yrc-0003/1.0-draft.8/message.schema.json",
+    "schemas/yrc-0003/1.0-draft.8/negotiation/hello.schema.json",
+    "schemas/yrc-0003/1.0-draft.8/negotiation/join-proposal.schema.json",
+    "schemas/yrc-0003/1.0-draft.8/negotiation/join.schema.json",
+    "schemas/yrc-0003/1.0-draft.8/negotiation/welcome.schema.json",
+    "schemas/yrc-0003/1.0-draft.8/player-message.schema.json",
+    "schemas/yrc-0003/1.0-draft.8/profile/riichi-4p.schema.json",
+    "schemas/yrc-0003/1.0-draft.8/profile/snapshot-state.schema.json",
+    "schemas/yrc-0003/1.0-draft.8/vector-manifest.schema.json",
+    "schemas/yrc-0005/1.0-draft.6/riichi-4p-rules.schema.json",
+    "schemas/yrc-0005/1.0-draft.6/scoring-result.schema.json",
+    "schemas/yrc-0005/1.0-draft.6/scoring-vectors.schema.json",
+    "schemas/yrc-0003/1.0-draft.8/stateful-trace.schema.json"
   ],
   "registries": [
-    "registry/yrc-0003/1.0-draft.7/registry.json",
-    "registry/yrc-0005/1.0-draft.5/registry.json"
+    "registry/yrc-0003/1.0-draft.8/registry.json",
+    "registry/yrc-0005/1.0-draft.6/registry.json"
   ],
   "test_vectors": [
-    "test-vectors/yrc-0003/1.0-draft.7/manifest.json",
-    "test-vectors/yrc-0003/1.0-draft.7/vectors.json",
-    "test-vectors/yrc-0005/1.0-draft.5/scoring.json"
+    "test-vectors/yrc-0003/1.0-draft.8/manifest.json",
+    "test-vectors/yrc-0003/1.0-draft.8/vectors.json",
+    "test-vectors/yrc-0005/1.0-draft.6/scoring.json"
   ],
   "validator": {
     "path": "scripts/validate_artifacts.py",
@@ -85,21 +85,21 @@
   "profile_hash_scope": {
     "canonicalization": "RFC8785-JCS",
     "inputs": [
-      "schemas/yrc-0003/1.0-draft.7/profile/riichi-4p.schema.json",
-      "schemas/yrc-0005/1.0-draft.5/riichi-4p-rules.schema.json",
-      "schemas/yrc-0005/1.0-draft.5/scoring-vectors.schema.json",
-      "registry/yrc-0003/1.0-draft.7/registry.json",
-      "registry/yrc-0005/1.0-draft.5/registry.json",
-      "test-vectors/yrc-0003/1.0-draft.7/vectors.json",
-      "test-vectors/yrc-0005/1.0-draft.5/scoring.json"
+      "schemas/yrc-0003/1.0-draft.8/profile/riichi-4p.schema.json",
+      "schemas/yrc-0005/1.0-draft.6/riichi-4p-rules.schema.json",
+      "schemas/yrc-0005/1.0-draft.6/scoring-vectors.schema.json",
+      "registry/yrc-0003/1.0-draft.8/registry.json",
+      "registry/yrc-0005/1.0-draft.6/registry.json",
+      "test-vectors/yrc-0003/1.0-draft.8/vectors.json",
+      "test-vectors/yrc-0005/1.0-draft.6/scoring.json"
     ],
     "normalization": {
       "yrc0003_registry": "remove profiles[].hash",
       "official_vectors": "normalize valid identity hash strings in hello advertisements and join/welcome, including matching wire string tokens; preserve other bytes, schema properties and malformed test values"
     },
     "protocol_version_pins": [
-      "schemas/yrc-0003/1.0-draft.7/message.schema.json",
-      "schemas/yrc-0003/1.0-draft.7/negotiation/join-proposal.schema.json"
+      "schemas/yrc-0003/1.0-draft.8/message.schema.json",
+      "schemas/yrc-0003/1.0-draft.8/negotiation/join-proposal.schema.json"
     ],
     "protocol_schema_ref_closure": true,
     "excluded_from_profile_hash": [

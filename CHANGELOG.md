@@ -2,6 +2,18 @@
 
 YAMAI の仕様と成果物の変更、および版間の互換性を記録する。各版は Draft であり、現行成果物は [release manifest](release-manifest.json) に従って取得する。
 
+## 1.0-draft.8 / profile 1.0-draft.6 — 2026-09-16（未公開）
+
+- 履歴中のsnapshotを連続したseqで再送できるよう、欠落範囲を飛び越える復旧用snapshotと受信条件を分離した。古いsnapshotで今回の再送終端を覆う必要はなく、終端まで回復待ちを維持する。新規生成の理由はホスト側で制限・監査する。
+- IDのSchemaを文字列全体へ一致させ、末尾の改行などを候補外actionやchomboとして扱う前にSchema違反として拒否する。
+- 終局前に受け付けた後着actionへのstale通知は、end_game後にも一度だけ記録できることを明記した。終局後の新規actionは破棄し、次sessionの開始前に保留通知をcommitする。
+- 参照受信実装の拡張event判定を仕様の`x-<owner>-<name>`へ合わせ、交渉済み拡張を含むsession全体を検査する。
+- 有効だが未対応のmode/viewはunsupported_viewへ統一し、profile非対応・構造違反との検査順を定義した。
+- hello.profilesは本文どおり1件以上とし、既存の正例を修正した。公式ベクトルV276〜V281、回帰テスト、独立Schema負例検査、終了後の保留通知を扱う有限モデルを追加した。
+- Protocol Version、profile成果物のrevision/hash、Schema ID、registry、release manifestを一式更新した。profileの役・符・点数式は変更していない。
+
+`1.0-draft.7` / profile `1.0-draft.5` とは非互換である。実装は成果物一式を更新し、WebSocket subprotocolに`yamai.1.draft8`を使用する。受信側は連続したsnapshotで回復待ちを早期終了せず、送信側は新規snapshotの生成理由と終局後の通知範囲を守る必要がある。
+
 ## 1.0-draft.7 / profile 1.0-draft.5 — 2026-09-16（未公開）
 
 - 再開時の `start_game.scores` は開始点、`welcome.scores` は同期対象時点の点数とし、一致比較を新規sessionだけに限定した。

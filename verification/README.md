@@ -1,6 +1,6 @@
 # YAMAI 検証ガイド
 
-本書は [YRC 0003](../docs/yamai-protocol.md) `1.0-draft.7` と `riichi-4p` profile `1.0-draft.5` の派生成果物について、検査方法と適合項目との対応を説明する。規範要件は YRC 0003 に従い、検査対象の版とファイルは [release manifest](../release-manifest.json) で確認する。
+本書は [YRC 0003](../docs/yamai-protocol.md) `1.0-draft.8` と `riichi-4p` profile `1.0-draft.6` の派生成果物について、検査方法と適合項目との対応を説明する。規範要件は YRC 0003 に従い、検査対象の版とファイルは [release manifest](../release-manifest.json) で確認する。
 
 ## 実行方法
 
@@ -35,7 +35,7 @@ nix build path:.#checks.aarch64-darwin.artifact-validator --no-link --print-out-
 | 検査実装 | 対象 |
 |---|---|
 | [validate_artifacts.py](../scripts/validate_artifacts.py) | JSON、Schema の参照と対応 keyword、registry、版、profile hash、本文 JSON 例、公式ベクトル |
-| [check_jsonschema.py](../scripts/check_jsonschema.py) | 独立した Draft 2020-12 実装によるメタ Schema と正例の検査。全参照をローカルで解決する |
+| [check_jsonschema.py](../scripts/check_jsonschema.py) | 独立した Draft 2020-12 実装によるメタ Schema・正例・指定された負例の検査。全参照をローカルで解決する |
 | [request_contract.py](../scripts/request_contract.py) | 全3 member の選択、競合解決、ACK、期限、再送、取消し |
 | [session_contract.py](../scripts/session_contract.py) | 交渉、token、seq、再送、snapshot、transport の再利用、資源上限と時計 |
 | [game_contract.py](../scripts/game_contract.py) | 完全な判断局面の合法候補、受信 event の牌数・牌山・鳴き・槓・リーチ・責任払い・精算・次局 |
@@ -50,7 +50,7 @@ stateful trace は1つの peer session の時刻付き message と不変の wire
 
 ## 適合35項目との対応
 
-番号はYRC 0003 §17と一致する。V番号は現行[公式vectors](../test-vectors/yrc-0003/1.0-draft.7/vectors.json)のID接頭辞であり、各行のvectorは正例と負例を持つ。採点fixtureは[scoring.json](../test-vectors/yrc-0005/1.0-draft.5/scoring.json)にある。本文だけの要件を、Schemaが全て検証したとは扱わない。
+番号はYRC 0003 §17と一致する。V番号は現行[公式vectors](../test-vectors/yrc-0003/1.0-draft.8/vectors.json)のID接頭辞であり、各行のvectorは正例と負例を持つ。採点fixtureは[scoring.json](../test-vectors/yrc-0005/1.0-draft.6/scoring.json)にある。本文だけの要件を、Schemaが全て検証したとは扱わない。
 
 | §17 | 主な本文 | 正負vector・実行検査 | 検証する境界 |
 |---|---|---|---|
@@ -98,5 +98,7 @@ stateful trace は1つの peer session の時刻付き message と不変の wire
 - game_contract は完全な1判断局面の候補生成、精算済み条件からの次局、受信者が観測できる event 状態を検査する。他家の非公開手牌やホストの牌山順列は復元しない。非公開情報を要する役の判定には、ホストの完全情報と採点 fixture が必要である。
 - event 投影の fixture は event payload と前後状態を検査する。envelope、request、ACK の配送と時計は wire trace、request contract、形式モデルで扱い、Receiver で観測可能な部分を接続する。
 - 5つの形式モデルは、それぞれの有限境界と環境仮定の下で性質を検査する。牌の全組合せ、任意の拡張・ネットワーク、認証サービス、実装コードとの refinement 証明、モデル間の合成証明は対象外である。
+
+draft.8のV276〜V281は、履歴中snapshotと再送終端、ID全体の文字種、終局後の保留stale通知、交渉済み拡張のsession受信、mode/viewの拒否コード、helloのprofile最小件数を検査する。回帰テストではsnapshotがgapの観測終端の前後にある場合、未要求のseq飛越し、未交渉snapshot、不正IDとchomboの分離も検査する。独立Schema検査は`schema_negative: true`と明記した公式負例も拒否することを確認する。
 
 検査の成功だけでは YRC 0003 第17節の完全適合や、独立実装間の相互運用性を保証しない。実装の適合表明と安定版の公開条件は [仕様本文](../docs/yamai-protocol.md) と [仕様策定・リリースプロセス](../docs/specification-process.md) に従う。
