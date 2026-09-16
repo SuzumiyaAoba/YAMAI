@@ -72,7 +72,7 @@ MJAI は、次の2つの意味で使用される。
 
 本書の「規定されている」は引用元が明示的に要求していることを表す。「観測される」は公開実装のコードパスから確認できることを表す。「一般的である」は複数の独立実装に同じ表現が存在することを表す。
 
-本書中の `MUST`、`SHOULD` および `MAY` は、既存資料を引用する箇所を除き、[RFC 2119] の規範要件を表さない。YAMAI の規範要件は、組込み `riichi-4p` の採点規則を含め、[YRC 0003](yamai-protocol.md) `1.0-draft.6` が定義する。
+本書中の `MUST`、`SHOULD` および `MAY` は、既存資料を引用する箇所を除き、[RFC 2119] の規範要件を表さない。YAMAI の規範要件は、組込み `riichi-4p` の採点規則を含め、[YRC 0003](yamai-protocol.md) `1.0-draft.7` が定義する。
 
 ## 2. 用語
 
@@ -305,7 +305,7 @@ MJAI の wire compatibility を維持したまま上記を完全に解決する�
 
 MJAI には、プロトコル版、`type`、`ryukyoku.reason`、役ID、ルールIDまたは拡張フィールドを一意に管理する公式 registry が存在しない。そのため、同名拡張の衝突を機械的に防止できない。
 
-本書は新しい MJAI 値を登録しない。YAMAI 用 registry は [YRC 0003] `1.0-draft.6` が別名前空間として定義する。
+本書は新しい MJAI 値を登録しない。YAMAI 用 registry は [YRC 0003] `1.0-draft.7` が別名前空間として定義する。
 
 ## 12. References
 
@@ -332,7 +332,7 @@ MJAI には、プロトコル版、`type`、`ryukyoku.reason`、役ID、ルー�
 - [RFC 2119] Bradner, S., “Key words for use in RFCs to Indicate Requirement Levels”, BCP 14, RFC 2119, March 1997.  
   https://www.rfc-editor.org/rfc/rfc2119
 - [YRC 0002] YAMAI Project, “MJAI プロトコルの設計上の欠陥”.
-- [YRC 0003] YAMAI Project, “YAMAI Protocol Version 1 (1.0-draft.6)”.
+- [YRC 0003] YAMAI Project, “YAMAI Protocol Version 1 (1.0-draft.7)”.
 - [YRC 0004] YAMAI Project, “代表的 MJAI 実装プロファイル”.
 
 ## Appendix A. 方言識別票

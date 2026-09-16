@@ -20,6 +20,11 @@ TERMINALS = frozenset((0, 8, 9, 17, 18, 26))
 GREENS = frozenset((19, 20, 21, 23, 25, 32))
 DRAGONS = frozenset((31, 32, 33))
 WINDS = frozenset((27, 28, 29, 30))
+MAX_INTEGER = 2**53 - 1
+MAX_GAME_EVENTS = 100_000
+# All twelve registered yakuman plus all four double conditions, even though
+# they cannot all coexist: 16 * 8000 basic points * 6 for a dealer ron.
+MAX_HAND_POINTS = 768_000
 
 
 class ScoringError(ValueError):
@@ -31,6 +36,28 @@ class ScoringError(ValueError):
 def require(condition: bool, code: str, message: str) -> None:
     if not condition:
         raise ScoringError(code, message)
+
+
+def score_magnitude_bound(rules: dict[str, Any]) -> int:
+    """Conservative absolute score bound over the complete core event budget.
+
+    Honba and deposits cannot exceed the event count. A settlement has at
+    most three winners (or three tsumo payers); each seat's absolute delta
+    is bounded by the total transfer plus all deposits. Python integers keep
+    this admission check exact even when an offered rule fails the bound.
+    """
+    events = MAX_GAME_EVENTS
+    stick = rules["riichi_stick_value"]
+    honba = max(rules["honba_ron_value"], rules["honba_tsumo_value_per_payer"])
+    delta = max(stick, rules["noten_payment"]["total_points"],
+                rules["chombo"]["penalty_points"],
+                3 * MAX_HAND_POINTS + events * (3 * honba + stick))
+    return rules["starting_points"] + events * delta
+
+
+def validate_score_bounds(rules: dict[str, Any]) -> None:
+    require(score_magnitude_bound(rules) <= MAX_INTEGER, "invalid_message",
+            "rules cannot guarantee scores within the wire integer range")
 
 
 def tile_index(tile: str) -> int:
@@ -461,6 +488,7 @@ def settle_win(data: dict[str, Any], state: dict[str, Any], score: dict[str, Any
 
 def calculate_fixture(fixture: dict[str, Any], base_rules: dict[str, Any]) -> dict[str, Any]:
     rules = {**base_rules, **fixture["rule_overrides"]}
+    validate_score_bounds(rules)
     require(not rules["local_yaku"], "invalid_context", "the core scoring reference has no negotiated local-yaku handler")
     data,state = fixture["input"],fixture["state"]
     require(sum(state["scores"])+state["kyotaku"]*rules["riichi_stick_value"]==4*rules["starting_points"],

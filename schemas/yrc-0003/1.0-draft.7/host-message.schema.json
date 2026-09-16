@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:yamai:schema:yrc-0003:1.0-draft.7:host-message",
+  "oneOf": [
+    {
+      "$ref": "urn:yamai:schema:yrc-0003:1.0-draft.7:hello"
+    },
+    {
+      "$ref": "urn:yamai:schema:yrc-0003:1.0-draft.7:welcome"
+    },
+    {
+      "$ref": "urn:yamai:schema:yrc-0003:1.0-draft.7:event"
+    },
+    {
+      "$ref": "urn:yamai:schema:yrc-0003:1.0-draft.7:request"
+    },
+    {
+      "$ref": "urn:yamai:schema:yrc-0003:1.0-draft.7:ack"
+    },
+    {
+      "$ref": "urn:yamai:schema:yrc-0003:1.0-draft.7:error#/$defs/hostMessage"
+    },
+    {
+      "$ref": "urn:yamai:schema:yrc-0003:1.0-draft.7:snapshot"
+    }
+  ]
+}

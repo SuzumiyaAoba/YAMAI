@@ -4,13 +4,13 @@ import json
 from pathlib import Path
 import unittest
 
-from scoring_reference import TILES, calculate_fixture, score_hand, waits
+from scoring_reference import TILES, ScoringError, calculate_fixture, score_hand, waits, validate_score_bounds
 
 
 class ScoringInvariants(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        path = Path(__file__).resolve().parents[1] / 'test-vectors/yrc-0005/1.0-draft.4/scoring.json'
+        path = Path(__file__).resolve().parents[1] / 'test-vectors/yrc-0005/1.0-draft.5/scoring.json'
         data = json.loads(path.read_text())
         cls.rules = data['rules']
         cls.fixtures = {f['id']: f for f in data['fixtures']}
@@ -65,6 +65,33 @@ class ScoringInvariants(unittest.TestCase):
         self.assertEqual(result['pao'], [])
         self.assertEqual(result['hand_points'], 96000)
         self.assertEqual(result['payments'], [{'from':0,'to':1,'points':96300}])
+
+    def test_rule_bound_rejects_the_first_hundred_above_admissible_start(self):
+        # Default rules reserve 19,230,400,000,000 points for the event budget.
+        rules = {**self.rules, 'starting_points':8987968854740900}
+        validate_score_bounds(rules)
+        rules['starting_points'] += 100
+        with self.assertRaises(ScoringError) as error:
+            validate_score_bounds(rules)
+        self.assertEqual(error.exception.code, 'invalid_message')
+
+    def test_individually_safe_amounts_can_exceed_the_combined_budget(self):
+        for changes in ({'honba_ron_value':200000}, {'riichi_stick_value':400000}):
+            validate_score_bounds({**self.rules, **changes})
+        f = deepcopy(self.fixtures['yaku_tanyao'])
+        f['rule_overrides'].update(honba_ron_value=200000, riichi_stick_value=400000)
+        with self.assertRaises(ScoringError) as error:
+            calculate_fixture(f, self.rules)
+        self.assertEqual(error.exception.code, 'invalid_message')
+
+    def test_reviewed_overflow_is_rejected_before_scoring(self):
+        f = deepcopy(self.fixtures['yaku_tanyao'])
+        f['rule_overrides']['starting_points'] = 9007199254740900
+        for state in (f['state'], f['state']['pre_state']):
+            state['scores'] = [9007199254740900]*4
+        with self.assertRaises(ScoringError) as error:
+            calculate_fixture(f, self.rules)
+        self.assertEqual(error.exception.code, 'invalid_message')
 
 
 if __name__ == '__main__':

@@ -1,6 +1,6 @@
 # YAMAI 検証ガイド
 
-本書は [YRC 0003](../docs/yamai-protocol.md) `1.0-draft.6` と `riichi-4p` profile `1.0-draft.4` の派生成果物について、検査方法と適合項目との対応を説明する。規範要件は YRC 0003 に従い、検査対象の版とファイルは [release manifest](../release-manifest.json) で確認する。
+本書は [YRC 0003](../docs/yamai-protocol.md) `1.0-draft.7` と `riichi-4p` profile `1.0-draft.5` の派生成果物について、検査方法と適合項目との対応を説明する。規範要件は YRC 0003 に従い、検査対象の版とファイルは [release manifest](../release-manifest.json) で確認する。
 
 ## 実行方法
 
@@ -50,7 +50,7 @@ stateful trace は1つの peer session の時刻付き message と不変の wire
 
 ## 適合35項目との対応
 
-番号はYRC 0003 §17と一致する。V番号は現行[公式vectors](../test-vectors/yrc-0003/1.0-draft.6/vectors.json)のID接頭辞であり、各行のvectorは正例と負例を持つ。採点fixtureは[scoring.json](../test-vectors/yrc-0005/1.0-draft.4/scoring.json)にある。本文だけの要件を、Schemaが全て検証したとは扱わない。
+番号はYRC 0003 §17と一致する。V番号は現行[公式vectors](../test-vectors/yrc-0003/1.0-draft.7/vectors.json)のID接頭辞であり、各行のvectorは正例と負例を持つ。採点fixtureは[scoring.json](../test-vectors/yrc-0005/1.0-draft.5/scoring.json)にある。本文だけの要件を、Schemaが全て検証したとは扱わない。
 
 | §17 | 主な本文 | 正負vector・実行検査 | 検証する境界 |
 |---|---|---|---|
@@ -58,20 +58,20 @@ stateful trace は1つの peer session の時刻付き message と不変の wire
 | 2 | §4.2 | V02/V06、test_validator | UTF-8/CRLFの分割、複数frame、EOF |
 | 3 | §5/13 | V105–V108/V113 | 連続prefix、同一byte再送、衝突時の原子的拒否 |
 | 4 | §8/9 | V35–V50/V100–V103 | 正常・後着・重複・別IDの再送 |
-| 5 | §7.3/10 | V176–V196/V235–V246/V253/V258–V259 | 全鳴き、宣言と成立、槍槓時の取消し |
+| 5 | §7.3/10 | V176–V196/V235–V246/V253/V258–V259/V272 | 全鳴き、宣言と成立、槍槓時の取消し、槍槓不可でも3seatの反応要求 |
 | 6 | §8.3/10.3 | V197–V200/V247–V249 | 複合リーチ、鳴かれた打牌、供託の一回控除 |
 | 7 | §7.3 | V192–V196/V256/V258–V260 | 赤牌の物理枚数、consumed multiset、同値牌の自摸切り区別 |
 | 8 | §8.4 | V41–V43/V48、採点複数ロンfixture | 明示選択だけを数え、頭ハネ距離・三家和を確定 |
 | 9 | §7.2 | V201–V210/V227–V234/V245–V246 | 九種九牌、見逃し、途中流局の優先順、通常流局 |
 | 10 | §8.5/9.1 | V35–V39/V44/V46/V50 | strict deadline、0期限、既定選択、rejected後の時計 |
 | 11 | §11 | V22/V143–V150 | 自分・他家・public・fullでの牌の投影 |
-| 12 | §4.1/7.2/15 | V05/V06/V70–V72/V119、test_validator、全候補fixture | byte/深さ/512候補上限、切り詰め禁止 |
+| 12 | §4.1/7.2/15 | V05/V06/V70–V72/V119/V274–V275、N29、test_validator、全候補fixture | byte/深さ/512候補上限、切り詰め禁止、点数ルールの個別・組合せ上限 |
 | 13 | §10.2 | V211–V226/V239–V244 | 槓種ごとの公開時点、保留ドラと連続槓 |
 | 14 | §7.5、§7.6.3–7.6.8 | V14/V23、採点fixture | 全分解からの役・符・bonus・役満・支払い |
 | 15 | §13.1/13.3 | V105–V115/V124 | 欠落で適用しない、有限再送、snapshot floor |
 | 16 | §13.1/13.2 | V85–V93/V135–V140 | rotate/期限切れ/一回使用/失敗時非消費 |
 | 17 | §7.4/11 | V17/V104/V123/V125 | 終局後の次session、旧action無視、同点順位 |
-| 18 | §13.3 | V53–V62、EventStateとsnapshot検査 | 未使用seq、手牌枚数、待ち要求、状態と残量 |
+| 18 | §13.3 | V53–V62/V271、EventStateとsnapshot検査、test_session_contract | 未使用seq、手牌枚数、待ち要求、状態と残量、局間復元後の次局開始 |
 | 19 | §9/13 | V19/V55/V60/V62/V109–V110、delivery形式モデル | 固定選択・元の時計、空範囲を含む再配送 |
 | 20 | §7.6.7/7.6.8 | V20、採点multiple-ron/pao fixture | 本場配分、責任役満成分、供託の別会計 |
 | 21 | §7.2 | V151–V175 | トビ・連荘・アガリ止め・延長の順序 |
@@ -83,7 +83,7 @@ stateful trace は1つの peer session の時刻付き message と不変の wire
 | 27 | §7.2/7.5、§7.6.8 | V27/V57–V58/V151–V175、noten_0–noten_4 | 聴牌人数、供託繰越・配分・終了時残本数 |
 | 28 | §10.2/11、§7.6.5 | V211–V226/V124、裏ドラ採点fixture | 嶺上和了前の公開、裏ドラ枚数、元記録cursor |
 | 29 | §9/15 | V31–V50/V116–V122/V139/V141、test_game_contract | 猶予、切り捨て前期限、予約済み出力、再送で二重課金しない |
-| 30 | §3.1/6.4/12 | V63–V103/V108/V261、Receiver回帰 | Applyの原子性、errorの方向・優先順 |
+| 30 | §3.1/6.4/12 | V63–V103/V108/V261/V273、Receiver回帰 | Applyの原子性、errorの方向・優先順、同一seqの衝突と不正payloadの競合 |
 | 31 | §3.2/5/13 | V105–V115/V261–V262 | wire ledger、再送byte、transactionの非交錯 |
 | 32 | §8.1.1/8.4/9 | V35–V50/V263/V267 | 全3選択、strict deadline、ACKと結果の同一transaction |
 | 33 | §6.2/13 | V85–V93/V136/V266/V268–V270 | 明示seat、最小空席、resumeでの再指定禁止、replay target |

@@ -467,7 +467,9 @@ class EventState:
             return
         require(self.game_phase not in {"not_started", "ended"}, "event outside a started game")
         if kind == "start_kyoku":
-            require(self.game_phase == "between_kyoku" and self.next is not None and self.next["type"] != "end_game", "unexpected next round")
+            # A between-round snapshot carries coordinates, without the prior
+            # result's renchan/rotate tag. Either representation starts a round.
+            require(self.game_phase == "between_kyoku" and self.next is not None and self.next.get("type") != "end_game", "unexpected next round")
             require(all(event[k] == self.next[k] for k in ("bakaze", "kyoku", "oya", "honba", "kyotaku", "extension_round")), "start_kyoku differs from settled next coordinate")
             require(event["scores"] == self.scores, "start_kyoku changed scores")
             require(all(len(h["tiles"]) == 13 if "tiles" in h else h["count"] == 13 for h in event["hands"]), "initial hands must have thirteen tiles")
@@ -484,7 +486,7 @@ class EventState:
             self._inventory()
             return
         if kind == "end_game":
-            require(self.game_phase == "between_kyoku" and self.next is not None and self.next["type"] == "end_game", "end_game without final round decision")
+            require(self.game_phase == "between_kyoku" and self.next is not None and self.next.get("type") == "end_game", "end_game without final round decision")
             require(event["scores"] == self.scores and event["kyotaku"] == self.kyotaku and event["rankings"] == rankings(self.scores), "final scores/deposits/rankings differ")
             self.game_phase = "ended"
             return

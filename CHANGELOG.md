@@ -2,7 +2,18 @@
 
 YAMAI の仕様と成果物の変更、および版間の互換性を記録する。各版は Draft であり、現行成果物は [release manifest](release-manifest.json) に従って取得する。
 
-## 未公開の追補 — 2026-09-16
+## 1.0-draft.7 / profile 1.0-draft.5 — 2026-09-16（未公開）
+
+- 再開時の `start_game.scores` は開始点、`welcome.scores` は同期対象時点の点数とし、一致比較を新規sessionだけに限定した。
+- 槍槓できない暗槓も、他家3seat全員への反応要求・選択・終端ACKを経て成立することを状態前後条件表へ統一した。
+- 保持済みseqのbyte衝突判定をpayload Schema検査より先に行うよう、エラー優先順の表と本文を統一した。
+- 局間snapshotの `next_kyoku` に `type` を要求していた参照実装を修正し、復元後の次局開始・自摸、座標不一致、早すぎる終局を回帰検査する。
+- 開始点・本場・供託・流局・penaltyを含むゲーム全体の点数上界を定義した。Schemaの個別上限と意味検査の組合せ条件を満たさないrulesを、ゲーム開始前に拒否する。
+- 公式ベクトルV271〜V275、採点負例N29と回帰テストを追加し、Schema、registry、profile hash、release manifestおよび現行版の参照先を更新した。
+
+`1.0-draft.6` / profile `1.0-draft.4` とは非互換である。実装はProtocol Version、profile revision/hash、Schema・registry・vectorを一式で更新する。WebSocket subprotocolは `yamai.1.draft7` を使用する。通常の点数設定とメッセージ構造は維持するが、整数範囲を保証できない点数ルールは受理しない。
+
+## draft.6への未公開の追補 — 2026-09-16
 
 - draft.6の検査実装・公式ベクトル拡充と仕様レビューの修正を統合した。
 - 初局の開始条件、複合リーチの宣言、槍槓判定が不要な槓の成立条件を状態前後条件表に反映した。
