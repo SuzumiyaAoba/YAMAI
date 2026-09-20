@@ -286,6 +286,241 @@ class ProtocolRegressionTests(unittest.TestCase):
         state.apply(self._end_kyoku({"type": "hora", "wins": [self._win(ura_dora_markers=["5m"])]},
                                     [-1000, 1000, 0, 0], [24000, 26000, 25000, 25000]))
 
+    def _reach_window_snapshot(self):
+        snapshot = copy.deepcopy(VECTORS["V18_snapshot_state"]["positive"])
+        kyoku = snapshot["state"]["kyoku"]
+        kyoku["turn"].update(phase="awaiting_responses",
+                             last_event={"type": "dahai", "actor": 0, "pai": "9s", "tsumogiri": True})
+        kyoku["hands"][0]["tiles"].remove("9s")
+        kyoku["rivers"][0].append({"pai": "9s", "tsumogiri": True, "reach": True, "called_by": None})
+        kyoku["reach_status"][0].update(state="declared", double=True)
+        kyoku["first_turn_eligible"][0] = False
+        snapshot["state"]["pending_requests"] = []
+        return snapshot
+
+    def test_snapshot_reach_status_must_follow_its_declaration_window(self):
+        # A declared-but-unaccepted riichi exists only while the declaration
+        # discard's own reaction window is open (§13.3, §10.4).
+        validator._check_snapshot(self._reach_window_snapshot())
+
+        def expect(pattern, mutate):
+            bad = self._reach_window_snapshot()
+            mutate(bad["state"]["kyoku"])
+            with self.assertRaisesRegex(validator.ArtifactError, pattern):
+                validator._check_snapshot(bad)
+
+        def kan_cause(kyoku):
+            kyoku["turn"]["last_event"] = {"type": "ankan_declared", "actor": 0, "consumed": ["1m"] * 4}
+            kyoku["pending_kan"] = kyoku["turn"]["last_event"]
+        expect("discard window", kan_cause)
+        expect("unmarked", lambda k: k["rivers"][0][0].update(reach=False))
+        expect("ippatsu", lambda k: k["reach_status"][0].update(ippatsu=True))
+        expect("eligibility", lambda k: k["reach_status"][0].update(double=False))
+        expect("precede any declaration", lambda k: k["reach_status"][1].update(double=True))
+        expect("precede any declaration", lambda k: k["reach_status"][1].update(ippatsu=True))
+
+    def _accepted_reach_snapshot(self, ippatsu_window):
+        # An accepted reach can only appear at a later boundary: either the
+        # declarer's next discard (tail unmarked, one-shot spent) or another
+        # seat's decision while the one-shot window is still open. The
+        # declaration tile keeps its reach mark in the river.
+        snapshot = self._reach_window_snapshot()
+        kyoku = snapshot["state"]["kyoku"]
+        kyoku["reach_status"][0].update(state="accepted", ippatsu=ippatsu_window)
+        kyoku["kyotaku"] = snapshot["state"]["kyotaku"] = 1
+        if ippatsu_window:
+            kyoku["turn"].update(actor=1, phase="awaiting_action",
+                                 last_event={"type": "tsumo", "actor": 1, "pai": None})
+            kyoku["hands"][1]["count"] = 14
+        else:
+            kyoku["turn"]["last_event"] = {"type": "dahai", "actor": 0, "pai": "5p", "tsumogiri": True}
+            kyoku["rivers"][0].append({"pai": "5p", "tsumogiri": True, "reach": False, "called_by": None})
+        kyoku["wall_remaining"] = 68
+        return snapshot
+
+    def test_snapshot_accepted_reach_needs_a_marked_discard(self):
+        validator._check_snapshot(self._accepted_reach_snapshot(ippatsu_window=False))
+        validator._check_snapshot(self._accepted_reach_snapshot(ippatsu_window=True))
+
+        def expect(pattern, mutate, ippatsu_window=False):
+            bad = self._accepted_reach_snapshot(ippatsu_window)
+            mutate(bad["state"]["kyoku"])
+            with self.assertRaisesRegex(validator.ArtifactError, pattern):
+                validator._check_snapshot(bad)
+
+        expect("marked discard", lambda k: k["rivers"][0][0].update(reach=False))
+        expect("eligibility", lambda k: k["reach_status"][0].update(double=False))
+        expect("post-reach discard", lambda k: k["reach_status"][0].update(ippatsu=True))
+        expect("river tail", lambda k: k["rivers"][0][-1].update(pai="8p"))
+        expect("deposit", lambda k: k.update(kyotaku=0))
+        expect("open reach window", lambda k: k["reach_status"][0].update(ippatsu=False), ippatsu_window=True)
+
+    def _called_meld_snapshot(self):
+        # Seat 1 called pon on seat 0's "E" earlier; the current cause is
+        # seat 0's fresh tsumogiri discard, so the called tile sits inside
+        # seat 0's river rather than at its tail.
+        snapshot = copy.deepcopy(VECTORS["V18_snapshot_state"]["positive"])
+        kyoku = snapshot["state"]["kyoku"]
+        kyoku["hands"][0]["tiles"].remove("E")
+        kyoku["hands"][1] = {"count": 10}
+        kyoku["rivers"][0] = [{"pai": "E", "tsumogiri": False, "reach": False, "called_by": 1},
+                              {"pai": "5p", "tsumogiri": True, "reach": False, "called_by": None}]
+        kyoku["rivers"][1] = [{"pai": "9m", "tsumogiri": False, "reach": False, "called_by": None}]
+        kyoku["melds"][1] = [{"type": "pon", "actor": 1, "target": 0, "pai": "E", "consumed": ["E", "E"]}]
+        kyoku["turn"].update(actor=0, phase="awaiting_responses",
+                             last_event={"type": "dahai", "actor": 0, "pai": "5p", "tsumogiri": True})
+        kyoku["first_turn_eligible"] = [False] * 4
+        kyoku["wall_remaining"] = 68
+        snapshot["state"]["pending_requests"] = []
+        return snapshot
+
+    def test_snapshot_called_tile_links_river_and_meld(self):
+        # A called discard stays in the discarder's river with `called_by`
+        # set; the caller's meld must name the same tile and target seat.
+        validator._check_snapshot(self._called_meld_snapshot())
+
+        def expect(pattern, mutate):
+            bad = self._called_meld_snapshot()
+            mutate(bad["state"]["kyoku"])
+            with self.assertRaisesRegex(validator.ArtifactError, pattern):
+                validator._check_snapshot(bad)
+
+        expect("matching meld", lambda k: k["rivers"][0][0].update(called_by=2))
+        expect("matching meld|lacks its river", lambda k: k["melds"][1][0].update(pai="P"))
+        def phantom_meld(kyoku):
+            kyoku["melds"][1].append({"type": "pon", "actor": 1, "target": 2,
+                                      "pai": "P", "consumed": ["P", "P"]})
+            kyoku["hands"][1] = {"count": 7}
+        expect("lacks its river", phantom_meld)
+
+        def bad_target(kyoku):
+            kyoku["melds"][1][0]["target"] = 1            # self-call: out of range
+            kyoku["rivers"][0][0]["called_by"] = None     # uncall so the river link passes
+        expect("target seat", bad_target)
+        expect("meld geometry", lambda k: k["melds"][1][0].update(consumed=["E", "F"]))
+
+    def test_snapshot_meld_geometry_and_tile_inventory(self):
+        # A phantom snapshot could carry a geometrically impossible meld or
+        # five copies of a tile while the plain 136-count still balances.
+        def expect(pattern, mutate):
+            bad = self._called_meld_snapshot()
+            mutate(bad["state"]["kyoku"])
+            with self.assertRaisesRegex(validator.ArtifactError, pattern):
+                validator._check_snapshot(bad)
+
+        def bad_chi(kyoku):
+            kyoku["melds"][1] = [{"type": "chi", "actor": 1, "target": 0, "pai": "E", "consumed": ["E", "E"]}]
+        expect("chi meld geometry", bad_chi)
+
+        def bad_ankan(kyoku):
+            # Uncall the pon discard and restate it as a self-drawn quad with
+            # mixed kinds: only the ankan geometry check may reject it.
+            kyoku["rivers"][0][0]["called_by"] = None
+            kyoku["melds"][1] = [{"type": "ankan", "actor": 1, "consumed": ["E", "E", "F", "F"]}]
+            kyoku["kan_counts"][1] = 1
+            kyoku["wall_remaining"] = 66
+        expect("invalid ankan", bad_ankan)
+
+        def five_of_a_kind(kyoku):
+            kyoku["hands"][0]["tiles"][0] = "E"   # fourth E joins the pon triple
+            kyoku["hands"][0]["tiles"][1] = "E"   # and a fifth is invented
+        expect("four copies", five_of_a_kind)
+
+        def fat_pon(kyoku):
+            # Same-kind geometry still holds, but a pon cannot consume three
+            # tiles; the extra "E" is balanced by shrinking the live wall.
+            kyoku["melds"][1][0]["consumed"].append("E")
+            kyoku["wall_remaining"] -= 1
+        expect("consumed count", fat_pon)
+
+    def test_snapshot_round_coordinates_must_be_reachable(self):
+        # Round coordinates follow the absolute seat order and enter the
+        # extension only past the scheduled last wind (§7.2, §13.3).
+        rules = SCORING["rules"]
+
+        def expect(pattern, mutate):
+            bad = self._called_meld_snapshot()
+            mutate(bad["state"]["kyoku"])
+            with self.assertRaisesRegex(validator.ArtifactError, pattern):
+                validator._check_snapshot(bad, rules=rules)
+
+        expect("coordinates", lambda k: k.update(oya=1))          # E1 must deal from seat 0
+        expect("coordinates", lambda k: k.update(extension_round=1))  # E1 cannot be an extension
+        expect("coordinates", lambda k: k.update(bakaze="W"))     # W rounds exist only in extension
+        expect("coordinates", lambda k: k.update(bakaze="W", extension_round=101))
+
+        good = self._called_meld_snapshot()
+        good["state"]["kyoku"].update(bakaze="S", kyoku=4, oya=3)
+        validator._check_snapshot(good, rules=rules)   # a scheduled south round is reachable
+
+        good = self._called_meld_snapshot()
+        good["state"]["kyoku"].update(bakaze="W", kyoku=1, oya=0, extension_round=1)
+        validator._check_snapshot(good, rules=rules)   # a west extension round is reachable
+
+    def test_snapshot_next_kyoku_coordinates_must_be_reachable(self):
+        rules = SCORING["rules"]
+        snapshot = copy.deepcopy(VECTORS["V18_snapshot_state"]["positive"])
+        state = snapshot["state"]
+        state["game_phase"] = "between_kyoku"
+        state["kyoku"] = None
+        state["pending_requests"] = []
+        state["next_kyoku"] = {"bakaze": "E", "kyoku": 2, "oya": 1, "honba": 0,
+                               "kyotaku": 0, "extension_round": 0}
+        validator._check_snapshot(snapshot, rules=rules)
+
+        bad = copy.deepcopy(snapshot)
+        bad["state"]["next_kyoku"]["oya"] = 0      # E2 must deal from seat 1
+        with self.assertRaisesRegex(validator.ArtifactError, "next kyotaku"):
+            validator._check_snapshot(bad, rules=rules)
+
+        bad = copy.deepcopy(snapshot)
+        bad["state"]["next_kyoku"].update(bakaze="W", extension_round=0)
+        with self.assertRaisesRegex(validator.ArtifactError, "next kyotaku"):
+            validator._check_snapshot(bad, rules=rules)
+
+    def test_snapshot_self_furiten_follows_public_state(self):
+        # riichi_furiten implies an accepted declaration, and a seat's own
+        # draw clears its temporary furiten (§10.6).
+        snapshot = self._accepted_reach_snapshot(ippatsu_window=True)
+        snapshot["state"]["kyoku"]["self_state"]["riichi_furiten"] = True
+        validator._check_snapshot(snapshot)   # accepted reach + riichi furiten: consistent
+
+        snapshot = self._reach_window_snapshot()
+        snapshot["state"]["kyoku"]["self_state"]["temporary_furiten"] = True
+        validator._check_snapshot(snapshot)   # seat 0 just discarded: flag may persist
+
+        def expect(pattern, mutate):
+            bad = copy.deepcopy(VECTORS["V18_snapshot_state"]["positive"])
+            mutate(bad["state"]["kyoku"])
+            with self.assertRaisesRegex(validator.ArtifactError, pattern):
+                validator._check_snapshot(bad)
+
+        expect("temporary furiten", lambda k: k["self_state"].update(temporary_furiten=True))
+        expect("riichi furiten", lambda k: k["self_state"].update(riichi_furiten=True))
+
+    def test_snapshot_phantom_reach_wedges_the_receiver(self):
+        # Before the window check pinned the cause, a snapshot could carry a
+        # declared riichi next to an unrelated cause; every later draw would
+        # then be rejected as "draw before reach acceptance". The receiver
+        # must reject it at restore time instead.
+        trace = VECTORS["V104_wire_complete_game"]["positive"]["trace"]
+        receiver = self.receiver(trace["welcome"])
+        for step in trace["steps"][:4]:
+            receiver.receive(self.raw(step["message"]))
+        receiver.receive(self.raw(self._reach_window_snapshot()))
+        self.assertEqual(receiver.game.round["reach_status"][0]["state"], "declared")
+        receiver = self.receiver(trace["welcome"])
+        for step in trace["steps"][:4]:
+            receiver.receive(self.raw(step["message"]))
+        snapshot = self._reach_window_snapshot()
+        kyoku = snapshot["state"]["kyoku"]
+        kyoku["turn"]["last_event"] = {"type": "ankan_declared", "actor": 0, "consumed": ["1m"] * 4}
+        kyoku["pending_kan"] = kyoku["turn"]["last_event"]
+        kyoku["hands"][0]["tiles"].insert(0, "1m")  # the pending quad still belongs to the hand
+        kyoku["wall_remaining"] = 68
+        with self.assertRaisesRegex(SessionError, "discard window"):
+            receiver.receive(self.raw(snapshot))
+
 
 class ScoringRegressionTests(unittest.TestCase):
     def score(self, identifier, mutate=None):

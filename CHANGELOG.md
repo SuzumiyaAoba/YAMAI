@@ -2,6 +2,20 @@
 
 YAMAI の仕様と成果物の変更、および版間の互換性を記録する。各版は Draft であり、現行成果物は [release manifest](release-manifest.json) に従って取得する。
 
+## draft.9への未公開の追補 — 2026-09-21
+
+- snapshotの河要素 `reach` を規範本文で定義した。その打牌がリーチ宣言の複合打牌である場合だけtrueとし、宣言の受理・破棄や牌の鳴かれで取り消さない。これまではmember列挙のみで意味が未定義だった。
+- 宣言中リーチ（`declared`）が生存できる取引境界を本文と3層の検査で固定した。宣言seatを `turn.actor`、その宣言打牌を `last_event` とする `awaiting_responses`/`resolving` に限る。これまでは原因を `dahai` に限定していなかったため、槓宣言や自摸を原因とするsnapshotが古い `declared` を保持したまま受理され、復元後の全ての自摸が「受理前の自摸」として拒否されsessionを致命化させ得た。
+- `reach_status` のflagと公開状態の照合を追加した。`none` では `double`・`ippatsu` がfalseかつ河に `reach` マークを持たない（宣言の破棄は必ず局を終了するため）。`declared` では宣言牌が河末尾で `reach:true` を保持し `ippatsu` はfalse、`double` は宣言時の第一巡条件（そのseatの初打牌かつ全卓副露なし）と一致する。`accepted` では宣言牌の河マークを必須とし、`double` は「宣言牌が河先頭かつ現在副露なし」、`ippatsu` は「宣言牌が河末尾かつ現在副露なし」と双方向で一致する。
+- snapshotの原因 event と公開状態の照合を追加した。`turn.actor` は原因の行為者（`start_kyoku` では `oya`）と一致し、`start_kyoku` 原因では局座標・配牌・表ドラ・点数が原因と一致し河・副露・pao・槓数・フリテンが初期値、`dahai` 原因では河末尾が `{pai, tsumogiri}` 一致・`called_by` なし・`reach` が宣言中と一致、`tsumo` 原因では可視手牌に自摸牌を保持、槓宣言原因では `consumed` が同種で嶺・槓容量が残り、加槓は `none` 宣言状態・対応pon実在・`pai` 同種を要求し、可視手牌は宣言牌を保持する。
+- 公式ベクトルV296の加槓宣言snapshotを修正した。可視手牌が宣言牌 `3m` を持たず `9m` で帳尻を合わせていたため、宣言牌を手内に移した（牌の多重集合は保存）。profile hashを `sha256:f30f7cfa…` へ更新し、manifest・registry・release manifest・本文例示を同期した。
+- 副露の形状と河の `called_by` との双方向対応を3層の検査で固定した。ankanは同種4枚でtargetを持たず、chiは連続順子で直前seatの打牌のみ、それ以外は同種牌の構成を要求する。鳴きで成立した副露はtargetの河に `called_by == actor` の対応牌を持ち、`called_by` を持つ河牌は鳴き手の副露へ必ず対応する。本文 §13.3 にもこの対応を明記した。
+- snapshotの自己フリテンflagを公開状態と照合する検査を追加した。`riichi_furiten` はそのseatの受理済みリーチを前提とし、`temporary_furiten` は本人の自摸後には残存しない。可視手牌が5枚目の牌種や交渉上限超の赤五を持つsnapshotは成果物検査でも拒否する。
+- 復元経路の物理不変条件を他層へ揃えた。`kyoku.kyotaku` とtop-levelの一致、非公開枚数式（`13 - 3×副露数 + 保持自摸`）、`kan_counts` の成立槓との一致と合計4以下、可視牌・副露・未鳴河・山・王牌の136枚保存、ドラ表示枚数（`1 + 槓数 - 延期ドラ`）を復元時にも検査する。
+- 牌の多重集合検査（4枚上限・赤五分割）を復元の状態代入より前へ移した。これまでは代入後に検査していたため、多重集合違反だけで失敗するsnapshotが内部状態を部分更新したまま残り、「不正なsnapshotを部分適用しない」規則に反し得た。回帰テストで失敗時の非破壊を固定した。
+- snapshotの副露 `consumed` 枚数（chi/pon=2、daiminkan/kakan=3、ankan=4）を3層の検査で固定した。同種判定のみでは枚数違反を通し、山枚数の帳尻合わせで物理保存則も回避できた。局座標の到達可能性も検査する。`oya == kyoku - 1`（絶対座席順）、`extension_round <= rules.extension.max_extra_rounds`、延長局は規定最終場風を越えた場風に限る（`extension_round > 0` ⟺ 場風がlast_wind以降）。`next_kyoku` にも同じ座標検査と `kyotaku` 一致を適用し、`kyoku`/`next_kyoku` の存在を `game_phase` と一致させる。終局snapshotの `final_rankings` はscoresからの順位導出と一致させる。
+- 回帰テストを追加した。宣言窓の正例snapshotが受理・復元されること、原因を槓宣言へすり替えた幻影リーチsnapshotが拒否されることを受信側で固定した。受理済みリーチは「宣言者の次の打牌原因（河末尾は無印・一発消費済み）」と「他家決定原因（宣言牌が河末尾・一発存続）」の2境界で固定し、河マーク欠落・flag不一致・供託不一致・原因との河末尾不一致を負例とした。
+
 ## draft.9への未公開の追補 — 2026-09-20（その3）
 
 - `end_kyoku` の参照状態検査を強化した。`hora` は原因 event の決定窓（自摸和了は `awaiting_action`、それ以外は `awaiting_responses`）でのみ受理し、`reach_accepted` 成立済みの宣言打牌へのロンを拒否する。`ankan_chankan == "never"` では暗槓への槍槓和了を、`"kokushi_only"` では国士無双を主張しない槍槓和了を拒否する。`wins` のseat昇順・一意性、top-level `deltas` と全win差額の要素一致、受理リーチ和了者の裏ドラ表示牌列（未受理では空、受理では公開済み表ドラと同枚数）を検査する。

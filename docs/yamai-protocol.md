@@ -342,7 +342,7 @@ hostは同一 `seq` の再送、resume replayおよびrange replayに、ledger e
         "1.0-draft.7"
       ],
       "hashes": {
-        "1.0-draft.7": "sha256:bcedbea5ebce00ccd68027a86d60628511ee07987636d3d675a59f6207324b59"
+        "1.0-draft.7": "sha256:f30f7cfa57df86443b8ded561fdf704d30038a19844ab6760529491b16876760"
       },
       "protocol_versions": {
         "1.0-draft.7": [
@@ -377,7 +377,7 @@ hostは同一 `seq` の再送、resume replayおよびrange replayに、ledger e
   "seat": 0,
   "profile": "riichi-4p",
   "profile_revision": "1.0-draft.7",
-  "profile_hash": "sha256:bcedbea5ebce00ccd68027a86d60628511ee07987636d3d675a59f6207324b59",
+  "profile_hash": "sha256:f30f7cfa57df86443b8ded561fdf704d30038a19844ab6760529491b16876760",
   "client": {
     "name": "ExampleAI",
     "version": "2.3.0"
@@ -421,7 +421,7 @@ profile_hashは、vector manifestのprofile_hash_inputsに列挙したJSONをpro
   "view": "seat",
   "profile": "riichi-4p",
   "profile_revision": "1.0-draft.7",
-  "profile_hash": "sha256:bcedbea5ebce00ccd68027a86d60628511ee07987636d3d675a59f6207324b59",
+  "profile_hash": "sha256:f30f7cfa57df86443b8ded561fdf704d30038a19844ab6760529491b16876760",
   "client": {
     "name": "ExampleAI",
     "version": "2.3.0"
@@ -467,7 +467,7 @@ profile_hashは、vector manifestのprofile_hash_inputsに列挙したJSONをpro
   "view": "seat",
   "profile": "riichi-4p",
   "profile_revision": "1.0-draft.7",
-  "profile_hash": "sha256:bcedbea5ebce00ccd68027a86d60628511ee07987636d3d675a59f6207324b59",
+  "profile_hash": "sha256:f30f7cfa57df86443b8ded561fdf704d30038a19844ab6760529491b16876760",
   "players": [
     {
       "seat": 0,
@@ -2201,9 +2201,9 @@ replayのstateには `original_seq` memberを必須とし、そのcheckpointま�
 
 #### 局stateとvisibility
 
-handsは現在の手牌または正確な非公開枚数である。riversは捨て牌の履歴を保持し、各要素は `{pai,tsumogiri,reach,called_by}` とする。called_byは鳴かれていなければnull、鳴かれた牌なら鳴いたseatである（MUST）。物理牌の重複を数えるときはcalled_byがnullの牌だけをriver所属とし、捨て牌フリテンでは鳴かれた履歴も含める。
+handsは現在の手牌または正確な非公開枚数である。riversは捨て牌の履歴を保持し、各要素は `{pai,tsumogiri,reach,called_by}` とする。`pai` と `tsumogiri` は対応する `dahai` eventの値とし、`reach` はその打牌がリーチ宣言の複合打牌である場合だけtrueとする（MUST）。called_byは鳴かれていなければnull、鳴かれた牌なら鳴いたseatである（MUST）。`reach` は宣言の受理・破棄や牌の鳴かれで取り消さず、鳴かれた牌もcalled_byを記録したままriverへ残す。物理牌の重複を数えるときはcalled_byがnullの牌だけをriver所属とし、捨て牌フリテンでは鳴かれた履歴も含める。
 
-meldsはseat別の成立済みchi、pon、daiminkan、ankan、kakanだけを持ち、宣言eventを入れてはならない（MUST NOT）。各要素は最初の成立順に保持し、対応するeventのmemberを持つ。kakanは元のponの配列位置と捨て牌を供給したtargetを保持する。actorは外側のseatと一致する。pending_kanはnullまたは未成立のankan_declared/kakan_declaredであり、その物理牌はまだ元の手牌・ponに所属する。
+meldsはseat別の成立済みchi、pon、daiminkan、ankan、kakanだけを持ち、宣言eventを入れてはならない（MUST NOT）。各要素は最初の成立順に保持し、対応するeventのmemberを持つ。kakanは元のponの配列位置と捨て牌を供給したtargetを保持する。actorは外側のseatと一致する。鳴きで成立した副露の `pai`/`target` は取り込んだ打牌を指し、その牌は `target` の河に `called_by == actor` のまま残る。逆に `called_by` を持つ河牌は、鳴き手のmelds内に同じ `pai` と `target` を持つ副露を必ず持つ（MUST）。pending_kanはnullまたは未成立のankan_declared/kakan_declaredであり、その物理牌はまだ元の手牌・ponに所属する。
 
 dora_markersは公開済み表示牌1～5枚、pending_doraはnullまたは `{kan_type,timing:"after_rinshan_discard"}` とする。後者は成立済み槓の表示牌を嶺上手番の選択後まで延期していることを表し、未公開牌そのものは含めない。paoは必須の配列で、各要素が `{actor,yaku_id,liable_seat}` を持ち、同じ(actor,yaku_id)を重複させない。公開済み副露履歴から導かれる全ての責任対応を、重複も欠落もなく保持する（MUST）。
 
@@ -2213,7 +2213,7 @@ phaseは卓全体のawaiting_draw、awaiting_action、awaiting_responses、resol
 
 resolvingは、decision groupが閉じlinearization pointを記録してから（第8.1.1節）、全memberの終端ACKと結果event列のtransactionが確定するまで（第8.4節）の卓の状態である。この期間にrequestが未終端のplay seat向けには、終端ACKが対応するrequestを欠くため、transactionの確定までsnapshotを生成してはならない（MUST NOT）。一方pending_requestsは**当該play seat宛てだけ**であり、最大1個である（MUST）。awaiting_actionではturn.actorが自分のときだけ、awaiting_responsesでは原因のactor以外のseatにだけ対応requestを保持する。他家の自摸番に自分のpending requestを要求してはならない（MUST NOT）。awaiting_draw/resolvingおよび観戦・replayにはpending requestを含めない。
 
-reach_statusはseatごとのstate（none/declared/accepted）、double、ippatsuを持つ。doubleはリーチ宣言時に第一巡の条件を満たしていたか、ippatsuは現在の一発資格を表す。declaredは宣言打牌への反応が未解決の間だけ存在し、受理または宣言の破棄で遷移する。first_turn_eligibleは自分の最初の打牌前かつ全卓で鳴き・槓がない場合だけtrueとする。kan_counts、rinshan、haiteiは第7.3.1節・第10節のevent適用後の値である。dora eventだけで槓数を増やしてはならない。
+reach_statusはseatごとのstate（none/declared/accepted）、double、ippatsuを持つ。doubleはリーチ宣言時に第一巡の条件を満たしていたか、ippatsuは現在の一発資格を表す。declaredは宣言打牌への反応が未解決の間だけ存在し、受理または宣言の破棄で遷移する。したがってdeclaredを持つ局stateは、宣言seatをturn.actor、その宣言打牌をlast_eventとするawaiting_responsesまたはresolvingに限る。noneではdouble・ippatsuともfalse、declaredではippatsuはfalseとし、宣言中または受理済みのリーチは宣言牌がrivers内にreach:trueとして残る（MUST）。first_turn_eligibleは自分の最初の打牌前かつ全卓で鳴き・槓がない場合だけtrueとする。kan_counts、rinshan、haiteiは第7.3.1節・第10節のevent適用後の値である。dora eventだけで槓数を増やしてはならない。
 
 局内playにはself_stateを必須とし、temporary_furiten、riichi_furiten、kuikae_forbidden、time_bank_msを保持する。time_bank_msはstate.time_bank_msと同値である。複合打牌の途中ではsnapshotを取らないため、現行profileのkuikae_forbiddenは空配列になる。これらの自己情報を他seatやspectate/replayへ送信してはならない（MUST NOT）。
 

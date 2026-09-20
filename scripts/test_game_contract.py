@@ -226,7 +226,7 @@ class GameContractTests(unittest.TestCase):
         state.self_seat = seat
         state.apply({"type":"start_game","scores":[25000]*4,"rules":self.rules})
         state.apply({"type":"start_kyoku","bakaze":"E","kyoku":1,"oya":0,"honba":0,"kyotaku":0,
-                     "extension_round":0,"scores":[25000]*4,"dora_marker":"1p","hands":[{"count":13}]*4})
+                     "extension_round":0,"scores":[25000]*4,"dora_marker":"1p","hands":[{"count":13} for _ in range(4)]})
         return state
 
     def _snapshot(self, state, turn, seat=1):
@@ -287,6 +287,20 @@ class GameContractTests(unittest.TestCase):
         before = deepcopy({k: getattr(state, k) for k in ("self_seat","game_phase","scores","kyotaku","next","round","last_cause")})
         snapshot = self._snapshot(source, {"actor":0,"phase":"awaiting_draw","last_event_seq":4,
                                          "last_event":{"type":"tsumo","actor":0,"pai":None}})
+        with self.assertRaises(Exception):
+            state.restore(snapshot)
+        after = {k: getattr(state, k) for k in ("self_seat","game_phase","scores","kyotaku","next","round","last_cause")}
+        self.assertEqual(before, after)
+
+    def test_inventory_failure_leaves_state_untouched(self):
+        source = self._dealt()
+        source.apply({"type":"tsumo","actor":0,"pai":None})
+        state = self._dealt()
+        before = deepcopy({k: getattr(state, k) for k in ("self_seat","game_phase","scores","kyotaku","next","round","last_cause")})
+        snapshot = self._snapshot(source, {"actor":0,"phase":"awaiting_action","last_event_seq":4,
+                                         "last_event":{"type":"tsumo","actor":0,"pai":None}})
+        snapshot["kyoku"]["hands"][0] = {"tiles":["1m"]*5+["2m"]*9}
+        snapshot["kyoku"]["wall_remaining"] = 69
         with self.assertRaises(Exception):
             state.restore(snapshot)
         after = {k: getattr(state, k) for k in ("self_seat","game_phase","scores","kyotaku","next","round","last_cause")}

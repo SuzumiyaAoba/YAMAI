@@ -568,7 +568,11 @@ class SessionInvariants(unittest.TestCase):
             ('committed kan', lambda s: s['state']['kyoku'].update(
                 pending_dora={'kan_type': 'daiminkan', 'timing': 'after_rinshan_discard'})),
             ('live wall', lambda s: s['state']['kyoku'].update(haitei=True)),
-            ('deposit count', lambda s: s['state']['kyoku']['reach_status'][0].update(state='accepted')),
+            ('deposit count', lambda s: (
+                s['state']['kyoku']['reach_status'][0].update(state='accepted', double=True, ippatsu=True),
+                s['state']['kyoku']['rivers'][0].append({'pai': '1s', 'tsumogiri': False, 'reach': True, 'called_by': None}),
+                s['state']['kyoku'].update(wall_remaining=s['state']['kyoku']['wall_remaining'] - 1),
+                s['state']['kyoku']['first_turn_eligible'].__setitem__(0, False))),
             ('first-turn eligibility', lambda s: s['state']['kyoku']['first_turn_eligible'].__setitem__(0, False)),
             ('committed kan', lambda s: s['state']['kyoku'].update(rinshan=True)),
         ]
