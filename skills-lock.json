@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "mdxr": {
+      "source": "Suzumiyaaoba/mdxr",
+      "sourceType": "github",
+      "skillPath": "skill/SKILL.md",
+      "computedHash": "a7a240ee71e0c20c62d89621b240cd1b70cf7d1c6dbd41d58ab61c6f8f7dd502"
+    }
+  }
+}

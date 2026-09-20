@@ -353,6 +353,129 @@ class SessionInvariants(unittest.TestCase):
         two['x_test_message'].pop('kind')
         self.assertNotEqual(v.profile_hash(one, rules), v.profile_hash(two, rules))
 
+    def assert_rejected_atomically(self, receiver, message):
+        def state():
+            return (receiver.applied, receiver.time_bank_ms, receiver.requests,
+                    receiver.terminal_acks, receiver.expected_effects,
+                    receiver.active_requests, receiver.known, vars(receiver.game))
+        before = deepcopy(state())
+        with self.assertRaises(SessionError) as caught:
+            receiver.receive(self.raw(message))
+        self.assertEqual(caught.exception.code, 'invalid_message')
+        self.assertEqual(state(), before)
+        self.assertTrue(receiver.closed)
+
+    def test_ack_rejects_another_legal_discard_without_applying_it(self):
+        for status in ('accepted', 'defaulted'):
+            with self.subTest(status=status):
+                trace = self.trace('wire_complete_game')
+                if status == 'defaulted':
+                    trace['steps'][4]['message'].update(status=status, elapsed_ms=21000, time_bank_ms=0)
+                receiver = self.receiver(trace['welcome'])
+                for step in trace['steps'][:5]:
+                    receiver.receive(self.raw(step['message']))
+                bad = trace['steps'][5]['message']
+                bad['event'].update(pai='1m', tsumogiri=False)
+                self.assert_rejected_atomically(receiver, bad)
+
+    def test_compound_reach_binds_its_nested_discard(self):
+        for valid in (True, False):
+            trace = self.trace('ack_binds_compound_discard')
+            receiver = self.receiver(trace['welcome'])
+            for step in trace['steps'][:-1]:
+                receiver.receive(self.raw(step['message']))
+            message = trace['steps'][-1]['message']
+            if valid:
+                message['event']['x_test_annotation'] = 'non-state annotation'
+                receiver.receive(self.raw(message))
+                self.assertEqual(receiver.expected_effects, [])
+            else:
+                message['event'].update(pai='E', tsumogiri=False)
+                self.assert_rejected_atomically(receiver, message)
+
+    def test_snapshot_cannot_change_any_frozen_selection_field_or_reopen_it(self):
+        changes = ({'action_id':'d0'}, {'source':'default'}, {'elapsed_ms':2},
+                   {'elapsed_ms':20000, 'time_bank_ms':1000}, None)
+        for change in changes:
+            with self.subTest(change=change):
+                trace = self.trace('snapshot_preserves_frozen_selection')
+                receiver = self.receiver(trace['welcome'])
+                for step in trace['steps'][:-1]:
+                    receiver.receive(self.raw(step['message']))
+                message = trace['steps'][-1]['message']
+                state = message['state']
+                request = state['pending_requests'][0]
+                if change is None:
+                    request.update(selection=None, remaining_ms=1000)
+                else:
+                    request['selection'].update(change)
+                    state['time_bank_ms'] = request['selection']['time_bank_ms']
+                    state['kyoku']['self_state']['time_bank_ms'] = state['time_bank_ms']
+                self.assert_rejected_atomically(receiver, message)
+
+    def test_snapshot_and_following_ack_use_the_same_bank_formula(self):
+        trace = self.trace('snapshot_validates_selection_clock')
+        receiver = self.receiver(trace['welcome'])
+        for step in trace['steps']:
+            receiver.receive(self.raw(step['message']))
+        self.assertEqual(receiver.time_bank_ms, 1000)
+        self.assertEqual(receiver.active_requests, set())
+        receiver = self.receiver(trace['welcome'])
+        for step in trace['steps'][:4]:
+            receiver.receive(self.raw(step['message']))
+        message = trace['steps'][4]['message']
+        message['state']['pending_requests'][0]['selection']['time_bank_ms'] = 15000
+        message['state']['time_bank_ms'] = 15000
+        message['state']['kyoku']['self_state']['time_bank_ms'] = 15000
+        self.assert_rejected_atomically(receiver, message)
+
+    def test_snapshot_deadline_boundary_is_reserved_for_default(self):
+        for source in ('user', 'default'):
+            with self.subTest(source=source):
+                trace = self.trace('snapshot_validates_selection_clock')
+                receiver = self.receiver(trace['welcome'])
+                for step in trace['steps'][:4]:
+                    receiver.receive(self.raw(step['message']))
+                message = trace['steps'][4]['message']
+                message['state']['pending_requests'][0]['selection'].update(source=source, elapsed_ms=21000, time_bank_ms=0)
+                message['state']['time_bank_ms'] = 0
+                message['state']['kyoku']['self_state']['time_bank_ms'] = 0
+                if source == 'user':
+                    self.assert_rejected_atomically(receiver, message)
+                else:
+                    receiver.receive(self.raw(message))
+                    ack = trace['steps'][5]['message']
+                    ack.update(status='defaulted', elapsed_ms=21000, time_bank_ms=0)
+                    receiver.receive(self.raw(ack))
+                    receiver.receive(self.raw(trace['steps'][6]['message']))
+                    self.assertEqual(receiver.time_bank_ms, 0)
+
+    def test_snapshot_cannot_reopen_a_terminal_request(self):
+        trace = self.trace('wire_complete_game')
+        receiver = self.receiver(trace['welcome'])
+        for step in trace['steps'][:6]:
+            receiver.receive(self.raw(step['message']))
+        snapshot = deepcopy(self.vectors['V55_snapshot_frozen_selection']['positive'])
+        snapshot.update(seq=7, replaces_through_seq=6)
+        self.assert_rejected_atomically(receiver, snapshot)
+
+    def test_contiguous_snapshot_cannot_interrupt_ack_result(self):
+        trace = self.trace('wire_complete_game')
+        receiver = self.receiver(trace['welcome'])
+        for step in trace['steps'][:5]:
+            receiver.receive(self.raw(step['message']))
+        snapshot = deepcopy(self.vectors['V55_snapshot_frozen_selection']['positive'])
+        snapshot.update(seq=6, replaces_through_seq=5)
+        self.assert_rejected_atomically(receiver, snapshot)
+
+    def test_ledger_cannot_end_after_ack_without_its_adopted_event(self):
+        trace = self.trace('session_immutable_wire_ledger')
+        trace['messages'] = [row for row in trace['messages'] if row['message'].get('seq', 0) <= 5]
+        trace['ledger'] = [row for row in trace['ledger'] if row['message']['seq'] <= 5]
+        with self.assertRaises(v.ArtifactError) as caught:
+            v.semantic_ledger_trace(trace, self.digest)
+        self.assertEqual(caught.exception.code, 'invalid_message')
+
     def test_hash_preserves_schema_property_definitions(self):
         protocol = v.strict_load(v.ROOT / f'registry/yrc-0003/{v.PROTOCOL}/registry.json')
         rules = v.strict_load(v.ROOT / f'registry/yrc-0005/{v.PROFILE_REVISION}/registry.json')

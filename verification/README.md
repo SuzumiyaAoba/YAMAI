@@ -1,6 +1,6 @@
 # YAMAI 検証ガイド
 
-本書は [YRC 0003](../docs/yamai-protocol.md) `1.0-draft.8` と `riichi-4p` profile `1.0-draft.6` の派生成果物について、検査方法と適合項目との対応を説明する。規範要件は YRC 0003 に従い、検査対象の版とファイルは [release manifest](../release-manifest.json) で確認する。
+本書は [YRC 0003](../docs/yamai-protocol.md) `1.0-draft.9` と `riichi-4p` profile `1.0-draft.7` の派生成果物について、検査方法と適合項目との対応を説明する。規範要件は YRC 0003 に従い、検査対象の版とファイルは [release manifest](../release-manifest.json) で確認する。
 
 ## 実行方法
 
@@ -50,7 +50,7 @@ stateful trace は1つの peer session の時刻付き message と不変の wire
 
 ## 適合35項目との対応
 
-番号はYRC 0003 §17と一致する。V番号は現行[公式vectors](../test-vectors/yrc-0003/1.0-draft.8/vectors.json)のID接頭辞であり、各行のvectorは正例と負例を持つ。採点fixtureは[scoring.json](../test-vectors/yrc-0005/1.0-draft.6/scoring.json)にある。本文だけの要件を、Schemaが全て検証したとは扱わない。
+番号はYRC 0003 §17と一致する。V番号は現行[公式vectors](../test-vectors/yrc-0003/1.0-draft.9/vectors.json)のID接頭辞であり、各行のvectorは正例と負例を持つ。採点fixtureは[scoring.json](../test-vectors/yrc-0005/1.0-draft.7/scoring.json)にある。本文だけの要件を、Schemaが全て検証したとは扱わない。
 
 | §17 | 主な本文 | 正負vector・実行検査 | 検証する境界 |
 |---|---|---|---|
@@ -100,5 +100,7 @@ stateful trace は1つの peer session の時刻付き message と不変の wire
 - 5つの形式モデルは、それぞれの有限境界と環境仮定の下で性質を検査する。牌の全組合せ、任意の拡張・ネットワーク、認証サービス、実装コードとの refinement 証明、モデル間の合成証明は対象外である。
 
 draft.8のV276〜V281は、履歴中snapshotと再送終端、ID全体の文字種、終局後の保留stale通知、交渉済み拡張のsession受信、mode/viewの拒否コード、helloのprofile最小件数を検査する。回帰テストではsnapshotがgapの観測終端の前後にある場合、未要求のseq飛越し、未交渉snapshot、不正IDとchomboの分離も検査する。独立Schema検査は`schema_negative: true`と明記した公式負例も拒否することを確認する。
+
+draft.9のV282〜V288は、途中流局の点差・tenpai・reason、ACKと採用eventの対応、snapshotの固定選択と計時式を検査する。回帰テストではdefaulted打牌、複合リーチ、槓ドラ・リーチ供託・責任払いの挿入、selectionの全固定member、期限ちょうどのuser/default境界、終端requestの復活、途中で切れたACK結果列、拒否時の原子的な状態保持も確認する。
 
 検査の成功だけでは YRC 0003 第17節の完全適合や、独立実装間の相互運用性を保証しない。実装の適合表明と安定版の公開条件は [仕様本文](../docs/yamai-protocol.md) と [仕様策定・リリースプロセス](../docs/specification-process.md) に従う。

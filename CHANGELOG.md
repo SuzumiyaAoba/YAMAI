@@ -2,6 +2,15 @@
 
 YAMAI の仕様と成果物の変更、および版間の互換性を記録する。各版は Draft であり、現行成果物は [release manifest](release-manifest.json) に従って取得する。
 
+## 1.0-draft.9 / profile 1.0-draft.7 — 2026-09-17（未公開）
+
+- 途中流局のtenpaiをnull、点差を全seatゼロとし、直前の点数と供託を維持することを規定した。Schemaと意味検査を揃え、illegal_actionはpenaltyだけに制限した。
+- accepted/defaulted ACKを元の候補へ対応付け、別の合法手や複合候補内の異なる打牌への置換を拒否する。槓宣言、和了・九種九牌、所定位置のdora・reach_accepted・paoも検査する。
+- snapshotによる確定済みselectionの変更、OPENへの巻き戻し、終端requestの復活を拒否する。復元時にも元のdeadlineとbank消費式を適用し、不正なsnapshotを部分適用しない。
+- 公式ベクトルV282〜V288と回帰テストを追加し、Protocol Version、profile revision/hash、Schema ID、registry、release manifestを更新した。
+
+`1.0-draft.8` / profile `1.0-draft.6` とは非互換である。実装は成果物一式を更新し、WebSocket subprotocolに`yamai.1.draft9`を使用する。
+
 ## 1.0-draft.8 / profile 1.0-draft.6 — 2026-09-16（未公開）
 
 - 履歴中のsnapshotを連続したseqで再送できるよう、欠落範囲を飛び越える復旧用snapshotと受信条件を分離した。古いsnapshotで今回の再送終端を覆う必要はなく、終端まで回復待ちを維持する。新規生成の理由はホスト側で制限・監査する。

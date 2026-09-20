@@ -7,9 +7,9 @@
 | 表題 | YAMAI Protocol Version 1 |
 | 分類 | Standards Track |
 | 状態 | Draft |
-| Protocol Version | 1.0-draft.8 |
-| 文書版 | 1.0-draft.8 |
-| 発行日 | 2026-09-16 |
+| Protocol Version | 1.0-draft.9 |
+| 文書版 | 1.0-draft.9 |
+| 発行日 | 2026-09-17 |
 | 更新対象 | なし |
 | 廃止対象 | なし |
 
@@ -27,7 +27,7 @@ YAMAI は JSON ベースのイベント語彙を MJAI から継承する一方�
 
 本書は組込みriichi-4pの第7.6節を含む唯一の規範本文である。Schema、registry、vectorおよび検査実装は派生成果物であり、競合時は本書を優先する。
 
-本書は実装および相互運用試験を目的とする Draft である。wire上のProtocol Versionは文書版と同じ `1.0-draft.8` とする。異なるdraft版は互換とみなしてはならない（MUST NOT）。安定版 `1.0` の割当ては、本文と整合したJSON Schema、registry、test vectorおよび2つ以上の独立した相互運用実装が公開された後に限る。
+本書は実装および相互運用試験を目的とする Draft である。wire上のProtocol Versionは文書版と同じ `1.0-draft.9` とする。異なるdraft版は互換とみなしてはならない（MUST NOT）。安定版 `1.0` の割当ては、本文と整合したJSON Schema、registry、test vectorおよび2つ以上の独立した相互運用実装が公開された後に限る。
 
 ## Table of Contents
 
@@ -59,8 +59,8 @@ YAMAI は JSON ベースのイベント語彙を MJAI から継承する一方�
 ## 1. 状態、規約および要件語
 
 - Protocol name: `yamai`
-- Version: `1.0-draft.8`
-- Date: 2026-09-16
+- Version: `1.0-draft.9`
+- Date: 2026-09-17
 - Initial profile: `riichi-4p`
 - Serialization: JSON
 - Transports: JSON Lines, WebSocket text frame
@@ -248,7 +248,7 @@ TCP と標準入出力は同じフレーミングを使用できる（MAY）。T
 
 ### 4.3 WebSocket transport
 
-- endpoint はWebSocket subprotocol `yamai.1.draft8` を交渉する（MUST）
+- endpoint はWebSocket subprotocol `yamai.1.draft9` を交渉する（MUST）
 - 1 text message は1個の YAMAI message だけを含む（MUST）
 - 送信者は [RFC 6455] に従って text message を複数 frame へ分割できる（MAY）
 - 受信者は分割された frame を完全な text message へ再構成してから JSON を解析する（MUST）
@@ -265,7 +265,7 @@ transport は message の意味を変更してはならない（MUST NOT）。ba
 
 ```json
 {
-  "yamai": "1.0-draft.8",
+  "yamai": "1.0-draft.9",
   "kind": "event",
   "session_id": "s_01J6...",
   "game_id": "g_01J6...",
@@ -333,20 +333,20 @@ hostは同一 `seq` の再送、resume replayおよびrange replayに、ledger e
   "kind": "hello",
   "protocol": "yamai",
   "versions": [
-    "1.0-draft.8"
+    "1.0-draft.9"
   ],
   "profiles": [
     {
       "name": "riichi-4p",
       "revisions": [
-        "1.0-draft.6"
+        "1.0-draft.7"
       ],
       "hashes": {
-        "1.0-draft.6": "sha256:c73126a8faef11b166b4e495c58a18b9e39abf49129e1a6cbb05cfddaa1beed9"
+        "1.0-draft.7": "sha256:862ffd6fc579419dd37221a5580487ed6f9a9ce73d122da4eda05d83abf3d537"
       },
       "protocol_versions": {
-        "1.0-draft.6": [
-          "1.0-draft.8"
+        "1.0-draft.7": [
+          "1.0-draft.9"
         ]
       }
     }
@@ -371,13 +371,13 @@ hostは同一 `seq` の再送、resume replayおよびrange replayに、ledger e
 ```json
 {
   "kind": "join",
-  "version": "1.0-draft.8",
+  "version": "1.0-draft.9",
   "mode": "play",
   "view": "seat",
   "seat": 0,
   "profile": "riichi-4p",
-  "profile_revision": "1.0-draft.6",
-  "profile_hash": "sha256:c73126a8faef11b166b4e495c58a18b9e39abf49129e1a6cbb05cfddaa1beed9",
+  "profile_revision": "1.0-draft.7",
+  "profile_hash": "sha256:862ffd6fc579419dd37221a5580487ed6f9a9ce73d122da4eda05d83abf3d537",
   "client": {
     "name": "ExampleAI",
     "version": "2.3.0"
@@ -416,12 +416,12 @@ profile_hashは、vector manifestのprofile_hash_inputsに列挙したJSONをpro
 ```json
 {
   "kind": "join",
-  "version": "1.0-draft.8",
+  "version": "1.0-draft.9",
   "mode": "play",
   "view": "seat",
   "profile": "riichi-4p",
-  "profile_revision": "1.0-draft.6",
-  "profile_hash": "sha256:c73126a8faef11b166b4e495c58a18b9e39abf49129e1a6cbb05cfddaa1beed9",
+  "profile_revision": "1.0-draft.7",
+  "profile_hash": "sha256:862ffd6fc579419dd37221a5580487ed6f9a9ce73d122da4eda05d83abf3d537",
   "client": {
     "name": "ExampleAI",
     "version": "2.3.0"
@@ -453,7 +453,7 @@ profile_hashは、vector manifestのprofile_hash_inputsに列挙したJSONをpro
 
 ```json
 {
-  "yamai": "1.0-draft.8",
+  "yamai": "1.0-draft.9",
   "kind": "welcome",
   "session_id": "s_01J6...",
   "game_id": "g_01J6...",
@@ -466,8 +466,8 @@ profile_hashは、vector manifestのprofile_hash_inputsに列挙したJSONをpro
   "mode": "play",
   "view": "seat",
   "profile": "riichi-4p",
-  "profile_revision": "1.0-draft.6",
-  "profile_hash": "sha256:c73126a8faef11b166b4e495c58a18b9e39abf49129e1a6cbb05cfddaa1beed9",
+  "profile_revision": "1.0-draft.7",
+  "profile_hash": "sha256:862ffd6fc579419dd37221a5580487ed6f9a9ce73d122da4eda05d83abf3d537",
   "players": [
     {
       "seat": 0,
@@ -593,7 +593,7 @@ welcomeのplayersはseat 0～3の順に並べる。新規playとreplayのwelcome
 拒否理由は次の順に決める（MUST）。
 
 1. frame・JSONの検査を行う。
-2. [join-proposal Schema](../schemas/yrc-0003/1.0-draft.8/negotiation/join-proposal.schema.json)で型、必須member、mode/view/target、重複などを検査する。この段階ではversion/profile/revisionの選択値をconst一致で拒否しない。構造違反はinvalid_messageとする。
+2. [join-proposal Schema](../schemas/yrc-0003/1.0-draft.9/negotiation/join-proposal.schema.json)で型、必須member、mode/view/target、重複などを検査する。この段階ではversion/profile/revisionの選択値をconst一致で拒否しない。構造違反はinvalid_messageとする。
 3. 広告済みかつ対応するversionがなければunsupported_version、profileがなければunsupported_profile、revision/hashの組が異なればprofile_mismatchとし、その後に提供しないmode/viewをunsupported_viewとする。
 4. required capabilityとmode制約を確認し、満たせなければunsupported_capabilityとする。profileの受信下限を満たせなければunsupported_limitとする。
 5. target取得とresumeの資格・範囲を検査し、取得不能・失効・保持不能はresume_unavailableとする。
@@ -1013,13 +1013,13 @@ chi/ponの複合打牌では `tsumogiri:false` とする。喰い替えは、鳴
 
 役満でないwinでは、`han` は `yakus` の `unit == "han"` の `value` と全 `bonuses[].han` の合計に一致しなければならない（MUST）。役満winでは `han` を0、`bonuses` を空arrayとし、`unit == "yakuman"` の `value` 合計を役満倍数とする。ドラ、裏ドラおよび赤ドラは役ではなくbonusとして記録する。
 
-`result.type == "ryukyoku"` の場合、`result.reason` は Result Reasons registry の値、`result.tenpai` は4要素の boolean arrayでなければならない（MUST）。途中流局で聴牌判定を行わない場合、`tenpai` は `null` とする。通常流局で `0 < t < 4` の場合、`deltas` は `rules.noten_payment.total_points` のseat単位の純差額規則に従い、各seatの受取または支払の純差額と一致しなければならない（MUST）。個別seat間の支払明細を要求してはならない。
+`result.type == "ryukyoku"` の場合、`result.reason` は `fanpai`、`kyushukyuhai`、`suufon_renda`、`suucha_riichi`、`suukan_sanra`、`sanchaho` のいずれかとする（MUST）。`fanpai` の `result.tenpai` は4要素の boolean arrayでなければならず、途中流局の残る5 reasonでは常に `null` とする（MUST）。`illegal_action` は `penalty` のreasonであり、流局へ流用してはならない。通常流局で `0 < t < 4` の場合、`deltas` は `rules.noten_payment.total_points` のseat単位の純差額規則に従い、各seatの受取または支払の純差額と一致しなければならない（MUST）。個別seat間の支払明細を要求してはならない。
 
 `result.type == "penalty"` の場合、`result.offender`、登録済み `result.reason`、`result.penalty.payments` および top-level `deltas` を持たなければならない（MUST）。各paymentは `{from,to,points}` で、`from` は offender、`to` は他seat、合計とtop-level `deltas`は一致しなければならない。このvariantは `invalid_action_policy == "chombo"` またはprofileが登録した penalty ruleでのみ使用できる（MUST）。
 
 ### 7.6 `riichi-4p` の採点規範（完全定義）
 
-本節がprofile revision 1.0-draft.6の全採点規則を定める。
+本節がprofile revision 1.0-draft.7の全採点規則を定める。
 
 #### 7.6.1. 要件語と適用範囲
 
@@ -1287,7 +1287,9 @@ fixtureのpaymentsはseat間の支払いだけを表し、本場と責任払い�
 | 2 | 各 `+P/2` | 各 `-P/2` |
 | 3 | 各 `+P/3` | `-P` |
 
-`tenpai == null` の途中流局およびチョンボでは、このノーテン精算を適用してはならない（MUST）。`end_kyoku.deltas` は表の純差額と一致しなければならず、0人または4人聴牌では点数を移動しない。個別seat間の支払明細を要求してはならない（MUST）。
+通常流局の `end_kyoku.deltas` は表の純差額と一致しなければならず、0人または4人聴牌では点数を移動しない。個別seat間の支払明細を要求してはならない（MUST）。
+
+途中流局では聴牌判定・ノーテン精算・本場の支払いを行わず、`result.tenpai` は `null`、`end_kyoku.deltas` は `[0,0,0,0]` とし、`scores` は直前の点数を保持する（MUST）。成立済みリーチの供託は返却せず、現在の全供託を `next.kyotaku` へ繰り越す。次局の連荘・本場は第7.2節に従う。チョンボにもノーテン精算を適用せず、第7.6.8.2節だけで精算する。
 
 ##### 7.6.8.2 チョンボ精算
 
@@ -1303,7 +1305,7 @@ fixtureのpaymentsはseat間の支払いだけを表し、本場と責任払い�
 
 #### 7.6.11. Registry Considerations
 
-Yaku ID、Bonus ID、Double Yakuman Conditionの登録は本書第19節に従う。新しい役は門前・副露飜数、成立条件、既存役との重複、符・役満との関係および最低2個のtest vectorを指定する（MUST）。本版の実行可能fixtureは `test-vectors/yrc-0005/1.0-draft.6/scoring.json`、その形式は `schemas/yrc-0005/1.0-draft.6/scoring-vectors.schema.json` で固定する。
+Yaku ID、Bonus ID、Double Yakuman Conditionの登録は本書第19節に従う。新しい役は門前・副露飜数、成立条件、既存役との重複、符・役満との関係および最低2個のtest vectorを指定する（MUST）。本版の実行可能fixtureは `test-vectors/yrc-0005/1.0-draft.7/scoring.json`、その形式は `schemas/yrc-0005/1.0-draft.7/scoring-vectors.schema.json` で固定する。
 
 fixtureファイルのrulesをbase ruleとし、rule_overridesを最上位member単位で置換する。置換後の完全なrulesをrules Schemaでも検証する（MUST）。expectedから入力・役・係数を取得してはならず、fixtureのidも計算条件として使用してはならない（MUST NOT）。
 
@@ -1367,7 +1369,7 @@ fixture集合はregistryの全通常役・全役満、通常形・七対子・�
 
 ```json
 {
-  "yamai": "1.0-draft.8",
+  "yamai": "1.0-draft.9",
   "kind": "request",
   "session_id": "s_01J6...",
   "game_id": "g_01J6...",
@@ -1459,7 +1461,7 @@ linearization後のackはmemberの `seat` 昇順、同seat不可、の順で生�
 
 ```json
 {
-  "yamai": "1.0-draft.8",
+  "yamai": "1.0-draft.9",
   "kind": "action",
   "session_id": "s_01J6...",
   "game_id": "g_01J6...",
@@ -1531,6 +1533,8 @@ pass が合法な場合、ホストは `none` action を候補に含めなけれ
 
 全memberの終端ACKと結果event列は同一groupのtransactionに属し、各sessionでは自分宛てのACKが結果eventより先になる（MUST）。別seatのACKを他seatへ配信してはならない（MUST NOT）。group解決中に別のstate変更、無関係なerror、snapshotまたは次groupのrequestを挿入してはならない（MUST NOT）。全体の採用結果を固定してから各sessionのseqを割り当てる。transport切断時も同じ順序で履歴へ記録する。
 
+受信者は `accepted` または `defaulted` ACKの `action_id` を元の候補へ対応付け、後続のcore eventがその候補を正確に展開していることを検証する（MUST）。他の合法候補への置換もfatal `invalid_message` とする。打牌・副露のactor、target、pai、consumed、tsumogiri、および複合候補内の打牌は全て一致させ、consumedは赤牌を区別した多重集合で比較する。状態に影響しない拡張memberの差は無視できる。暗槓・加槓は対応する宣言event、和了は当該actorを含む和了結果、九種九牌は対応reasonの流局結果へ展開する。`none` は自分の行動eventを発生させない。第10節で必要なdora、reach_accepted、paoだけを規定の位置に挿入し、これらの値も局stateから検証する。復旧用snapshotが欠落した結果transaction全体を置換する場合を除き、結果の途中に別messageを挿入してはならない（MUST NOT）。
+
 合法であったが他家の優先行動に負けた action の status は `rejected` ではなく `superseded` とする（MUST）。当該 action をチョンボ等の違法行動として扱ってはならない（MUST NOT）。
 
 ここでいう解決のMUSTは、host processが稼働し、host schedulerが該当するresolve actionを実行し、単調時計が進行することを前提とした状態機械上の義務である。同じgroupが `GROUP_CLOSED` のまま、disconnectとresumeなど別の処理を繰り返してresolveを無期限に先送りすることは、このMUSTに違反する。host crash、scheduler starvation、clock haltまたは恒久的なtransport不通の下で、eventualなresolveまたはpeerへのdeliveryまでを本プロトコルが保証すると解釈してはならない（MUST NOT）。transportの一時的な切断だけではrequestの時計またはresolveを停止・取消ししてはならず（MUST NOT）、hostは稼働中に解決結果を保持して再接続後のreplayまたはsnapshotへ含めなければならない（MUST）。
@@ -1555,7 +1559,7 @@ JSON 構文違反、message Schema 違反または `session_id` 不一致は、�
 
 ```json
 {
-  "yamai": "1.0-draft.8",
+  "yamai": "1.0-draft.9",
   "kind": "ack",
   "session_id": "s_01J6...",
   "game_id": "g_01J6...",
@@ -1747,7 +1751,7 @@ mode を途中で変更してはならない（MUST NOT）。完全情報 replay
 
 ```json
 {
-  "yamai": "1.0-draft.8",
+  "yamai": "1.0-draft.9",
   "kind": "error",
   "session_id": "s_01J6...",
   "game_id": "g_01J6...",
@@ -1849,7 +1853,7 @@ resume replayに含まれるhost messageは、live送信時と同じ `session_id
 
 ```json
 {
-  "yamai": "1.0-draft.8",
+  "yamai": "1.0-draft.9",
   "kind": "snapshot",
   "session_id": "s_01J6...",
   "game_id": "g_01J6...",
@@ -2223,6 +2227,8 @@ pending_requestsは元のrequest_id、seat、caused_by_seq、timeout_ms、time_b
 
 selectionのaction_idは元の候補内にあり、計時値は選択時に固定したACK用の値である。defaultならdefault_action_idと一致する。終端requestはpending_requestsへ入れない（MUST NOT）。残期間は表示・判断用のhost時点の情報であり、snapshot受信からdeadlineを開始し直したり、元のtimeout_ms/time_bank_msへ再加算したりしてはならない（MUST NOT）。hostは送信中も元の時計で処理を続ける。選択済みのactionの冪等性は第9.2節に従い、snapshotによって選び直しの権利を発生させない。
 
+受信者は置換前に、保持済みの同一requestの不変memberと照合する。既にselectionがある場合はaction_id、source、elapsed_ms、time_bank_msの全てを保持し、OPENへ戻してはならない。終端ACKを保持するrequestをpendingへ復活させてはならない（MUST NOT）。初めて復元するselectionにも第9.1節の `D = G + T + B` とbank消費式を適用し、`0 <= elapsed_ms <= D`、userならさらに `elapsed_ms < D` とする。remaining_msはD以下、groupでは `remaining_ms <= decision_group_remaining_ms <= decision_group_deadline_ms` および `D <= decision_group_deadline_ms` を満たさなければならない（MUST）。違反はfatal `invalid_message` とし、seq、game state、request、bankのいずれも部分適用してはならない。
+
 空のresume範囲では直ちに保持済みOPEN requestへ回答できるが、最初の新しいmessageが来るまではseqを飛び越える代替snapshotも受理できる。この例外の許可と、連続したledger entryであるsnapshotの受理は別である。snapshotが置換した範囲の未知requestに対する後着stale ACKは、過去の診断として無視できる。新しいrequestを生成したり、現在の持ち時間を上書きしたりしない（MUST NOT）。accepted/passed/superseded/defaultedは、保持または復元したpending requestに対応しなければならない。
 
 ## 14. 拡張
@@ -2286,7 +2292,7 @@ gatewayの変換表、損失箇所および拒否条件は、同一release tag�
 
 ## 17. 適合性
 
-`YAMAI 1.0-draft.8 riichi-4p play` 適合を表明する実装は、少なくとも次の試験を通過しなければならない（MUST）。
+`YAMAI 1.0-draft.9 riichi-4p play` 適合を表明する実装は、少なくとも次の試験を通過しなければならない（MUST）。
 
 1. 版不一致と未対応ルールの拒否
 2. JSONL の分割・複数行一括受信
@@ -2362,8 +2368,8 @@ YAMAI Project は次の registry を本書と同じ repository で管理する�
 
 | Registry | 初期値 |
 |---|---|
-| Protocol Versions | `1.0-draft.8` |
-| Profiles | `riichi-4p@1.0-draft.6` (`sha256:` hashはrelease registryで確定) |
+| Protocol Versions | `1.0-draft.9` |
+| Profiles | `riichi-4p@1.0-draft.7` (`sha256:` hashはrelease registryで確定) |
 | Capabilities | required/optional交渉。初期optional: `resume`, `snapshot` |
 | Message Kinds | `hello`, `join`, `welcome`, `event`, `request`, `action`, `ack`, `error`, `snapshot` |
 | Event Types | 第7.4節の値（`pao`を含む） |
@@ -2402,7 +2408,7 @@ chinroutou, ryuuiisou, chuuren_poutou, suukantsu, tenhou, chiihou
 
 - JSON Lines media type: `application/yamai-jsonl`
 - JSON message media type: `application/yamai+json`
-- WebSocket subprotocol: `yamai.1.draft8`
+- WebSocket subprotocol: `yamai.1.draft9`
 
 `+json` は登録済みstructured syntax suffixである。一方、JSON Lines全体は単一JSON textではないため、未登録suffix `+jsonl` を使用してはならない（MUST NOT）。media typeの正式登録は [RFC 6838] のtemplateとreview手続に従う。
 
@@ -2479,8 +2485,8 @@ stateDiagram-v2
 次の例は envelope の必須関係だけを示す。`rules` と配牌は説明のため省略しており、実際の message としては不適合である。
 
 ```text
-H -> P  hello(versions=[1.0-draft.8], profiles=[{name:riichi-4p, revisions:[1.0-draft.6], hashes:{1.0-draft.6:sha256:...}}], capabilities={required:[],optional:[resume,snapshot]})
-P -> H  join(version=1.0-draft.8, mode=play, view=seat, profile=riichi-4p, profile_revision=1.0-draft.6, profile_hash=sha256:..., capabilities={required:[],optional:[resume,snapshot]})
+H -> P  hello(versions=[1.0-draft.9], profiles=[{name:riichi-4p, revisions:[1.0-draft.7], hashes:{1.0-draft.7:sha256:...}}], capabilities={required:[],optional:[resume,snapshot]})
+P -> H  join(version=1.0-draft.9, mode=play, view=seat, profile=riichi-4p, profile_revision=1.0-draft.7, profile_hash=sha256:..., capabilities={required:[],optional:[resume,snapshot]})
 H -> P  welcome(seat=0, rules=...)
 H -> P  event(seq=1, start_game)
 H -> P  event(seq=2, start_kyoku)

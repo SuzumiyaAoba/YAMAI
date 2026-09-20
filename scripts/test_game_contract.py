@@ -88,6 +88,81 @@ class GameContractTests(unittest.TestCase):
                 self.assertEqual(receiver.time_bank_ms, ack["time_bank_ms"])
                 break
 
+    def test_adopted_actions_allow_required_dora_reach_deposit_and_pao(self):
+        cases = [
+            ('V241_consecutive_kan_reveals_previous_marker', 0, None),
+            ('V247_called_reach_still_pays_deposit', 1,
+             ['N','N','9m','4m','5m','6m','4p','5p','6p','4s','5s','6s','P']),
+            ('V250_pao_between_third_pon_and_discard', 1,
+             ['P','P','F','F','C','C','9m','8m','7m','4m','5m','6m','N']),
+        ]
+        schemas = v.SchemaSet()
+        for key, seat, hand in cases:
+            with self.subTest(case=key):
+                trace = deepcopy(self.vectors[key]['positive']['trace'])
+                events = trace['input']['events']
+                welcome = deepcopy(self.vectors['V104_wire_complete_game']['positive']['trace']['welcome'])
+                welcome['seat'] = seat
+                welcome['rules'] = {**welcome['rules'], **trace['rule_overrides']}
+                events[0]['rules'] = welcome['rules']
+                if hand is not None:
+                    events[1]['hands'] = [{'count':13} for _ in range(4)]
+                    events[1]['hands'][seat] = {'tiles':hand}
+                receiver = Receiver(welcome, v.strict_load_bytes, v._session_schema_validator(schemas, welcome['profile_hash']))
+                identity = {k:welcome[k] for k in ('yamai','session_id','game_id')}
+                def send(kind, **fields):
+                    message = dict(identity, kind=kind, seq=receiver.applied+1, **fields)
+                    receiver.receive(json.dumps(message, separators=(',', ':')).encode())
+                for index, event in enumerate(events):
+                    if receiver.awaiting_request:
+                        r = receiver.game.round
+                        cause = receiver.game.last_cause
+                        reach = r['reach_status'][seat]
+                        position = dict(seat=seat, hand=receiver.game._scoring_hand(seat), cause=cause,
+                                        scores=receiver.game.scores, bakaze=r['bakaze'], oya=r['oya'], kyotaku=r['kyotaku'],
+                                        wall_remaining=r['wall_remaining'], kan_counts=r['kan_counts'],
+                                        reach_accepted=reach['state']=='accepted', double_riichi=reach['double'],
+                                        ippatsu=reach['ippatsu'], first_turn=r['first_turn_eligible'][seat],
+                                        rinshan=r['rinshan'], last_tile=r['haitei'],
+                                        temporary_furiten=r['self_state']['temporary_furiten'],
+                                        riichi_furiten=r['self_state']['riichi_furiten'],
+                                        river=[tile['pai'] for tile in r['rivers'][seat]],
+                                        dora_markers=r['dora_markers'], ura_dora_markers=[])
+                        actions = legal_actions(position, welcome['rules'])
+                        # Derived events precede the chosen core event. Find
+                        # the intended choice in the independent event fixture.
+                        core = next(e for e in events[index:] if e['type'] not in {'dora','reach_accepted','pao'})
+                        wanted = deepcopy(core)
+                        wanted['type'] = wanted['type'].removesuffix('_declared')
+                        if wanted['type'] in {'chi','pon','reach'}:
+                            wanted['dahai'] = next(e for e in events[index:] if e['type']=='dahai' and e['actor']==seat)
+                        chosen = next(i for i,a in enumerate(actions) if canonical_action(a)==canonical_action(wanted))
+                        default = next(i for i,a in enumerate(actions) if a['type']=='none' or
+                                       (a['type']=='dahai' and a['tsumogiri']))
+                        rid = 'r'+str(receiver.applied+1)
+                        request = dict(request_id=rid, seat=seat, caused_by_seq=receiver.applied,
+                                       timeout_ms=3000, time_bank_ms=receiver.time_bank_ms,
+                                       legal_actions=[{'action_id':'a'+str(i),'action':a} for i,a in enumerate(actions)],
+                                       default_action_id='a'+str(default))
+                        if cause['type']!='tsumo':
+                            members = [{'seat':s,'request_id':rid if s==seat else rid+'s'+str(s)}
+                                       for s in range(4) if s!=cause['actor']]
+                            request.update(decision_group_id='g'+rid, decision_group_members=members,
+                                           decision_group_deadline_ms=21000, decision_group_close='all_selected_or_deadline')
+                        send('request', **request)
+                        send('ack', request_id=rid, action_id='a'+str(chosen), status='accepted',
+                             elapsed_ms=1, time_bank_ms=receiver.time_bank_ms)
+                    if event['type']=='tsumo' and event['actor']!=seat:
+                        event['pai'] = None
+                    send('event', event=event)
+                self.assertEqual(receiver.expected_effects, [])
+                if key.startswith('V241'):
+                    self.assertEqual(receiver.game.round['dora_markers'], ['9p','8p'])
+                elif key.startswith('V247'):
+                    self.assertEqual(receiver.game.scores, [24000,25000,25000,25000])
+                else:
+                    self.assertEqual(receiver.game.round['pao'], [{'actor':1,'yaku_id':'daisangen','liable_seat':2}])
+
     def test_invalid_event_restores_game_state_and_wire_prefix(self):
         trace = deepcopy(self.vectors["V104_wire_complete_game"]["positive"]["trace"])
         welcome = trace["welcome"]

@@ -4,7 +4,7 @@
 
 本書は、YAMAI の規範文書、機械可読成果物およびリリースを同一の版として管理するためのプロセスを定める。本書自身はプロセス文書であり、対局 wire の新しい message、event、action または rule を追加しない。
 
-現在の対象は `yamai-1.0-draft.8`（Protocol Version `1.0-draft.8`、`riichi-4p` profile revision `1.0-draft.6`）であり、安定版ではない。公開用 release tag が付されるまでは、release manifest の `published` を `false` とする。
+現在の対象は `yamai-1.0-draft.9`（Protocol Version `1.0-draft.9`、`riichi-4p` profile revision `1.0-draft.7`）であり、安定版ではない。公開用 release tag が付されるまでは、release manifest の `published` を `false` とする。
 
 ## 2. 権威関係
 
@@ -26,7 +26,7 @@ JSON Schema の検証だけでは、重複 JSON key、frame境界、`seq` の連
 
 ## 3. Protocol Version と profile hash の責務
 
-`yamai`、`hello.versions`、`join.version` および各 message Schema の版は Protocol Version に属する。Protocol Version `1.0-draft.8` は、release manifest に列挙されたYRC 0003のmessage Schema閉包とjoin-proposal Schemaを固定する。message Schema の変更は、互換性の有無に応じて draft revision または major version を更新しなければならない。
+`yamai`、`hello.versions`、`join.version` および各 message Schema の版は Protocol Version に属する。Protocol Version `1.0-draft.9` は、release manifest に列挙されたYRC 0003のmessage Schema閉包とjoin-proposal Schemaを固定する。message Schema の変更は、互換性の有無に応じて draft revision または major version を更新しなければならない。
 
 `profile_revision` と `profile_hash` は `riichi-4p` など profile の同一性を表す。現在のprofile_hashは、YRC 0003 第6.2節が列挙する7個の派生JSON成果物をJCS projectionして計算する。これらの意味は規範本文に従う。
 

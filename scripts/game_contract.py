@@ -625,6 +625,8 @@ class EventState:
                     require(r["wall_remaining"] == 0 and phase == "awaiting_responses" and r["pending_kan"] is None, "exhaustive draw before last discard")
                 else:
                     require(reason in self.rules["abortive_draws"], "abortive draw disabled")
+                    require(result["tenpai"] is None and event["deltas"] == [0] * 4,
+                            "abortive draw must preserve scores without tenpai settlement")
                     if reason == "sanchaho":
                         require(self.rules["ron_policy"] == "double_only" and phase == "awaiting_responses", "sanchaho without a ron group")
                     elif reason == "kyushukyuhai":

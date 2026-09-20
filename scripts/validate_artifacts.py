@@ -29,9 +29,9 @@ from game_contract import GameError, EventState, next_kyoku, legal_actions, cano
 
 ROOT = Path(__file__).resolve().parents[1]
 SCHEMA_ROOT = ROOT / "schemas"
-PROTOCOL = "1.0-draft.8"
+PROTOCOL = "1.0-draft.9"
 PROFILE = "riichi-4p"
-PROFILE_REVISION = "1.0-draft.6"
+PROFILE_REVISION = "1.0-draft.7"
 YRC0003_SCHEMA_DIR = SCHEMA_ROOT / "yrc-0003" / PROTOCOL
 RELEASE_MANIFEST_PATH = ROOT / "release-manifest.json"
 MAX_INT = 9007199254740991
@@ -40,13 +40,13 @@ EXTENSION_FIELD_RE = re.compile(r"^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z
 CAPABILITY_RE = re.compile(r"^(?:[a-z][a-z0-9_]{0,63}|x-(?=[A-Za-z0-9_.-]{3,62}$)[A-Za-z0-9]+-[A-Za-z0-9][A-Za-z0-9_.-]*)$")
 ERROR_CODE_RE = re.compile(r"^[a-z][a-z0-9_]{1,63}$")
 PROFILE_HASH_INPUTS = [
-    "schemas/yrc-0003/1.0-draft.8/profile/riichi-4p.schema.json",
-    "schemas/yrc-0005/1.0-draft.6/riichi-4p-rules.schema.json",
-    "schemas/yrc-0005/1.0-draft.6/scoring-vectors.schema.json",
-    "registry/yrc-0003/1.0-draft.8/registry.json",
-    "registry/yrc-0005/1.0-draft.6/registry.json",
-    "test-vectors/yrc-0003/1.0-draft.8/vectors.json",
-    "test-vectors/yrc-0005/1.0-draft.6/scoring.json",
+    "schemas/yrc-0003/1.0-draft.9/profile/riichi-4p.schema.json",
+    "schemas/yrc-0005/1.0-draft.7/riichi-4p-rules.schema.json",
+    "schemas/yrc-0005/1.0-draft.7/scoring-vectors.schema.json",
+    "registry/yrc-0003/1.0-draft.9/registry.json",
+    "registry/yrc-0005/1.0-draft.7/registry.json",
+    "test-vectors/yrc-0003/1.0-draft.9/vectors.json",
+    "test-vectors/yrc-0005/1.0-draft.7/scoring.json",
 ]
 
 # The release checker intentionally implements the assertion keywords used by
@@ -490,8 +490,8 @@ def load_all_json() -> None:
 
 
 def check_registry(schemas: SchemaSet) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-    p = strict_load(ROOT / "registry/yrc-0003/1.0-draft.8/registry.json")
-    r = strict_load(ROOT / "registry/yrc-0005/1.0-draft.6/registry.json")
+    p = strict_load(ROOT / "registry/yrc-0003/1.0-draft.9/registry.json")
+    r = strict_load(ROOT / "registry/yrc-0005/1.0-draft.7/registry.json")
     if p["protocol_version"] != PROTOCOL or r["protocol_version"] != PROTOCOL:
         raise ArtifactError("registry_error", "registry protocol version mismatch")
     bounds = r["arithmetic"]["score_range"]
@@ -522,7 +522,7 @@ def check_registry(schemas: SchemaSet) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         if set(_collect_union_property_values(schemas, schema, schema, "kind")) != {entry["id"]}:
             raise ArtifactError("registry_error", f"message kind/schema discriminator mismatch: {entry['id']}")
 
-    event_schema = schema_by_id(schemas, "urn:yamai:schema:yrc-0003:1.0-draft.8:event")
+    event_schema = schema_by_id(schemas, "urn:yamai:schema:yrc-0003:1.0-draft.9:event")
     event_union = event_schema.get("properties", {}).get("event", {}).get("oneOf", [])
     event_values = set()
     for branch in event_union:
@@ -530,7 +530,7 @@ def check_registry(schemas: SchemaSet) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     if set(p["event_types"]) != event_values:
         raise ArtifactError("registry_error", "event type registry does not match event schema")
 
-    action_schema = schema_by_id(schemas, "urn:yamai:schema:yrc-0003:1.0-draft.8:action")
+    action_schema = schema_by_id(schemas, "urn:yamai:schema:yrc-0003:1.0-draft.9:action")
     action_root = action_schema
     action_values = set(
         _collect_union_property_values(
@@ -543,7 +543,7 @@ def check_registry(schemas: SchemaSet) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     if set(p["action_types"]) != action_values:
         raise ArtifactError("registry_error", "action type registry does not match action schema")
 
-    ack_schema = schema_by_id(schemas, "urn:yamai:schema:yrc-0003:1.0-draft.8:ack")
+    ack_schema = schema_by_id(schemas, "urn:yamai:schema:yrc-0003:1.0-draft.9:ack")
     ack_statuses = set(_schema_property_values(ack_schema, "status"))
     if set(p["ack_statuses"]) != ack_statuses:
         raise ArtifactError("registry_error", "ack status registry does not match ack schema")
@@ -593,7 +593,7 @@ def check_registry(schemas: SchemaSet) -> Tuple[Dict[str, Any], Dict[str, Any]]:
 
     expected_scoring_schema_files = {
         str(path.relative_to(ROOT))
-        for path in (SCHEMA_ROOT / "yrc-0005" / "1.0-draft.6").glob("*.json")
+        for path in (SCHEMA_ROOT / "yrc-0005" / "1.0-draft.7").glob("*.json")
     }
     if set(r.get("schema_files", [])) != expected_scoring_schema_files:
         raise ArtifactError("registry_error", "scoring registry schema file set mismatch")
@@ -640,12 +640,12 @@ def canonical(value: Any) -> bytes:
 
 
 def profile_hash(protocol_registry: Dict[str, Any], rules_registry: Dict[str, Any]) -> str:
-    manifest = strict_load(ROOT / "test-vectors/yrc-0003/1.0-draft.8/manifest.json")
+    manifest = strict_load(ROOT / "test-vectors/yrc-0003/1.0-draft.9/manifest.json")
     vectors = strict_load(ROOT / manifest["vectors"])
     scoring = strict_load(ROOT / manifest["scoring_vectors"])
-    profile_schema = strict_load(ROOT / "schemas/yrc-0003/1.0-draft.8/profile/riichi-4p.schema.json")
-    rules_schema = strict_load(ROOT / "schemas/yrc-0005/1.0-draft.6/riichi-4p-rules.schema.json")
-    scoring_vectors_schema = strict_load(ROOT / "schemas/yrc-0005/1.0-draft.6/scoring-vectors.schema.json")
+    profile_schema = strict_load(ROOT / "schemas/yrc-0003/1.0-draft.9/profile/riichi-4p.schema.json")
+    rules_schema = strict_load(ROOT / "schemas/yrc-0005/1.0-draft.7/riichi-4p-rules.schema.json")
+    scoring_vectors_schema = strict_load(ROOT / "schemas/yrc-0005/1.0-draft.7/scoring-vectors.schema.json")
     # Normalize mutable hash fields before constructing the canonical artifact
     # projection.  The registry hash itself is omitted from that projection,
     # so writing the resulting digest back cannot create a hash cycle.
@@ -715,17 +715,17 @@ def _repo_file_list(values: Any, field: str) -> None:
 
 
 def check_manifest(schemas: SchemaSet, p: Dict[str, Any], r: Dict[str, Any]) -> Dict[str, Any]:
-    path = ROOT / "test-vectors/yrc-0003/1.0-draft.8/manifest.json"
+    path = ROOT / "test-vectors/yrc-0003/1.0-draft.9/manifest.json"
     manifest = strict_load(path)
-    schema = schema_by_id(schemas, "urn:yamai:schema:yrc-0003:1.0-draft.8:vector-manifest")
+    schema = schema_by_id(schemas, "urn:yamai:schema:yrc-0003:1.0-draft.9:vector-manifest")
     schemas.validate(manifest, schema)
     expected_registries = [
-        "registry/yrc-0003/1.0-draft.8/registry.json",
-        "registry/yrc-0005/1.0-draft.6/registry.json",
+        "registry/yrc-0003/1.0-draft.9/registry.json",
+        "registry/yrc-0005/1.0-draft.7/registry.json",
     ]
     if manifest["registry"] != expected_registries:
         raise ArtifactError("manifest_error", "vector manifest registry set mismatch")
-    if manifest["schema_root"] != "schemas/yrc-0003/1.0-draft.8/message.schema.json":
+    if manifest["schema_root"] != "schemas/yrc-0003/1.0-draft.9/message.schema.json":
         raise ArtifactError("manifest_error", "vector manifest schema root mismatch")
     _repo_file_list(manifest["registry"], "registry")
     _repo_file(manifest["schema_root"], "schema_root")
@@ -775,15 +775,15 @@ def check_release_manifest(manifest: Dict[str, Any], p: Dict[str, Any], r: Dict[
     _repo_file(profile.get("document"), "profiles[0].document")
 
     expected_registries = [
-        "registry/yrc-0003/1.0-draft.8/registry.json",
-        "registry/yrc-0005/1.0-draft.6/registry.json",
+        "registry/yrc-0003/1.0-draft.9/registry.json",
+        "registry/yrc-0005/1.0-draft.7/registry.json",
     ]
     if release.get("registries") != expected_registries or manifest["registry"] != expected_registries:
         raise ArtifactError("release_error", "release registry set mismatch")
     _repo_file_list(release.get("registries"), "registries")
 
     expected_vectors = [
-        "test-vectors/yrc-0003/1.0-draft.8/manifest.json",
+        "test-vectors/yrc-0003/1.0-draft.9/manifest.json",
         manifest["vectors"],
         manifest["scoring_vectors"],
     ]
@@ -793,7 +793,7 @@ def check_release_manifest(manifest: Dict[str, Any], p: Dict[str, Any], r: Dict[
 
     expected_schemas = {
         *p["schema_files"],
-        "schemas/yrc-0003/1.0-draft.8/vector-manifest.schema.json",
+        "schemas/yrc-0003/1.0-draft.9/vector-manifest.schema.json",
         *r["schema_files"],
     }
     release_schemas = release.get("schemas")
@@ -1122,6 +1122,9 @@ def semantic_message(message: Mapping[str, Any], case_id: str, expected_profile_
                 tenpai = result.get("tenpai")
                 if result.get("reason") == "fanpai":
                     _require(isinstance(tenpai, list) and len(tenpai) == 4, "invalid_message", "fanpai requires a four-seat tenpai array")
+                else:
+                    _require(result.get("reason") in {"kyushukyuhai", "suufon_renda", "suucha_riichi", "suukan_sanra", "sanchaho"}, "invalid_message", "unknown abortive draw reason")
+                    _require(tenpai is None and event.get("deltas") == [0] * 4, "invalid_message", "abortive draw must preserve scores without tenpai settlement")
             deltas = event.get("deltas")
             if result.get("type") != "hora" and isinstance(deltas, list):
                 _require(sum(deltas) == 0, "invalid_message", "score deltas must conserve points")
@@ -1400,7 +1403,7 @@ def semantic_composite_trace(trace: Mapping[str, Any]) -> None:
 def _check_scoring_fixture_semantics(fixture: Mapping[str, Any], base_rules: Mapping[str, Any], schemas: SchemaSet) -> None:
     fixture_id = fixture["id"]
     effective_rules = {**base_rules, **fixture["rule_overrides"]}
-    schemas.validate(effective_rules, {"$ref": "urn:yamai:schema:yrc-0005:1.0-draft.6:riichi-4p-rules"})
+    schemas.validate(effective_rules, {"$ref": "urn:yamai:schema:yrc-0005:1.0-draft.7:riichi-4p-rules"})
     try:
         actual = calculate_scoring_fixture(dict(fixture), dict(base_rules))
     except ScoringError as exc:
@@ -1897,7 +1900,7 @@ def semantic_ledger_trace(trace: Mapping[str, Any], expected_hash: str) -> None:
                         pending_transaction = None
                 seen.add(seq)
         _require(receiver is not None and set(ledger) == seen, "invalid_message", "capture omits ledger messages")
-        _require(trace.get("allow_open_requests", False) or (not receiver.active_requests and not receiver.awaiting_request), "invalid_message", "capture ends with an unresolved decision")
+        _require(trace.get("allow_open_requests", False) or (not receiver.active_requests and not receiver.awaiting_request and not receiver.expected_effects), "invalid_message", "capture ends with an unresolved decision or missing action effects")
         for lifecycle in trace.get("request_lifecycles", []):
             semantic_lifecycle_trace(lifecycle)
             _require(lifecycle["grace_ms"] == receiver.welcome["rules"]["time_control"]["grace_ms"] and all(lifecycle[k] == receiver.welcome["rules"][k] for k in ("ron_policy", "invalid_action_policy")), "invalid_message", "lifecycle rules differ from negotiation")
@@ -1953,7 +1956,7 @@ def semantic_ledger_trace(trace: Mapping[str, Any], expected_hash: str) -> None:
 
 def check_vectors(schemas: SchemaSet, manifest: Dict[str, Any]) -> int:
     vectors = strict_load(ROOT / manifest["vectors"])
-    root_schema = schema_by_id(schemas, "urn:yamai:schema:yrc-0003:1.0-draft.8:message")
+    root_schema = schema_by_id(schemas, "urn:yamai:schema:yrc-0003:1.0-draft.9:message")
     checked = 0
     session_types = {"negotiation", "resume_tokens", "resource_clock", "wire_direction", "input_error", "replay_plan", "receiver", "multi_session", "extension_message"}
     error_codes = {item["id"] for item in strict_load(ROOT / f"registry/yrc-0003/{PROTOCOL}/registry.json")["error_codes"]}
@@ -2153,8 +2156,8 @@ def check_vectors(schemas: SchemaSet, manifest: Dict[str, Any]) -> int:
 
 
 def check_scoring(schemas: SchemaSet, rules_registry: Mapping[str, Any]) -> Tuple[int, int, int]:
-    data = strict_load(ROOT / "test-vectors/yrc-0005/1.0-draft.6/scoring.json")
-    scoring_schema_id = "urn:yamai:schema:yrc-0005:1.0-draft.6:scoring-vectors"
+    data = strict_load(ROOT / "test-vectors/yrc-0005/1.0-draft.7/scoring.json")
+    scoring_schema_id = "urn:yamai:schema:yrc-0005:1.0-draft.7:scoring-vectors"
     if scoring_schema_id in schemas.schemas:
         schemas.validate(data, schema_by_id(schemas, scoring_schema_id))
     vector_items = data.get("vectors", [])
@@ -2199,7 +2202,7 @@ def check_scoring(schemas: SchemaSet, rules_registry: Mapping[str, Any]) -> Tupl
             schemas.validate(fixture["state"], {"$ref": scoring_schema_id + "#/$defs/state"})
             schemas.validate(fixture["rule_overrides"], {"$ref": scoring_schema_id + "#/$defs/rule_overrides"})
             effective = {**base_rules, **fixture["rule_overrides"]}
-            schemas.validate(effective, {"$ref": "urn:yamai:schema:yrc-0005:1.0-draft.6:riichi-4p-rules"})
+            schemas.validate(effective, {"$ref": "urn:yamai:schema:yrc-0005:1.0-draft.7:riichi-4p-rules"})
             calculate_scoring_fixture(fixture, base_rules)
         except (ScoringError, ArtifactError) as exc:
             caught = exc.code
@@ -2211,7 +2214,7 @@ def check_scoring(schemas: SchemaSet, rules_registry: Mapping[str, Any]) -> Tupl
     for summary in vector_items:
         sid = summary["id"]
         rules = {**base_rules, **summary.get("rule_overrides", {})}
-        schemas.validate(rules, {"$ref": "urn:yamai:schema:yrc-0005:1.0-draft.6:riichi-4p-rules"})
+        schemas.validate(rules, {"$ref": "urn:yamai:schema:yrc-0005:1.0-draft.7:riichi-4p-rules"})
         if all(key in summary for key in ("fu", "han", "dealer", "tsumo")):
             basic = basic_points(summary["fu"], summary["han"], 0, rules)
             actor = 0 if summary["dealer"] else 1
@@ -2305,12 +2308,12 @@ def main() -> int:
         schemas = SchemaSet()
         schemas.check_refs()
         schemas.check_keyword_support()
-        root = schema_by_id(schemas, "urn:yamai:schema:yrc-0003:1.0-draft.8:message")
+        root = schema_by_id(schemas, "urn:yamai:schema:yrc-0003:1.0-draft.9:message")
         union_refs = root.get("oneOf", [])
         expected_kinds = {"hello", "join", "welcome", "event", "request", "action", "ack", "error", "snapshot"}
         if len(union_refs) != 9:
             raise ArtifactError("schema_error", "message union must contain nine branches")
-        expected_ids = {"urn:yamai:schema:yrc-0003:1.0-draft.8:" + x for x in expected_kinds}
+        expected_ids = {"urn:yamai:schema:yrc-0003:1.0-draft.9:" + x for x in expected_kinds}
         actual_ids = {item.get("$ref", "").split("#", 1)[0] for item in union_refs}
         if actual_ids != expected_ids:
             raise ArtifactError("schema_error", "message union branches mismatch")

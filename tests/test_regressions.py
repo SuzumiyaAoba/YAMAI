@@ -20,7 +20,7 @@ from game_contract import EventState, GameError, next_kyoku
 from scoring_reference import ScoringError, normal_payments, tile_index
 from session_contract import Receiver, SessionError
 
-VECTORS = json.loads((ROOT / "test-vectors/yrc-0003/1.0-draft.8/vectors.json").read_text())
+VECTORS = json.loads((ROOT / "test-vectors/yrc-0003/1.0-draft.9/vectors.json").read_text())
 SCORING = json.loads(oracle.DEFAULT_INPUT.read_text())
 FIXTURES = {f["id"]: f for f in SCORING["fixtures"]}
 
@@ -162,7 +162,7 @@ class ScoringRegressionTests(unittest.TestCase):
     def test_open_honitsu_is_two_han_in_schema(self):
         schemas = validator.SchemaSet()
         message = {"id": "honitsu", "unit": "han", "value": 2}
-        result = validator.schema_by_id(schemas, "urn:yamai:schema:yrc-0005:1.0-draft.6:scoring-result")
+        result = validator.schema_by_id(schemas, "urn:yamai:schema:yrc-0005:1.0-draft.7:scoring-result")
         schemas._validate(message, result["$defs"]["yaku"], "yaku", result)
 
     def test_draw_tenpai_and_penalty_offender_are_inputs(self):

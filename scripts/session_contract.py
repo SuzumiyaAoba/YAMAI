@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from typing import Any, Callable
-from game_contract import EventState, GameError
+from game_contract import EventState, GameError, canonical_action
 from scoring_reference import ScoringError
 
 
@@ -21,6 +21,16 @@ class SessionError(ValueError):
 def require(condition: bool, code: str, message: str, severity: str = "fatal") -> None:
     if not condition:
         raise SessionError(code, message, severity)
+
+
+def check_clock(request: dict, clock: dict, grace: int, *, user: bool = False) -> None:
+    deadline = grace + request["timeout_ms"] + request["time_bank_ms"]
+    elapsed = clock["elapsed_ms"]
+    require(0 <= elapsed <= deadline and (not user or elapsed < deadline),
+            "invalid_message", "selection clock exceeds its original deadline")
+    consumed = min(max(0, elapsed - grace - request["timeout_ms"]), request["time_bank_ms"])
+    require(clock["time_bank_ms"] == request["time_bank_ms"] - consumed,
+            "invalid_message", "selection time-bank arithmetic differs")
 
 
 def negotiate(hello: dict, join: dict, welcome: dict, context: dict,
@@ -162,6 +172,7 @@ class Receiver:
         self.awaiting_request = False
         self.requests: dict[str, dict] = {}
         self.terminal_acks: dict[str, dict] = {}
+        self.expected_effects: list[dict] = []
         self.time_bank_ms = welcome["rules"]["time_control"]["bank_ms"]
         self.original_seq = 0
         self.applications: list[int] = []
@@ -195,6 +206,57 @@ class Receiver:
                 self.closed = True
             raise
 
+    def _expect_effects(self, request: dict, ack: dict) -> None:
+        """Bind an adopted core candidate to its subsequent public events."""
+        if ack["status"] not in {"accepted", "defaulted"}:
+            return
+        action = deepcopy(next(c["action"] for c in request["legal_actions"] if c["action_id"] == ack["action_id"]))
+        kind = action["type"]
+        if kind == "none" or kind.startswith("x-"):
+            return  # Private effects are checked by the negotiated owner.
+        effects = []
+        current = self.game.round
+        if current["pending_dora"] is not None:
+            effects.append({"type": "dora"})
+        cause = self.game.last_cause
+        if kind in {"chi", "pon", "daiminkan"} and current["reach_status"][cause["actor"]]["state"] == "declared":
+            effects.append({"type": "reach_accepted", "actor": cause["actor"]})
+        if kind == "reach":
+            effects.extend([{"type": "reach", "actor": action["actor"]}, action["dahai"]])
+        elif kind in {"chi", "pon"}:
+            discard = action.pop("dahai")
+            effects.extend([action, discard])
+        elif kind in {"ankan", "kakan"}:
+            effects.append({**action, "type": kind + "_declared"})
+        elif kind == "hora":
+            effects.append({"type": "end_kyoku", "winner": action["actor"]})
+        elif kind == "ryukyoku":
+            effects.append({"type": "end_kyoku", "reason": "kyushukyuhai"})
+        else:
+            effects.append(action)
+        self.expected_effects = effects
+
+    def _check_effect(self, event: dict) -> None:
+        if not self.expected_effects:
+            return
+        # A pao assignment belongs between the adopted pon and its discard.
+        # EventState checks the exact derived assignment before applying it.
+        if event["type"] == "pao" and self.game.pao_due:
+            return
+        expected = self.expected_effects[0]
+        require(event["type"] == expected["type"], "invalid_message", "event differs from acknowledged action")
+        if "winner" in expected:
+            require(event["result"]["type"] == "hora" and expected["winner"] in {w["actor"] for w in event["result"]["wins"]},
+                    "invalid_message", "acknowledged winner is missing from settlement")
+        elif "reason" in expected:
+            require(event["result"]["type"] == "ryukyoku" and event["result"]["reason"] == expected["reason"],
+                    "invalid_message", "settlement differs from acknowledged draw")
+        elif expected["type"] in {"dora", "reach_accepted"}:
+            require(all(event.get(k) == value for k, value in expected.items()), "invalid_message", "derived event differs from acknowledged action")
+        else:
+            require(canonical_action(event) == canonical_action(expected), "invalid_message", "event differs from acknowledged candidate arguments")
+        self.expected_effects.pop(0)
+
     def _receive(self, raw: bytes) -> str:
         message = self.decode(raw)
         require(isinstance(message, dict), "invalid_message", "message is not an object")
@@ -213,6 +275,7 @@ class Receiver:
         if kind == "snapshot":
             require("snapshot" in self.welcome["capabilities"], "invalid_message", "snapshot capability is not enabled")
             contiguous = seq == self.applied + 1
+            require(not contiguous or not self.expected_effects, "invalid_message", "snapshot interrupts acknowledged action effects")
             # A retained snapshot is an ordinary ledger entry. Its old prefix
             # need not cover the current recovery frontier, and applying it
             # must not end replay early. Only a jump needs recovery authority.
@@ -236,14 +299,30 @@ class Receiver:
                 require(state["original_seq"] >= self.original_seq, "invalid_message", "snapshot rewound the recording cursor")
                 self.original_seq = state["original_seq"]
             for request in state.get("pending_requests", []):
+                rid = request["request_id"]
+                require(rid not in self.terminal_acks, "invalid_message", "snapshot reopened a terminal request")
+                grace = self.welcome["rules"]["time_control"]["grace_ms"]
+                deadline = grace + request["timeout_ms"] + request["time_bank_ms"]
+                require(request["remaining_ms"] <= deadline, "invalid_message", "snapshot remaining time exceeds original budget")
+                if "decision_group_id" in request:
+                    require(request["decision_group_deadline_ms"] >= deadline and
+                            request["remaining_ms"] <= request["decision_group_remaining_ms"] <= request["decision_group_deadline_ms"],
+                            "invalid_message", "snapshot group clock differs from original deadlines")
+                selection = request["selection"]
+                if selection is not None:
+                    check_clock(request, selection, grace, user=selection["source"] == "user")
                 if request["request_id"] in self.requests:
                     old = self.requests[request["request_id"]]
                     immutable = ("seat", "caused_by_seq", "timeout_ms", "time_bank_ms", "legal_actions", "default_action_id", "decision_group_id", "decision_group_members", "decision_group_deadline_ms", "decision_group_close")
                     require(all(request.get(key) == old.get(key) for key in immutable), "invalid_message", "snapshot changed an issued request")
+                    if old.get("selection") is not None:
+                        require(selection is not None and all(selection[k] == old["selection"][k] for k in ("action_id", "source", "elapsed_ms", "time_bank_ms")),
+                                "invalid_message", "snapshot changed a frozen selection")
                 self.requests[request["request_id"]] = deepcopy(request)
             self.active_requests = {r["request_id"] for r in state.get("pending_requests", [])}
             self.awaiting_request = False
             self.request_ids |= self.active_requests
+            self.expected_effects = []  # A jump can cover the entire result transaction.
             if self.recovery == "initial":
                 self.recovery = None
         else:
@@ -252,6 +331,8 @@ class Receiver:
                 self.recovery = "gap"
                 return "sequence_gap"
             mode = self.welcome["mode"]
+            require(not self.expected_effects or kind == "event" or (kind == "error" and message["severity"] == "fatal"),
+                    "invalid_message", "message interrupts acknowledged action effects")
             require(mode == "play" or kind not in {"request", "ack"}, "invalid_message", "observer received a request or ACK")
             if kind == "event":
                 event = message["event"]
@@ -271,6 +352,7 @@ class Receiver:
                 else:
                     require(event["type"] != "start_game", "invalid_message", "start_game repeated")
                 require(not self.active_requests and not self.awaiting_request, "invalid_message", "state event precedes this seat's required decision and terminal ACK")
+                self._check_effect(event)
                 try:
                     self.game.apply(event)
                 except (GameError, ScoringError) as error:
@@ -311,10 +393,8 @@ class Receiver:
                 else:
                     request = self.requests[rid]
                     grace = self.welcome["rules"]["time_control"]["grace_ms"]
-                    elapsed, bank = message["elapsed_ms"], request["time_bank_ms"]
-                    require(elapsed <= grace + request["timeout_ms"] + bank, "invalid_message", "ACK exceeds original deadline")
-                    remaining = bank - min(max(0, elapsed - grace - request["timeout_ms"]), bank)
-                    require(message["time_bank_ms"] == remaining, "invalid_message", "ACK time-bank arithmetic differs")
+                    check_clock(request, message, grace, user=status in {"accepted", "passed", "superseded"})
+                    remaining = message["time_bank_ms"]
                     selection = request.get("selection")
                     if selection is not None:
                         require(status != "rejected" and all(message[k] == selection[k] for k in ("action_id","elapsed_ms","time_bank_ms")), "invalid_message", "ACK changed snapshot's frozen selection")
@@ -328,6 +408,7 @@ class Receiver:
                         require(status != "passed" or candidates[aid]["type"] == "none", "invalid_message", "passed ACK is not a pass")
                         require(status not in {"accepted", "superseded"} or candidates[aid]["type"] != "none", "invalid_message", "none has an invalid terminal status")
                     if status != "rejected":
+                        self._expect_effects(request, message)
                         try:
                             self.game.acknowledge(request, message)
                         except (GameError, ScoringError) as error:
