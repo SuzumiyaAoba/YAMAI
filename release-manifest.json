@@ -16,7 +16,7 @@
       "name": "riichi-4p",
       "revision": "1.0-draft.7",
       "document": "docs/yamai-protocol.md",
-      "profile_hash": "sha256:862ffd6fc579419dd37221a5580487ed6f9a9ce73d122da4eda05d83abf3d537"
+      "profile_hash": "sha256:4ec5bc8ad131cb887e40e5155c17c1becf9cf73c31fd627e11526a94128d18cc"
     }
   ],
   "normative_documents": [

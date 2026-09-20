@@ -93,6 +93,18 @@ class ScoringInvariants(unittest.TestCase):
             calculate_fixture(f, self.rules)
         self.assertEqual(error.exception.code, 'invalid_message')
 
+    def test_projected_kan_declaration_requires_normalized_tile(self):
+        f = deepcopy(self.fixtures['yaku_rinshan'])
+        next(e for e in f['state']['events'] if e['type'] == 'ankan_declared').pop('pai')
+        with self.assertRaises(ScoringError) as error:
+            calculate_fixture(f, self.rules)
+        self.assertEqual(error.exception.code, 'invalid_message')
+        f = deepcopy(self.fixtures['yaku_rinshan'])
+        next(e for e in f['state']['events'] if e['type'] == 'ankan_declared')['pai'] = '5mr'
+        with self.assertRaises(ScoringError) as error:
+            calculate_fixture(f, self.rules)
+        self.assertEqual(error.exception.code, 'invalid_context')
+
 
 if __name__ == '__main__':
     unittest.main()

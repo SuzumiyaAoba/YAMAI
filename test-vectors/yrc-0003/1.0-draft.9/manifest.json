@@ -3,7 +3,7 @@
   "protocol_version": "1.0-draft.9",
   "profile": "riichi-4p",
   "profile_revision": "1.0-draft.7",
-  "profile_hash": "sha256:862ffd6fc579419dd37221a5580487ed6f9a9ce73d122da4eda05d83abf3d537",
+  "profile_hash": "sha256:4ec5bc8ad131cb887e40e5155c17c1becf9cf73c31fd627e11526a94128d18cc",
   "registry": [
     "registry/yrc-0003/1.0-draft.9/registry.json",
     "registry/yrc-0005/1.0-draft.7/registry.json"
@@ -1748,6 +1748,54 @@
     {
       "id": "V288_illegal_action_requires_penalty",
       "area": "result-reason-variant",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V289_resolving_snapshot_call_continuation",
+      "area": "snapshot-resolving",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V290_resolving_snapshot_turn_continuation",
+      "area": "snapshot-resolving",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V291_snapshot_mid_transaction_rejected",
+      "area": "snapshot-transaction-boundary",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V292_snapshot_pao_must_be_complete",
+      "area": "snapshot-pao",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V293_snapshot_kan_declaration_cause",
+      "area": "snapshot-state-machine",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V294_wire_call_compound_flow",
+      "area": "compound-action-correspondence",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V295_snapshot_deferred_dora_pending",
+      "area": "snapshot-state-consistency",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V296_snapshot_consecutive_kan_window",
+      "area": "snapshot-state-consistency",
       "expect_positive": "valid",
       "expect_negative": "invalid_message"
     }

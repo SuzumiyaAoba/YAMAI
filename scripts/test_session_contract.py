@@ -494,6 +494,92 @@ class SessionInvariants(unittest.TestCase):
         two['x_test_capture']['wire'] += ' '
         self.assertNotEqual(v.profile_hash(one,rules),v.profile_hash(two,rules))
 
+    def test_snapshot_must_carry_this_seats_open_request(self):
+        welcome, messages = self.snapshot_history()
+        receiver = self.receiver(welcome)
+        for message in messages[:4]:
+            receiver.receive(self.raw(message))
+        snapshot = deepcopy(self.vectors['V18_snapshot_state']['positive'])
+        snapshot['state']['pending_requests'] = []
+        with self.assertRaisesRegex(SessionError, 'pending requests'):
+            receiver.receive(self.raw(snapshot))
+
+    def test_resolving_snapshot_must_not_carry_requests(self):
+        welcome, messages = self.snapshot_history()
+        receiver = self.receiver(welcome)
+        for message in messages[:4]:
+            receiver.receive(self.raw(message))
+        snapshot = deepcopy(self.vectors['V18_snapshot_state']['positive'])
+        snapshot['state']['kyoku']['turn']['phase'] = 'resolving'
+        with self.assertRaisesRegex(SessionError, 'pending requests'):
+            receiver.receive(self.raw(snapshot))
+
+    def _snapshot_receiver(self):
+        welcome, messages = self.snapshot_history()
+        receiver = self.receiver(welcome)
+        for message in messages[:4]:
+            receiver.receive(self.raw(message))
+        return receiver
+
+    def test_snapshot_request_must_bind_this_seat_and_cause(self):
+        variants = [
+            ('seat', lambda s: s['state']['pending_requests'][0].update(seat=1)),
+            ('owner/cause', lambda s: s['state']['pending_requests'][0].update(caused_by_seq=4)),
+            ('owner/cause', lambda s: s['state']['kyoku']['turn'].update(last_event_seq=4)),
+        ]
+        for pattern, mutate in variants:
+            with self.subTest(pattern=pattern):
+                receiver = self._snapshot_receiver()
+                snapshot = deepcopy(self.vectors['V18_snapshot_state']['positive'])
+                mutate(snapshot)
+                with self.assertRaisesRegex(SessionError, pattern):
+                    receiver.receive(self.raw(snapshot))
+
+    def test_snapshot_boundary_metadata_is_checked(self):
+        variants = [
+            ('replacement range', lambda s: s['state']['kyoku']['turn'].update(last_event_seq=None)),
+            ('replacement range', lambda s: s['state']['kyoku']['turn'].update(last_event_seq=9)),
+            ('visibility', lambda s: s['state']['kyoku']['turn'].update(
+                last_event={'type': 'tsumo', 'actor': 1, 'pai': '9s'})),
+            ('kyotaku', lambda s: s['state']['kyoku'].update(kyotaku=1)),
+            ('time bank', lambda s: s['state']['kyoku']['self_state'].update(time_bank_ms=14000)),
+            ('compound discard', lambda s: s['state']['kyoku']['self_state'].update(kuikae_forbidden=['9s'])),
+        ]
+        for pattern, mutate in variants:
+            with self.subTest(pattern=pattern):
+                receiver = self._snapshot_receiver()
+                snapshot = deepcopy(self.vectors['V18_snapshot_state']['positive'])
+                mutate(snapshot)
+                with self.assertRaisesRegex(SessionError, pattern):
+                    receiver.receive(self.raw(snapshot))
+
+    def test_snapshot_selection_must_share_the_bank(self):
+        receiver = self._snapshot_receiver()
+        snapshot = deepcopy(self.vectors['V18_snapshot_state']['positive'])
+        snapshot['state']['pending_requests'][0].update(
+            remaining_ms=0,
+            selection={'action_id': 'a1', 'source': 'user', 'elapsed_ms': 100, 'time_bank_ms': 14000})
+        with self.assertRaisesRegex(SessionError, 'shared balance'):
+            receiver.receive(self.raw(snapshot))
+
+    def test_snapshot_derived_round_state_is_checked(self):
+        variants = [
+            ('discard window', lambda s: s['state']['kyoku']['reach_status'][1].update(state='declared')),
+            ('committed kan', lambda s: s['state']['kyoku'].update(
+                pending_dora={'kan_type': 'daiminkan', 'timing': 'after_rinshan_discard'})),
+            ('live wall', lambda s: s['state']['kyoku'].update(haitei=True)),
+            ('deposit count', lambda s: s['state']['kyoku']['reach_status'][0].update(state='accepted')),
+            ('first-turn eligibility', lambda s: s['state']['kyoku']['first_turn_eligible'].__setitem__(0, False)),
+            ('committed kan', lambda s: s['state']['kyoku'].update(rinshan=True)),
+        ]
+        for pattern, mutate in variants:
+            with self.subTest(pattern=pattern):
+                receiver = self._snapshot_receiver()
+                snapshot = deepcopy(self.vectors['V18_snapshot_state']['positive'])
+                mutate(snapshot)
+                with self.assertRaisesRegex(SessionError, pattern):
+                    receiver.receive(self.raw(snapshot))
+
 
 if __name__ == '__main__':
     unittest.main()

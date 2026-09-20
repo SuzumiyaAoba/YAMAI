@@ -1029,7 +1029,8 @@ def _check_decision_cause(request: Mapping[str, Any], cause: Mapping[str, Any]) 
                 _require(discard["pai"] == cause["pai"], "invalid_message", "tsumogiri is not the drawn tile")
 
 
-def _check_snapshot(message: Mapping[str, Any], extension_contexts: Mapping[str, Sequence[str]] | None = None) -> None:
+def _check_snapshot(message: Mapping[str, Any], extension_contexts: Mapping[str, Sequence[str]] | None = None,
+                    rules: Mapping[str, Any] | None = None) -> None:
     state = message.get("state")
     _require(isinstance(state, dict), "invalid_message", "snapshot state is missing")
     _check_players(state.get("players"))
@@ -1056,17 +1057,68 @@ def _check_snapshot(message: Mapping[str, Any], extension_contexts: Mapping[str,
             _require(turn["last_event_seq"] is None, "invalid_message", "initial observer has no earlier session event")
         else:
             _require(type(turn["last_event_seq"]) is int and 0 < turn["last_event_seq"] <= message["replaces_through_seq"], "invalid_message", "snapshot cause event lies outside replacement range")
+        # A snapshot is fixed only at a transaction boundary: its last
+        # committed event is a decision cause or the round start, never a
+        # transaction-interior event (call, acceptance, marker, pao).
+        reactions = {"dahai", "ankan_declared", "kakan_declared"}
+        _require(phase == "awaiting_draw" and turn["last_event"]["type"] == "start_kyoku"
+                 or phase == "awaiting_action" and turn["last_event"]["type"] == "tsumo"
+                 or phase == "awaiting_responses" and turn["last_event"]["type"] in reactions
+                 or phase == "resolving" and turn["last_event"]["type"] in reactions | {"tsumo"},
+                 "invalid_message", "snapshot phase does not follow its last committed event")
         needs_request = mode == "play" and ((phase == "awaiting_action" and turn["actor"] == seat) or (phase == "awaiting_responses" and turn["actor"] != seat))
         _require(len(pending) == int(needs_request), "invalid_message", "pending requests do not match this seat's turn")
+        declared = turn["last_event"]["type"] in {"ankan_declared", "kakan_declared"}
+        _require(kyoku["pending_kan"] == (turn["last_event"] if declared else None),
+                 "invalid_message", "snapshot pending kan differs from its cause")
+        # A declared-but-unaccepted riichi exists only inside the reach
+        # discard's reaction window, and a deferred dora marker survives a
+        # boundary only while the rinshan decision is open (§10.1–§10.3).
+        reach_declared = [a for a, s in enumerate(kyoku["reach_status"]) if s["state"] == "declared"]
+        _require(not reach_declared or (reach_declared == [turn["actor"]] and phase in {"awaiting_responses", "resolving"}),
+                 "invalid_message", "unaccepted reach declaration survives outside its discard window")
+        pending_dora = kyoku["pending_dora"]
+        _require(pending_dora is None
+                 or (pending_dora["timing"] == "after_rinshan_discard"
+                     and turn["last_event"]["type"] == "tsumo"
+                     and phase in {"awaiting_action", "resolving"}),
+                 "invalid_message", "deferred dora marker survives outside the rinshan decision")
+        _require(pending_dora is None
+                 or (kyoku["melds"][turn["actor"]] and kyoku["melds"][turn["actor"]][-1]["type"] == pending_dora["kan_type"]),
+                 "invalid_message", "deferred dora marker lacks its committed kan")
+        _require(not kyoku["haitei"] or kyoku["wall_remaining"] == 0,
+                 "invalid_message", "last-tile flag without an exhausted live wall")
+        last_meld = kyoku["melds"][turn["actor"]][-1] if kyoku["melds"][turn["actor"]] else None
+        # A rinshan flag survives either the open rinshan decision or a
+        # consecutive kan declaration pending inside that same turn.
+        rinshan_decision = (turn["last_event"]["type"] == "tsumo"
+                            and phase in {"awaiting_action", "resolving"})
+        _require(not kyoku["rinshan"]
+                 or (last_meld is not None and last_meld["type"] in {"ankan", "daiminkan", "kakan"}
+                     and (rinshan_decision or kyoku["pending_kan"] is not None)),
+                 "invalid_message", "rinshan draw pending without a committed kan or its decision window")
+        if rules is not None and kyoku["rinshan"] and rinshan_decision and last_meld["type"] in {"ankan", "daiminkan", "kakan"}:
+            deferred = rules["kan_dora_timing"][last_meld["type"]] == "after_rinshan_discard"
+            _require((pending_dora is not None) == deferred,
+                     "invalid_message", "deferred dora marker missing for the committed kan")
+        _require(sum(s["state"] == "accepted" for s in kyoku["reach_status"]) <= kyoku["kyotaku"],
+                 "invalid_message", "accepted riichi deposits exceed the round's deposit count")
+        for a in range(4):
+            _require(kyoku["first_turn_eligible"][a] == (not kyoku["rivers"][a] and not any(kyoku["melds"])),
+                     "invalid_message", "first-turn eligibility differs from public discard/call history")
         _require(kyoku["kyotaku"] == state["kyotaku"], "invalid_message", "snapshot kyotaku differs")
         if mode == "play":
             _require(kyoku["self_state"]["time_bank_ms"] == state["time_bank_ms"], "invalid_message", "snapshot time bank differs")
+            _require(not kyoku["self_state"]["kuikae_forbidden"], "invalid_message", "snapshot pauses a compound discard")
         visible_seat = seat if mode == "play" else view.get("seat") if isinstance(view, dict) else None
         for actor, hand in enumerate(kyoku["hands"]):
             visible = view == "full" or actor == visible_seat
             _require(("tiles" in hand) == visible, "invalid_message", "snapshot hand visibility differs")
             physical_count = len(hand["tiles"]) if visible else hand["count"]
-            extra = int(actor == turn["actor"] and (phase == "awaiting_action" or (phase == "awaiting_responses" and kyoku["pending_kan"] is not None)))
+            holds_draw = (phase == "awaiting_action"
+                          or phase == "resolving" and turn["last_event"]["type"] == "tsumo"
+                          or kyoku["pending_kan"] is not None and phase in {"awaiting_responses", "resolving"})
+            extra = int(actor == turn["actor"] and holds_draw)
             _require(physical_count == 13 - 3 * len(kyoku["melds"][actor]) + extra, "invalid_message", "snapshot concealed tile count differs")
             for meld in kyoku["melds"][actor]:
                 _require(meld["actor"] == actor and meld.get("target") != actor, "invalid_message", "snapshot meld seat differs")
@@ -1085,7 +1137,7 @@ def _check_snapshot(message: Mapping[str, Any], extension_contexts: Mapping[str,
         pao_keys = [(item["actor"], item["yaku_id"]) for item in kyoku["pao"]]
         _require(len(pao_keys) == len(set(pao_keys)) and all(item["actor"] != item["liable_seat"] for item in kyoku["pao"]), "invalid_message", "pao assignments are invalid")
         known_pao = public_pao(kyoku["melds"], {"pao":{"yakus":["daisangen","daisuushii"]}})
-        _require(all(item in known_pao for item in kyoku["pao"]), "invalid_message", "snapshot pao is not derived from public meld history")
+        _require(sorted(kyoku["pao"], key=lambda p:(p["actor"],p["yaku_id"])) == known_pao, "invalid_message", "snapshot pao differs from public meld history")
         for request in pending:
             _check_request(request, extension_contexts=extension_contexts)
             _check_decision_cause(request, turn["last_event"])
@@ -1627,7 +1679,7 @@ def semantic_game_trace(trace: Mapping[str, Any]) -> None:
             state = EventState(rules)
             if "snapshot" in data:
                 schemas.validate(data["snapshot"], {"$ref": f"urn:yamai:schema:yrc-0003:{PROTOCOL}:snapshot"})
-                _check_snapshot(data["snapshot"])
+                _check_snapshot(data["snapshot"], rules=rules)
                 state.restore(data["snapshot"]["state"])
             for event in data["events"]:
                 schemas.validate(event, {"$ref": f"urn:yamai:schema:yrc-0003:{PROTOCOL}:event#/properties/event"})
@@ -1699,6 +1751,9 @@ def _session_schema_validator(schemas: SchemaSet, expected_hash: str, definition
         try:
             if kind == "decision-cause":
                 _check_decision_cause(message["request"], message["cause"])
+                return
+            if kind == "pending-request":
+                _check_request(message, extension_contexts=extension_contexts)
                 return
             if kind == "visible-event":
                 _check_event_visibility(message["event"], message["mode"], message["view"], message["seat"])
@@ -1948,7 +2003,7 @@ def semantic_ledger_trace(trace: Mapping[str, Any], expected_hash: str) -> None:
                             event["pai"] = None
                         if target["mode"] != "play":
                             kyoku.pop("self_state", None)
-                    _check_snapshot(target["message"])
+                    _check_snapshot(target["message"], rules=receiver.welcome["rules"] if receiver is not None else None)
                 _require(_json_equal(projection, target["message"]), "invalid_message", "visibility projection differs from captured source")
     except SessionError as error:
         raise ArtifactError(error.code, str(error)) from error

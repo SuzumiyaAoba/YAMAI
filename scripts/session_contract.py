@@ -298,9 +298,94 @@ class Receiver:
             if state["mode"] == "replay":
                 require(state["original_seq"] >= self.original_seq, "invalid_message", "snapshot rewound the recording cursor")
                 self.original_seq = state["original_seq"]
+            kyoku = state.get("kyoku")
+            turn = kyoku["turn"] if isinstance(kyoku, dict) else None
+            if turn is not None:
+                bootstrap = state["mode"] == "spectate" and message["seq"] == 1 and message["replaces_through_seq"] == 0
+                last_event_seq = turn["last_event_seq"]
+                require((last_event_seq is None) == bootstrap
+                        and (bootstrap or type(last_event_seq) is int and 0 < last_event_seq <= message["replaces_through_seq"]),
+                        "invalid_message", "snapshot cause event lies outside replacement range")
+                self.validate("visible-event", {"event": turn["last_event"], "mode": state["mode"],
+                                                "view": self.welcome["view"], "seat": self.welcome["seat"]})
+                require(kyoku["kyotaku"] == state["kyotaku"], "invalid_message", "snapshot kyotaku differs")
+                self_state = kyoku.get("self_state")
+                if self_state is not None:
+                    require(self_state["time_bank_ms"] == state["time_bank_ms"], "invalid_message", "snapshot time bank differs")
+                    require(not self_state["kuikae_forbidden"], "invalid_message", "snapshot pauses a compound discard")
+                reach_declared = [a for a, s in enumerate(kyoku["reach_status"]) if s["state"] == "declared"]
+                require(not reach_declared or (reach_declared == [turn["actor"]] and turn["phase"] in {"awaiting_responses", "resolving"}),
+                        "invalid_message", "unaccepted reach declaration survives outside its discard window")
+                pending_dora = kyoku["pending_dora"]
+                require(pending_dora is None
+                        or (pending_dora["timing"] == "after_rinshan_discard"
+                            and turn["last_event"]["type"] == "tsumo" and turn["phase"] in {"awaiting_action", "resolving"}),
+                        "invalid_message", "deferred dora marker survives outside the rinshan decision")
+                require(pending_dora is None
+                        or (kyoku["melds"][turn["actor"]] and kyoku["melds"][turn["actor"]][-1]["type"] == pending_dora["kan_type"]),
+                        "invalid_message", "deferred dora marker lacks its committed kan")
+                require(not kyoku["haitei"] or kyoku["wall_remaining"] == 0,
+                        "invalid_message", "last-tile flag without an exhausted live wall")
+                last_meld = kyoku["melds"][turn["actor"]][-1] if kyoku["melds"][turn["actor"]] else None
+                rinshan_decision = (turn["last_event"]["type"] == "tsumo"
+                                    and turn["phase"] in {"awaiting_action", "resolving"})
+                require(not kyoku["rinshan"]
+                        or (last_meld is not None and last_meld["type"] in {"ankan", "daiminkan", "kakan"}
+                            and (rinshan_decision or kyoku["pending_kan"] is not None)),
+                        "invalid_message", "rinshan draw pending without a committed kan or its decision window")
+                if kyoku["rinshan"] and rinshan_decision and last_meld["type"] in {"ankan", "daiminkan", "kakan"}:
+                    deferred = self.welcome["rules"]["kan_dora_timing"][last_meld["type"]] == "after_rinshan_discard"
+                    require((pending_dora is not None) == deferred,
+                            "invalid_message", "deferred dora marker missing for the committed kan")
+                require(sum(s["state"] == "accepted" for s in kyoku["reach_status"]) <= kyoku["kyotaku"],
+                        "invalid_message", "accepted riichi deposits exceed the round's deposit count")
+                for a in range(4):
+                    require(kyoku["first_turn_eligible"][a] == (not kyoku["rivers"][a] and not any(kyoku["melds"])),
+                            "invalid_message", "first-turn eligibility differs from public discard/call history")
+                view = self.welcome["view"]
+                visible_seat = state["seat"] if state["mode"] == "play" else view.get("seat") if isinstance(view, dict) else None
+                holds_draw = (turn["phase"] == "awaiting_action"
+                              or turn["phase"] == "resolving" and turn["last_event"]["type"] == "tsumo"
+                              or kyoku["pending_kan"] is not None and turn["phase"] in {"awaiting_responses", "resolving"})
+                for actor, hand in enumerate(kyoku["hands"]):
+                    require(("tiles" in hand) == (view == "full" or actor == visible_seat), "invalid_message", "snapshot hand visibility differs")
+                    physical = len(hand["tiles"]) if "tiles" in hand else hand["count"]
+                    require(physical == 13 - 3 * len(kyoku["melds"][actor]) + int(actor == turn["actor"] and holds_draw),
+                            "invalid_message", "snapshot concealed tile count differs")
+                    for meld in kyoku["melds"][actor]:
+                        require(meld["actor"] == actor and meld.get("target") != actor, "invalid_message", "snapshot meld seat differs")
+                    for tile in kyoku["rivers"][actor]:
+                        require(tile["called_by"] != actor, "invalid_message", "a river tile is called by its discarder")
+                require(sum(kyoku["kan_counts"]) <= 4, "invalid_message", "too many kans")
+                for actor in range(4):
+                    require(kyoku["kan_counts"][actor] == sum(m["type"] in {"ankan", "daiminkan", "kakan"} for m in kyoku["melds"][actor]),
+                            "invalid_message", "kan count differs from committed melds")
+                concealed = sum(len(h["tiles"]) if "tiles" in h else h["count"] for h in kyoku["hands"])
+                meld_tiles = sum(len(m["consumed"]) + int(m["type"] != "ankan") for row in kyoku["melds"] for m in row)
+                river_tiles = sum(t["called_by"] is None for river in kyoku["rivers"] for t in river)
+                dead = 14 + int(kyoku["rinshan"] and turn["phase"] == "awaiting_draw")
+                require(concealed + meld_tiles + river_tiles + kyoku["wall_remaining"] + dead == 136,
+                        "invalid_message", "snapshot loses or creates physical tiles")
+                require(len(kyoku["dora_markers"]) == 1 + sum(kyoku["kan_counts"]) - int(kyoku["pending_dora"] is not None),
+                        "invalid_message", "dora count differs from kan state")
+            if state.get("next_kyoku") is not None:
+                require(state["next_kyoku"]["kyotaku"] == state["kyotaku"], "invalid_message", "snapshot next kyotaku differs")
+            if state.get("game_phase") == "ended":
+                order = sorted(range(4), key=lambda i: (-state["scores"][i], i))
+                require(state["final_rankings"] == [order.index(i) + 1 for i in range(4)], "invalid_message", "snapshot rankings differ")
+            if state["mode"] == "play":
+                needs_request = turn is not None and ((turn["phase"] == "awaiting_action" and turn["actor"] == state["seat"])
+                                                      or (turn["phase"] == "awaiting_responses" and turn["actor"] != state["seat"]))
+                require(len(state.get("pending_requests", [])) == int(needs_request),
+                        "invalid_message", "snapshot pending requests do not match this seat's decision state")
             for request in state.get("pending_requests", []):
                 rid = request["request_id"]
                 require(rid not in self.terminal_acks, "invalid_message", "snapshot reopened a terminal request")
+                require(request["seat"] == state["seat"], "invalid_message", "snapshot carries another seat's request")
+                require(turn is not None and request["caused_by_seq"] == turn["last_event_seq"] < message["replaces_through_seq"],
+                        "invalid_message", "snapshot request owner/cause differs")
+                self.validate("pending-request", request)
+                self.validate("decision-cause", {"request": request, "cause": turn["last_event"]})
                 grace = self.welcome["rules"]["time_control"]["grace_ms"]
                 deadline = grace + request["timeout_ms"] + request["time_bank_ms"]
                 require(request["remaining_ms"] <= deadline, "invalid_message", "snapshot remaining time exceeds original budget")
@@ -310,7 +395,13 @@ class Receiver:
                             "invalid_message", "snapshot group clock differs from original deadlines")
                 selection = request["selection"]
                 if selection is not None:
+                    require(selection["action_id"] in {c["action_id"] for c in request["legal_actions"]}, "invalid_message", "snapshot selection is not legal")
+                    require(selection["source"] != "default" or selection["action_id"] == request["default_action_id"], "invalid_message", "snapshot default selection differs")
+                    require(selection["time_bank_ms"] <= request["time_bank_ms"], "invalid_message", "snapshot selection invents bank time")
+                    require(selection["time_bank_ms"] == state["time_bank_ms"], "invalid_message", "selected time bank differs from the shared balance")
                     check_clock(request, selection, grace, user=selection["source"] == "user")
+                else:
+                    require(request["time_bank_ms"] == state["time_bank_ms"], "invalid_message", "open request changed the shared balance")
                 if request["request_id"] in self.requests:
                     old = self.requests[request["request_id"]]
                     immutable = ("seat", "caused_by_seq", "timeout_ms", "time_bank_ms", "legal_actions", "default_action_id", "decision_group_id", "decision_group_members", "decision_group_deadline_ms", "decision_group_close")

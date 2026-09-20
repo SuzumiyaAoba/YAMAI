@@ -337,17 +337,64 @@ class EventState:
         self.pao_due: list[dict] = []
 
     def restore(self, snapshot: dict) -> None:
+        kyoku = snapshot["kyoku"]
+        if kyoku is not None:
+            require(sorted(kyoku["pao"],key=lambda p:(p["actor"],p["yaku_id"])) == public_pao(kyoku["melds"],self.rules), "snapshot pao differs from public meld history")
+            # A snapshot is fixed only at a transaction boundary, so its last
+            # committed event is a decision cause or the round start — never
+            # a transaction-interior event (call, acceptance, marker, pao).
+            reactions = {"dahai", "ankan_declared", "kakan_declared"}
+            phase, cause_type = kyoku["turn"]["phase"], kyoku["turn"]["last_event"]["type"]
+            require(phase == "awaiting_draw" and cause_type == "start_kyoku"
+                    or phase == "awaiting_action" and cause_type == "tsumo"
+                    or phase == "awaiting_responses" and cause_type in reactions
+                    or phase == "resolving" and cause_type in reactions | {"tsumo"},
+                    "snapshot phase does not follow its last committed event")
+            declared = cause_type in {"ankan_declared", "kakan_declared"}
+            require(kyoku["pending_kan"] == (kyoku["turn"]["last_event"] if declared else None),
+                    "snapshot pending kan differs from its cause")
+            self_state = kyoku.get("self_state")
+            require(self_state is None or not self_state["kuikae_forbidden"],
+                    "snapshot pauses a compound discard")
+            reach_declared = [a for a, s in enumerate(kyoku["reach_status"]) if s["state"] == "declared"]
+            require(not reach_declared or (reach_declared == [kyoku["turn"]["actor"]] and phase in {"awaiting_responses", "resolving"}),
+                    "unaccepted reach declaration survives outside its discard window")
+            pending_dora = kyoku["pending_dora"]
+            require(pending_dora is None
+                    or (pending_dora["timing"] == "after_rinshan_discard"
+                        and cause_type == "tsumo" and phase in {"awaiting_action", "resolving"}),
+                    "deferred dora marker survives outside the rinshan decision")
+            require(pending_dora is None
+                    or (kyoku["melds"][kyoku["turn"]["actor"]] and kyoku["melds"][kyoku["turn"]["actor"]][-1]["type"] == pending_dora["kan_type"]),
+                    "deferred dora marker lacks its committed kan")
+            require(not kyoku["haitei"] or kyoku["wall_remaining"] == 0,
+                    "last-tile flag without an exhausted live wall")
+            last_meld = kyoku["melds"][kyoku["turn"]["actor"]][-1] if kyoku["melds"][kyoku["turn"]["actor"]] else None
+            rinshan_decision = cause_type == "tsumo" and phase in {"awaiting_action", "resolving"}
+            require(not kyoku["rinshan"]
+                    or (last_meld is not None and last_meld["type"] in {"ankan", "daiminkan", "kakan"}
+                        and (rinshan_decision or kyoku["pending_kan"] is not None)),
+                    "rinshan draw pending without a committed kan or its decision window")
+            if kyoku["rinshan"] and rinshan_decision and last_meld["type"] in {"ankan", "daiminkan", "kakan"}:
+                deferred = self.rules["kan_dora_timing"][last_meld["type"]] == "after_rinshan_discard"
+                require((pending_dora is not None) == deferred,
+                        "deferred dora marker missing for the committed kan")
+            require(sum(s["state"] == "accepted" for s in kyoku["reach_status"]) <= kyoku["kyotaku"],
+                    "accepted riichi deposits exceed the round's deposit count")
+            for a in range(4):
+                require(kyoku["first_turn_eligible"][a] == (not kyoku["rivers"][a] and not any(kyoku["melds"])),
+                        "first-turn eligibility differs from public discard/call history")
         self.self_seat = snapshot["seat"] if snapshot["mode"] == "play" else None
         self.game_phase = snapshot["game_phase"]
         self.scores = snapshot["scores"].copy()
         self.kyotaku = snapshot["kyotaku"]
         self.next = deepcopy(snapshot["next_kyoku"])
-        self.round = deepcopy(snapshot["kyoku"])
+        self.round = deepcopy(kyoku)
         self.required_event, self.pao_due = None, []
         if self.round is not None:
-            require(sorted(self.round["pao"],key=lambda p:(p["actor"],p["yaku_id"])) == public_pao(self.round["melds"],self.rules), "snapshot pao differs from public meld history")
             self._inventory()
             self.last_cause = deepcopy(self.round["turn"]["last_event"])
+            self.round["turn"] = {"actor": self.round["turn"]["actor"], "phase": self.round["turn"]["phase"]}
         else:
             self.last_cause = None
 
@@ -432,7 +479,7 @@ class EventState:
         r["rinshan"], r["haitei"], r["pending_kan"] = True, False, None
         r["turn"].update(actor=event["actor"], phase="awaiting_draw")
         timing = self.rules["kan_dora_timing"][event["type"]]
-        r["pending_dora"] = {"kan_type": event["type"], "actor": event["actor"], "timing": timing}
+        r["pending_dora"] = {"kan_type": event["type"], "timing": timing}
 
     def _inventory(self) -> None:
         r = self.round
@@ -450,7 +497,7 @@ class EventState:
         r = self.round
         public = {"ron_selected":[],"reach_accepted":[s["state"] == "accepted" for s in r["reach_status"]],
                   "call_selected":False,"calls_occurred":any(r["melds"]),"rivers":[[t["pai"] for t in river] for river in r["rivers"]],
-                  "fourth_kan_discard":r["turn"]["phase"] == "awaiting_responses" and r["pending_kan"] is None,
+                  "fourth_kan_discard":r["turn"]["phase"] in {"awaiting_responses","resolving"} and r["pending_kan"] is None,
                   "kan_counts":r["kan_counts"],"wall_remaining":r["wall_remaining"]}
         return abortive_reason(public, self.rules)
 
@@ -493,6 +540,11 @@ class EventState:
         require(self.game_phase == "in_kyoku", "round event between rounds")
         r, actor = self.round, event.get("actor")
         phase, turn_actor = r["turn"]["phase"], r["turn"]["actor"]
+        if phase == "resolving":
+            # The linearized decision is already fixed; its expansion is
+            # applied under the same preconditions as the decision window
+            # it replaced (turn action after a draw, reactions otherwise).
+            phase = "awaiting_action" if self.last_cause["type"] == "tsumo" else "awaiting_responses"
         require(not self.pao_due or event == self.pao_due[0], "required pao event missing or incorrect")
         require(self.required_event is None or kind == self.required_event or (self.pao_due and kind == "pao"), "compound event sequence interrupted")
         if self.required_event == kind:

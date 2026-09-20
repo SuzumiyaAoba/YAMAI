@@ -8,6 +8,15 @@ YAMAI の仕様と成果物の変更、および版間の互換性を記録す�
 - snapshotの `turn.phase == "resolving"` を、decision groupのlinearization point記録から全memberの終端ACKと結果event列のtransaction確定までの卓の状態と定義した。この期間にrequestが未終端のplay seat向けには、終端ACKが対応するrequestを欠くため、transactionの確定までsnapshotを生成してはならないことを明記した。
 - replay snapshotの `state.original_seq` をmember名として明示した。wire・Schema・vectorの意味は変更していない。
 
+## draft.9への未公開の追補 — 2026-09-20（その2）
+
+- snapshot復元時に `turn.phase == "resolving"` を原因 event の論理 phase へ写像し、採用 call や手番動作などlinearization済みの結果 event 列を復元後も適用できるよう修正した。これまでは `awaiting_*` 以外の phase を受理せず、合法な観戦・replay用snapshot復元後の全eventが `invalid_message` になっていた。
+- snapshot受信側の検査を成果物検査と同等に強化した。phaseと `last_event` の原因関係（`awaiting_draw`↔`start_kyoku`、`awaiting_action`↔`tsumo`、`awaiting_responses`/`resolving`↔打牌・槓宣言）、必要なpending requestの保有、`kuikae_forbidden` 空、副露・河・槓数・136枚保存・ドラ表示・順位の整合、selectionの合法性と共有time bankを検査する。取引途中を示す内部 event（call・reach_accepted・dora・pao等）を原因とするsnapshotは拒否する。
+- snapshotの `pao` は公開副露履歴から導かれる責任対応を重複も欠落もなく保持する完全一致へ統一し、成果物検査と参照実装の差異を解消した。本文の記述も明確化した。
+- 公開状態から導出できるsnapshot不変条件を追加した。宣言中リーチは反応窓のみ、延期槓ドラは嶺上決定窓のみで最新槓副露と一致、`rinshan` は連続槓宣言窓を含む決定期間のみ、`haitei` は山尽き時のみ、受理リーチ数は供託以下、`first_turn_eligible` は河・副露の有無と一致する。
+- 採点fixture投影で `ankan_declared` の `pai` 欠落を `invalid_message`、赤五未正規化を `invalid_context` として扱い、未知型の例外送出を防いだ。内部モデルの `pending_dora` からwire Schema外形の `actor` memberを除去した。
+- 公式ベクトルV289〜V296（resolving継続、取引途中snapshot拒否、pao完全一致、槓宣言原因、複合打牌フロー、延期ドラ・連続槓窓）と回帰テストを追加した。profile hashを `sha256:4ec5bc8a…` へ更新し、manifest・registry・release manifest・本文例示を同期した。
+
 ## 1.0-draft.9 / profile 1.0-draft.7 — 2026-09-17（未公開）
 
 - 途中流局のtenpaiをnull、点差を全seatゼロとし、直前の点数と供託を維持することを規定した。Schemaと意味検査を揃え、illegal_actionはpenaltyだけに制限した。

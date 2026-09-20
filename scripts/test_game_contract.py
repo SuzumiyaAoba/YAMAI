@@ -221,6 +221,77 @@ class GameContractTests(unittest.TestCase):
         with self.assertRaisesRegex(SessionError, "required decision"):
             receiver.receive(json.dumps(discard).encode())
 
+    def _dealt(self, seat=1):
+        state = EventState(self.rules)
+        state.self_seat = seat
+        state.apply({"type":"start_game","scores":[25000]*4,"rules":self.rules})
+        state.apply({"type":"start_kyoku","bakaze":"E","kyoku":1,"oya":0,"honba":0,"kyotaku":0,
+                     "extension_round":0,"scores":[25000]*4,"dora_marker":"1p","hands":[{"count":13}]*4})
+        return state
+
+    def _snapshot(self, state, turn, seat=1):
+        kyoku = deepcopy(state.round)
+        kyoku["self_state"] = {"temporary_furiten":False,"riichi_furiten":False,"kuikae_forbidden":[],"time_bank_ms":15000}
+        kyoku["turn"] = turn
+        return {"mode":"play","seat":seat,"view":"seat","players":[{"seat":i,"name":n} for i,n in enumerate("ABCD")],
+                "scores":state.scores.copy(),"game_phase":"in_kyoku","kyotaku":0,"next_kyoku":None,
+                "final_rankings":None,"time_bank_ms":15000,"pending_requests":[],"kyoku":kyoku}
+
+    def test_resolving_snapshot_continues_reaction_result(self):
+        source = self._dealt()
+        source.apply({"type":"tsumo","actor":0,"pai":None})
+        dahai = {"type":"dahai","actor":0,"pai":"9s","tsumogiri":True}
+        source.apply(dahai)
+        state = self._dealt()
+        state.restore(self._snapshot(source, {"actor":0,"phase":"resolving","last_event_seq":5,"last_event":dahai}))
+        state.apply({"type":"pon","actor":1,"target":0,"pai":"9s","consumed":["9s","9s"]})
+        self.assertEqual(state.round["turn"], {"actor":1,"phase":"awaiting_action"})
+        state.apply({"type":"dahai","actor":1,"pai":"E","tsumogiri":False})
+        self.assertEqual(state.round["turn"]["phase"], "awaiting_responses")
+
+    def test_resolving_snapshot_continues_turn_result(self):
+        source = self._dealt()
+        tsumo = {"type":"tsumo","actor":0,"pai":None}
+        source.apply(tsumo)
+        state = self._dealt()
+        state.restore(self._snapshot(source, {"actor":0,"phase":"resolving","last_event_seq":4,"last_event":tsumo}))
+        state.apply({"type":"dahai","actor":0,"pai":"9s","tsumogiri":True})
+        self.assertEqual(state.round["turn"]["phase"], "awaiting_responses")
+
+    def test_mid_transaction_snapshot_is_rejected(self):
+        source = self._dealt()
+        source.apply({"type":"tsumo","actor":0,"pai":None})
+        source.apply({"type":"dahai","actor":0,"pai":"9s","tsumogiri":True})
+        interiors = [
+            {"type":"pon","actor":1,"target":0,"pai":"9s","consumed":["9s","9s"]},
+            {"type":"reach_accepted","actor":0,"deltas":[0,0,0,0],"scores":[25000]*4,"kyotaku":0},
+            {"type":"dora","dora_marker":"2p"},
+            {"type":"pao","actor":1,"yaku_id":"daisangen","liable_seat":0},
+        ]
+        for event in interiors:
+            for phase in ("awaiting_action", "awaiting_responses", "resolving"):
+                with self.subTest(last_event=event["type"], phase=phase):
+                    snapshot = self._snapshot(source, {"actor":0,"phase":phase,"last_event_seq":6,"last_event":event})
+                    if phase == "awaiting_action":
+                        snapshot["pending_requests"] = [{"request_id":"r1","seat":0,"caused_by_seq":6,"timeout_ms":3000,
+                                                        "time_bank_ms":15000,"legal_actions":[],"default_action_id":"a0",
+                                                        "remaining_ms":3000,"selection":None}]
+                        snapshot["seat"] = 0
+                    with self.assertRaisesRegex(Exception, "last committed event"):
+                        self._dealt().restore(snapshot)
+
+    def test_failed_restore_leaves_state_untouched(self):
+        source = self._dealt()
+        source.apply({"type":"tsumo","actor":0,"pai":None})
+        state = self._dealt()
+        before = deepcopy({k: getattr(state, k) for k in ("self_seat","game_phase","scores","kyotaku","next","round","last_cause")})
+        snapshot = self._snapshot(source, {"actor":0,"phase":"awaiting_draw","last_event_seq":4,
+                                         "last_event":{"type":"tsumo","actor":0,"pai":None}})
+        with self.assertRaises(Exception):
+            state.restore(snapshot)
+        after = {k: getattr(state, k) for k in ("self_seat","game_phase","scores","kyotaku","next","round","last_cause")}
+        self.assertEqual(before, after)
+
 
 if __name__ == "__main__":
     unittest.main()

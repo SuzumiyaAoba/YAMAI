@@ -208,6 +208,7 @@ def validate_state_projection(state: dict[str, Any], actor: int, rules: dict[str
     declared = False
     rinshan_actor = None
     for event in state["events"]:
+        require(isinstance(event, dict) and "type" in event and "actor" in event, "invalid_message", "projection event lacks type or actor")
         kind = event["type"]
         seat = event["actor"]
         if kind == "reach":
@@ -230,6 +231,9 @@ def validate_state_projection(state: dict[str, Any], actor: int, rules: dict[str
             observed["rinshan"] = False
         elif kind in {"ankan_declared", "kakan_declared"}:
             require(observed["pending_kan"] is None, "invalid_context", "another kan is already pending")
+            require("pai" in event, "invalid_message", "projected kan declaration lacks its tile")
+            if kind == "ankan_declared":
+                require(not event["pai"].endswith("r"), "invalid_context", "projected ankan tile is not red-normalized")
             observed["pending_kan"] = {"kind":"ankan" if kind=="ankan_declared" else "kakan","actor":seat,"pai":event["pai"]}
         elif kind in {"chi", "pon", "daiminkan", "ankan", "kakan"}:
             observed.update(first_turn=False,ippatsu=False,last_tile=False)
