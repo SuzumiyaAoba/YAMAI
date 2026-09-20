@@ -2,6 +2,12 @@
 
 YAMAI の仕様と成果物の変更、および版間の互換性を記録する。各版は Draft であり、現行成果物は [release manifest](release-manifest.json) に従って取得する。
 
+## draft.9への未公開の追補 — 2026-09-20
+
+- 再開replayの `original_seq` 禁止規則が参照する節番号を、存在しない `11.2` から replay mode を規定する `11` へ修正した。
+- snapshotの `turn.phase == "resolving"` を、decision groupのlinearization point記録から全memberの終端ACKと結果event列のtransaction確定までの卓の状態と定義した。この期間にrequestが未終端のplay seat向けには、終端ACKが対応するrequestを欠くため、transactionの確定までsnapshotを生成してはならないことを明記した。
+- replay snapshotの `state.original_seq` をmember名として明示した。wire・Schema・vectorの意味は変更していない。
+
 ## 1.0-draft.9 / profile 1.0-draft.7 — 2026-09-17（未公開）
 
 - 途中流局のtenpaiをnull、点差を全seatゼロとし、直前の点数と供託を維持することを規定した。Schemaと意味検査を揃え、illegal_actionはpenaltyだけに制限した。

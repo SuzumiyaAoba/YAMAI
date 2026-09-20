@@ -1845,7 +1845,7 @@ tokenの有効期間内で保持されている終了済みsessionも、欠落�
 
 期限切れのdefault処理はresume handshakeの前後にかかわらずhost単調時計で一度だけ行う。切断中にgroupのlinearizationが完了した場合、全ackと採用eventを同じtransactionでledgerへ確定し、resume replayまたはsnapshot stateへ反映する。切断中にrequestが未解決のままなら、再送でdeadlineをリセットせず、snapshotの `pending_requests` に元の残り時間とgroup descriptorを記録する。
 
-resume replayに含まれるhost messageは、live送信時と同じ `session_id`、`game_id`、`seq` およびsemantic payloadを持つ。resume replayで `original_seq` を付加・変更してはならず（MUST NOT）、`original_seq` は第11.2節のreplay modeにだけ使用する。
+resume replayに含まれるhost messageは、live送信時と同じ `session_id`、`game_id`、`seq` およびsemantic payloadを持つ。resume replayで `original_seq` を付加・変更してはならず（MUST NOT）、`original_seq` は第11節のreplay modeにだけ使用する。
 
 ### 13.3 Snapshotによる再開
 
@@ -2197,7 +2197,7 @@ state.kyotakuは局外・局内・終了後を通じた供託本数である。�
 
 `next_kyoku` は次局の座標を直接指定し、前局結果の `next.type` を含めない。between_kyokuの復元後はこれらの座標と一致する `start_kyoku` を受理する（MUST）。前局のrenchan/rotate tagの復元を追加条件として要求してはならず、between_kyoku snapshotだけから `end_game` を許可してはならない（MUST NOT）。終了済み状態にはended snapshotを使用する。
 
-replayのstateには、そのcheckpointまでに扱った元記録eventの最大original_seqを必須とする。他modeではこのmemberを省略する。受信者は元記録の位置も復元し、以後のevent.original_seqをその値より大きくする。snapshotで元記録の位置を巻き戻してはならない（MUST NOT）。
+replayのstateには `original_seq` memberを必須とし、そのcheckpointまでに扱った元記録eventの最大original_seqを値とする。他modeではこのmemberを省略する。受信者は元記録の位置も復元し、以後のevent.original_seqをその値より大きくする。snapshotで元記録の位置を巻き戻してはならない（MUST NOT）。
 
 #### 局stateとvisibility
 
@@ -2209,7 +2209,7 @@ dora_markersは公開済み表示牌1～5枚、pending_doraはnullまたは `{ka
 
 turnはactor、phase、last_event_seq、last_eventを持つ。last_eventは最後に確定したevent payloadの全体であり、viewの秘匿を適用する。last_event_seqは置換範囲内の正のseqである。ただし新規観戦のseq=1/replaces_through_seq=0では、当該sessionに過去eventが存在しないためlast_event_seqをnullとし、last_eventには現在gameの最新eventを投影して入れる（MUST）。それ以外でnullを使わない。復元したeventはpending requestのcaused_by_seqの権威として使用できるが、新しいeventとして二重適用しない。
 
-phaseは卓全体のawaiting_draw、awaiting_action、awaiting_responses、resolvingを表す。一方pending_requestsは**当該play seat宛てだけ**であり、最大1個である（MUST）。awaiting_actionではturn.actorが自分のときだけ、awaiting_responsesでは原因のactor以外のseatにだけ対応requestを保持する。他家の自摸番に自分のpending requestを要求してはならない（MUST NOT）。awaiting_draw/resolvingおよび観戦・replayにはpending requestを含めない。
+phaseは卓全体のawaiting_draw、awaiting_action、awaiting_responses、resolvingを表す。resolvingは、decision groupが閉じlinearization pointを記録してから（第8.1.1節）、全memberの終端ACKと結果event列のtransactionが確定するまで（第8.4節）の卓の状態である。この期間にrequestが未終端のplay seat向けには、終端ACKが対応するrequestを欠くため、transactionの確定までsnapshotを生成してはならない（MUST NOT）。一方pending_requestsは**当該play seat宛てだけ**であり、最大1個である（MUST）。awaiting_actionではturn.actorが自分のときだけ、awaiting_responsesでは原因のactor以外のseatにだけ対応requestを保持する。他家の自摸番に自分のpending requestを要求してはならない（MUST NOT）。awaiting_draw/resolvingおよび観戦・replayにはpending requestを含めない。
 
 reach_statusはseatごとのstate（none/declared/accepted）、double、ippatsuを持つ。doubleはリーチ宣言時に第一巡の条件を満たしていたか、ippatsuは現在の一発資格を表す。first_turn_eligibleは自分の最初の打牌前かつ全卓で鳴き・槓がない場合だけtrueとする。kan_counts、rinshan、haiteiは第7.3.1節・第10節のevent適用後の値である。dora eventだけで槓数を増やしてはならない。
 
