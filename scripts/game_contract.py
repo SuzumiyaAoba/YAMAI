@@ -658,10 +658,35 @@ class EventState:
             if result["type"] == "hora":
                 cause = self.last_cause
                 require(cause["type"] in {"tsumo", "dahai", "ankan_declared", "kakan_declared"}, "hora has no winning source")
+                require(phase == ("awaiting_action" if cause["type"] == "tsumo" else "awaiting_responses"), "win outside its decision window")
                 tile = cause["consumed"][0] if cause["type"] == "ankan_declared" else cause["pai"]
+                if cause["type"] == "dahai":
+                    river = r["rivers"][cause["actor"]]
+                    require(not (river and river[-1]["reach"] and r["reach_status"][cause["actor"]]["state"] == "accepted"), "ron after the reach discard was accepted")
+                if cause["type"] == "ankan_declared":
+                    require(self.rules["ankan_chankan"] == "kokushi_only"
+                            and all(any(yaku["id"] == "kokushi_musou" for yaku in win["yakus"]) for win in result["wins"]),
+                            "ankan rob is not an allowed kokushi")
+                actors = [win["actor"] for win in result["wins"]]
+                require(actors == sorted(actors) and len(set(actors)) == len(actors), "wins are not sorted by unique actor")
+                require(event["deltas"] == [sum(win["deltas"][seat] for win in result["wins"]) for seat in range(4)],
+                        "hora deltas do not match win deltas")
                 for win in result["wins"]:
                     require(win["target"] == cause["actor"] and (tile is None or win["pai"] == tile), "win differs from its source event")
                     require((win["actor"] == win["target"]) == (cause["type"] == "tsumo"), "win method differs from its source event")
+                    require([yaku["id"] for yaku in win["yakus"]] == sorted(yaku["id"] for yaku in win["yakus"]), "win yaku ids are not in ASCII order")
+                    require([bonus["id"] for bonus in win["bonuses"]] == sorted(bonus["id"] for bonus in win["bonuses"]), "win bonus ids are not in ASCII order")
+                    yakuman = sum(yaku["value"] for yaku in win["yakus"] if yaku["unit"] == "yakuman")
+                    if yakuman:
+                        require(win["han"] == 0 and win["fu"] == 0 and win["bonuses"] == []
+                                and all(yaku["unit"] == "yakuman" for yaku in win["yakus"]), "yakuman win must not carry han/fu/bonuses")
+                    else:
+                        require(win["han"] == sum(yaku["value"] for yaku in win["yakus"] if yaku["unit"] == "han") + sum(bonus["han"] for bonus in win["bonuses"]),
+                                "win han does not match yaku/bonus sum")
+                    if r["reach_status"][win["actor"]]["state"] == "accepted":
+                        require(len(win["ura_dora_markers"]) == len(r["dora_markers"]), "ura markers differ from published dora markers")
+                    else:
+                        require(win["ura_dora_markers"] == [], "ura markers without an accepted reach")
                 require(cause["type"] != "tsumo" or len(result["wins"]) == 1, "multiple tsumo winners")
                 require(self.rules["ron_policy"] != "head_bump" or len(result["wins"]) == 1, "multiple winners under head bump")
                 require(self.rules["ron_policy"] != "double_only" or len(result["wins"]) <= 2, "three accepted winners under double-only")
@@ -671,10 +696,34 @@ class EventState:
                     require(win["pao"] == sorted(expected_pao,key=lambda p:p["yaku_id"]), "winner pao differs from public assignment history")
             elif result["type"] == "penalty":
                 require(self.rules["invalid_action_policy"] == "chombo", "penalty is disabled")
+                offender = result["offender"]
+                amount = self.rules["chombo"]["penalty_points"]
+                others = [seat for seat in range(4) if seat != offender]
+                base, remainder = amount // 300 * 100, amount % 300
+                expected = {seat: base + (remainder if seat == others[0] else 0) for seat in others}
+                expected = {seat: points for seat, points in expected.items() if points}
+                shares = {}
+                for payment in result["penalty"]["payments"]:
+                    require(payment["from"] == offender and payment["to"] != offender and payment["to"] not in shares, "penalty payment endpoints are invalid")
+                    shares[payment["to"]] = payment["points"]
+                require(shares == expected, "penalty payments differ from the chombo distribution")
+                deltas = [0] * 4
+                for seat, points in expected.items():
+                    deltas[offender] -= points
+                    deltas[seat] += points
+                require(event["deltas"] == deltas, "penalty deltas differ from the chombo payments")
             else:
                 reason = result["reason"]
                 if reason == "fanpai":
                     require(r["wall_remaining"] == 0 and phase == "awaiting_responses" and r["pending_kan"] is None, "exhaustive draw before last discard")
+                    tenpai = result["tenpai"]
+                    total = self.rules["noten_payment"]["total_points"]
+                    count = sum(tenpai)
+                    expected = [0] * 4 if count in (0, 4) else [total // count if ready else -total // (4 - count) for ready in tenpai]
+                    require(event["deltas"] == expected, "noten settlement differs from the tenpai count")
+                    for seat in range(4):
+                        if "tiles" in r["hands"][seat]:
+                            require(bool(waits(self._scoring_hand(seat), self.rules)) == tenpai[seat], "tenpai declaration differs from a visible hand")
                 else:
                     require(reason in self.rules["abortive_draws"], "abortive draw disabled")
                     require(result["tenpai"] is None and event["deltas"] == [0] * 4,

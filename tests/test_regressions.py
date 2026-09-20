@@ -122,6 +122,170 @@ class ProtocolRegressionTests(unittest.TestCase):
         current["extension_round"] = 4
         self.assertEqual(next_kyoku(current, draw, [25000]*4, 0, rules)["type"], "end_game")
 
+    def _dealt(self, rules=None):
+        state = EventState(rules or copy.deepcopy(SCORING["rules"]))
+        state.apply({"type": "start_game", "scores": [25000] * 4, "rules": state.rules})
+        state.apply({"type": "start_kyoku", "bakaze": "E", "kyoku": 1, "oya": 0, "honba": 0, "kyotaku": 0,
+                     "extension_round": 0, "scores": [25000] * 4, "dora_marker": "1p", "hands": [{"count": 13}] * 4})
+        return state
+
+    @staticmethod
+    def _open_reaction(state):
+        state.apply({"type": "tsumo", "actor": 0, "pai": None})
+        state.apply({"type": "dahai", "actor": 0, "pai": "9s", "tsumogiri": True})
+
+    @staticmethod
+    def _win(**overrides):
+        win = {"actor": 1, "target": 0, "pai": "9s", "fu": 30, "han": 1,
+               "yakus": [{"id": "riichi", "value": 1, "unit": "han"}], "bonuses": [],
+               "hand_points": 1000, "deltas": [-1000, 1000, 0, 0], "ura_dora_markers": [], "pao": []}
+        win.update(overrides)
+        return win
+
+    @staticmethod
+    def _end_kyoku(result, deltas, scores, nxt=None):
+        nxt = nxt or {"type": "rotate", "bakaze": "E", "kyoku": 2, "oya": 1, "honba": 0,
+                      "kyotaku": 0, "extension_round": 0}
+        return {"type": "end_kyoku", "result": result, "deltas": deltas, "scores": scores, "next": nxt}
+
+    def test_fanpai_requires_canonical_noten_deltas(self):
+        result = {"type": "ryukyoku", "reason": "fanpai", "tenpai": [True, False, False, False]}
+        renchan = {"type": "renchan", "bakaze": "E", "kyoku": 1, "oya": 0, "honba": 1,
+                   "kyotaku": 0, "extension_round": 0}
+        state = self._dealt()
+        self._open_reaction(state)
+        state.round["wall_remaining"] = 0
+        with self.assertRaises(GameError):
+            state.apply(self._end_kyoku(result, [2000, -700, -700, -600], [27000, 24300, 24300, 24400], renchan))
+        state = self._dealt()
+        self._open_reaction(state)
+        state.round["wall_remaining"] = 0
+        state.apply(self._end_kyoku(result, [3000, -1000, -1000, -1000], [28000, 24000, 24000, 24000], renchan))
+
+    def test_fanpai_tenpai_must_match_visible_hands(self):
+        hand = [{"tiles": ["1m", "2m", "3m", "4m", "5m", "6m", "7m", "8m", "9m", "1p", "2p", "3p", "P"]},
+                {"count": 13}, {"count": 13}, {"count": 13}]
+        def dealt():
+            rules = copy.deepcopy(SCORING["rules"])
+            state = EventState(rules)
+            state.apply({"type": "start_game", "scores": [25000] * 4, "rules": rules})
+            state.apply({"type": "start_kyoku", "bakaze": "E", "kyoku": 1, "oya": 0, "honba": 0, "kyotaku": 0,
+                         "extension_round": 0, "scores": [25000] * 4, "dora_marker": "1p",
+                         "hands": copy.deepcopy(hand)})
+            state.apply({"type": "tsumo", "actor": 0, "pai": "P"})
+            state.apply({"type": "dahai", "actor": 0, "pai": "P", "tsumogiri": True})
+            state.round["wall_remaining"] = 0
+            return state
+        result = {"type": "ryukyoku", "reason": "fanpai", "tenpai": [False, False, False, False]}
+        with self.assertRaises(GameError):
+            dealt().apply(self._end_kyoku(result, [0, 0, 0, 0], [25000] * 4,
+                                          {"type": "rotate", "bakaze": "E", "kyoku": 2, "oya": 1, "honba": 0,
+                                           "kyotaku": 0, "extension_round": 0}))
+        result["tenpai"] = [True, False, False, False]
+        dealt().apply(self._end_kyoku(result, [3000, -1000, -1000, -1000], [28000, 24000, 24000, 24000],
+                                      {"type": "renchan", "bakaze": "E", "kyoku": 1, "oya": 0, "honba": 1,
+                                       "kyotaku": 0, "extension_round": 0}))
+
+    def test_chombo_payments_must_follow_distribution(self):
+        renchan = {"type": "renchan", "bakaze": "E", "kyoku": 1, "oya": 0, "honba": 0,
+                   "kyotaku": 0, "extension_round": 0}
+        def penalty(payments, deltas, scores):
+            result = {"type": "penalty", "offender": 0, "reason": "illegal_action",
+                      "penalty": {"payments": payments}}
+            return self._end_kyoku(result, deltas, scores, renchan)
+        rules = copy.deepcopy(SCORING["rules"])
+        rules["invalid_action_policy"] = "chombo"
+        state = self._dealt(rules)
+        self._open_reaction(state)
+        wrong = [{"from": 0, "to": 1, "points": 2700}, {"from": 0, "to": 2, "points": 2700},
+                 {"from": 0, "to": 3, "points": 2600}]
+        with self.assertRaises(GameError):
+            state.apply(penalty(wrong, [-8000, 2700, 2700, 2600], [17000, 27700, 27700, 27600]))
+        state = self._dealt(rules)
+        self._open_reaction(state)
+        duplicated = [{"from": 0, "to": 1, "points": 2800}, {"from": 0, "to": 1, "points": 2600},
+                      {"from": 0, "to": 3, "points": 2600}]
+        with self.assertRaises(GameError):
+            state.apply(penalty(duplicated, [-8000, 5400, 0, 2600], [17000, 30400, 25000, 27600]))
+        state = self._dealt(rules)
+        self._open_reaction(state)
+        canonical = [{"from": 0, "to": 1, "points": 2800}, {"from": 0, "to": 2, "points": 2600},
+                     {"from": 0, "to": 3, "points": 2600}]
+        state.apply(penalty(canonical, [-8000, 2800, 2600, 2600], [17000, 27800, 27600, 27600]))
+
+    def test_hora_deltas_must_aggregate_wins(self):
+        state = self._dealt()
+        self._open_reaction(state)
+        with self.assertRaises(GameError):
+            state.apply(self._end_kyoku({"type": "hora", "wins": [self._win()]},
+                                        [-1000, 999, 0, 1], [24000, 25999, 25000, 25001]))
+        state = self._dealt()
+        self._open_reaction(state)
+        state.apply(self._end_kyoku({"type": "hora", "wins": [self._win()]},
+                                    [-1000, 1000, 0, 0], [24000, 26000, 25000, 25000]))
+
+    def test_hora_must_stay_inside_its_decision_window(self):
+        state = self._dealt()
+        self._open_reaction(state)
+        state.round["turn"]["phase"] = "awaiting_draw"
+        with self.assertRaises(GameError):
+            state.apply(self._end_kyoku({"type": "hora", "wins": [self._win()]},
+                                        [-1000, 1000, 0, 0], [24000, 26000, 25000, 25000]))
+
+    def test_ron_after_reach_accepted_is_rejected(self):
+        state = self._dealt()
+        state.apply({"type": "tsumo", "actor": 0, "pai": None})
+        state.apply({"type": "reach", "actor": 0})
+        state.apply({"type": "dahai", "actor": 0, "pai": "9s", "tsumogiri": True})
+        state.apply({"type": "reach_accepted", "actor": 0, "deltas": [-1000, 0, 0, 0],
+                     "scores": [24000, 25000, 25000, 25000], "kyotaku": 1})
+        with self.assertRaises(GameError):
+            state.apply(self._end_kyoku({"type": "hora", "wins": [self._win(deltas=[-1000, 2000, 0, 0])]},
+                                        [-1000, 2000, 0, 0], [23000, 27000, 25000, 25000]))
+
+    def test_ankan_rob_follows_ankan_chankan_rule(self):
+        trace = VECTORS["V242_robbed_second_kan_clears_pending"]["positive"]["trace"]
+        rules = copy.deepcopy(SCORING["rules"])
+        rules.update(trace["rule_overrides"])
+        state = EventState(rules)
+        for event in trace["input"]["events"]:
+            state.apply(copy.deepcopy(event))
+        events = copy.deepcopy(trace["input"]["events"])
+        events[0]["rules"]["ankan_chankan"] = "never"
+        state = EventState({**rules, "ankan_chankan": "never"})
+        for event in events[:-1]:
+            state.apply(event)
+        with self.assertRaises(GameError):
+            state.apply(events[-1])
+        state = EventState(rules)
+        events = copy.deepcopy(trace["input"]["events"])
+        for event in events[:-1]:
+            state.apply(event)
+        bad = copy.deepcopy(events[-1])
+        bad["result"]["wins"][0].update(fu=30, han=1, hand_points=1000,
+                                      yakus=[{"id": "tanyao", "value": 1, "unit": "han"}])
+        with self.assertRaises(GameError):
+            state.apply(bad)
+
+    def test_ura_markers_follow_reach_acceptance(self):
+        state = self._dealt()
+        self._open_reaction(state)
+        with self.assertRaises(GameError):
+            state.apply(self._end_kyoku({"type": "hora", "wins": [self._win(ura_dora_markers=["5m"])]},
+                                        [-1000, 1000, 0, 0], [24000, 26000, 25000, 25000]))
+        state = self._dealt()
+        self._open_reaction(state)
+        state.round["reach_status"][1]["state"] = "accepted"
+        for markers in ([], ["5m", "6m"]):
+            with self.assertRaises(GameError):
+                state.apply(self._end_kyoku({"type": "hora", "wins": [self._win(ura_dora_markers=markers)]},
+                                            [-1000, 1000, 0, 0], [24000, 26000, 25000, 25000]))
+        state = self._dealt()
+        self._open_reaction(state)
+        state.round["reach_status"][1]["state"] = "accepted"
+        state.apply(self._end_kyoku({"type": "hora", "wins": [self._win(ura_dora_markers=["5m"])]},
+                                    [-1000, 1000, 0, 0], [24000, 26000, 25000, 25000]))
+
 
 class ScoringRegressionTests(unittest.TestCase):
     def score(self, identifier, mutate=None):

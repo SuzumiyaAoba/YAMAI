@@ -2,6 +2,14 @@
 
 YAMAI の仕様と成果物の変更、および版間の互換性を記録する。各版は Draft であり、現行成果物は [release manifest](release-manifest.json) に従って取得する。
 
+## draft.9への未公開の追補 — 2026-09-20（その3）
+
+- `end_kyoku` の参照状態検査を強化した。`hora` は原因 event の決定窓（自摸和了は `awaiting_action`、それ以外は `awaiting_responses`）でのみ受理し、`reach_accepted` 成立済みの宣言打牌へのロンを拒否する。`ankan_chankan == "never"` では暗槓への槍槓和了を、`"kokushi_only"` では国士無双を主張しない槍槓和了を拒否する。`wins` のseat昇順・一意性、top-level `deltas` と全win差額の要素一致、受理リーチ和了者の裏ドラ表示牌列（未受理では空、受理では公開済み表ドラと同枚数）を検査する。
+- `fanpai` の `deltas` を `noten_payment.total_points` と聴牌者数から求まる正規分配と照合し、可視手牌の聴牌判定と `tenpai` 宣言の一致を検査する。`penalty` の `payments` は `chombo.penalty_points` の100点単位等分と余りの最小seat加算へ完全一致させ、`deltas` との一致と宛先seatの一意も要求する。
+- 成果物側の意味検査を同じ規則へ揃えた。`fanpai`/`penalty`/`hora` のmessage級検査で聴牌者数別配分・チョンボ配分・宛先重複・役ID昇順を拒否し、snapshotの公開責任対応判定を交渉済み `rules.pao.yakus` から導出するよう修正した（これまでは登録済み2役を固定で要求し、対象役を限定したrules下の正当なsnapshotを誤拒否し得た）。receiver・multi-session・ledger traceのwire snapshot検査にもwelcomeのrulesを束縛し、交渉なしの単体snapshotは従来どおり登録済み全役で判定する。
+- 公式ベクトルV26のチョンボ配分を `q=floor(P/300)×100`・余りを最小seatへ加算する規範式と採点fixtureへ一致させ（`[2700,2700,2600]`→`[2800,2600,2600]`）、旧配分と宛先重複を負例として固定した。V09へ聴牌者数と不整合な配分の負例を追加した。
+- profile hashを `sha256:bcedbea5…` へ更新し、manifest・registry・release manifest・本文例示を同期した。回帰テストでノーテン精算・チョンボ配分・和了集計・決定窓・受理済みリーチ打牌へのロン・槍槓制限・裏ドラ条件を固定した。
+
 ## draft.9への未公開の追補 — 2026-09-20
 
 - 再開replayの `original_seq` 禁止規則が参照する節番号を、存在しない `11.2` から replay mode を規定する `11` へ修正した。

@@ -1136,7 +1136,8 @@ def _check_snapshot(message: Mapping[str, Any], extension_contexts: Mapping[str,
         _require(len(kyoku["dora_markers"]) == 1 + sum(kyoku["kan_counts"]) - int(kyoku["pending_dora"] is not None), "invalid_message", "dora count differs from kan state")
         pao_keys = [(item["actor"], item["yaku_id"]) for item in kyoku["pao"]]
         _require(len(pao_keys) == len(set(pao_keys)) and all(item["actor"] != item["liable_seat"] for item in kyoku["pao"]), "invalid_message", "pao assignments are invalid")
-        known_pao = public_pao(kyoku["melds"], {"pao":{"yakus":["daisangen","daisuushii"]}})
+        pao_yakus = rules["pao"]["yakus"] if rules is not None else ["daisangen", "daisuushii"]
+        known_pao = public_pao(kyoku["melds"], {"pao":{"yakus":pao_yakus}})
         _require(sorted(kyoku["pao"], key=lambda p:(p["actor"],p["yaku_id"])) == known_pao, "invalid_message", "snapshot pao differs from public meld history")
         for request in pending:
             _check_request(request, extension_contexts=extension_contexts)
@@ -1173,7 +1174,18 @@ def semantic_message(message: Mapping[str, Any], case_id: str, expected_profile_
             if result.get("type") == "ryukyoku":
                 tenpai = result.get("tenpai")
                 if result.get("reason") == "fanpai":
-                    _require(isinstance(tenpai, list) and len(tenpai) == 4, "invalid_message", "fanpai requires a four-seat tenpai array")
+                    _require(isinstance(tenpai, list) and len(tenpai) == 4 and all(type(value) is bool for value in tenpai), "invalid_message", "fanpai requires a four-seat tenpai array")
+                    deltas = event.get("deltas")
+                    if isinstance(deltas, list) and len(deltas) == 4:
+                        count = sum(tenpai)
+                        if count in (0, 4):
+                            _require(deltas == [0] * 4, "invalid_message", "unanimous or absent tenpai must not move points")
+                        else:
+                            total = count * deltas[next(i for i in range(4) if tenpai[i])]
+                            _require(total >= 0 and total % 600 == 0
+                                     and all(deltas[i] * count == total for i in range(4) if tenpai[i])
+                                     and all(deltas[i] * (count - 4) == total for i in range(4) if not tenpai[i]),
+                                     "invalid_message", "noten deltas do not follow the tenpai count split")
                 else:
                     _require(result.get("reason") in {"kyushukyuhai", "suufon_renda", "suucha_riichi", "suukan_sanra", "sanchaho"}, "invalid_message", "unknown abortive draw reason")
                     _require(tenpai is None and event.get("deltas") == [0] * 4, "invalid_message", "abortive draw must preserve scores without tenpai settlement")
@@ -1199,6 +1211,10 @@ def semantic_message(message: Mapping[str, Any], case_id: str, expected_profile_
                 actors = []
                 for win in wins:
                     actors.append(win.get("actor"))
+                    yaku_ids = [item.get("id") for item in win.get("yakus", [])]
+                    _require(yaku_ids == sorted(yaku_ids), "invalid_message", "win yaku ids are not in ASCII order")
+                    bonus_ids = [item.get("id") for item in win.get("bonuses", [])]
+                    _require(bonus_ids == sorted(bonus_ids), "invalid_message", "win bonus ids are not in ASCII order")
                     regular_han = sum(item.get("value", 0) for item in win.get("yakus", []) if item.get("unit") == "han")
                     bonus_han = sum(item.get("han", 0) for item in win.get("bonuses", []))
                     yakuman = sum(item.get("value", 0) for item in win.get("yakus", []) if item.get("unit") == "yakuman")
@@ -1211,14 +1227,25 @@ def semantic_message(message: Mapping[str, Any], case_id: str, expected_profile_
                 win_deltas = [sum(win.get("deltas", [0, 0, 0, 0])[i] for win in wins) for i in range(4)]
                 _require(result.get("wins") and event.get("deltas") == win_deltas, "invalid_message", "hora deltas do not match win deltas")
             if result.get("type") == "penalty":
+                offender = result.get("offender")
                 payments = result.get("penalty", {}).get("payments", [])
                 delta = [0, 0, 0, 0]
+                shares = {}
                 for payment in payments:
-                    _require(payment.get("from") == result.get("offender") and payment.get("to") != payment.get("from"), "invalid_message", "penalty payment endpoints are invalid")
+                    _require(payment.get("from") == offender and payment.get("to") != payment.get("from"), "invalid_message", "penalty payment endpoints are invalid")
+                    _require(payment.get("to") not in shares, "invalid_message", "penalty payment recipient is duplicated")
                     points = payment.get("points", 0)
                     delta[payment["from"]] -= points
                     delta[payment["to"]] += points
+                    shares[payment["to"]] = points
                 _require(event.get("deltas") == delta, "invalid_message", "penalty deltas do not match payments")
+                if type(offender) is int and 0 <= offender <= 3:
+                    amount = sum(shares.values())
+                    others = [seat for seat in range(4) if seat != offender]
+                    base, remainder = amount // 300 * 100, amount % 300
+                    expected = {seat: base + (remainder if seat == others[0] else 0) for seat in others}
+                    expected = {seat: points for seat, points in expected.items() if points}
+                    _require(shares == expected, "invalid_message", "penalty split does not follow the chombo distribution")
     elif kind == "join":
         if message.get("version") != PROTOCOL:
             raise ArtifactError("unsupported_version", "unsupported protocol version")
@@ -1699,7 +1726,7 @@ def semantic_game_trace(trace: Mapping[str, Any]) -> None:
     _require(_json_equal(actual, trace["expected"]), "invalid_message", "game contract observation differs")
 
 
-def _session_schema_validator(schemas: SchemaSet, expected_hash: str, definitions: Sequence[Mapping[str, Any]] = (), enabled: Sequence[str] = ()):
+def _session_schema_validator(schemas: SchemaSet, expected_hash: str, definitions: Sequence[Mapping[str, Any]] = (), enabled: Sequence[str] = (), rules: Mapping[str, Any] | None = None):
     urn = f"urn:yamai:schema:yrc-0003:{PROTOCOL}:"
     extension_contexts: dict[str, Sequence[str]] = {}
     if definitions or any(cap not in {"resume", "snapshot"} for cap in enabled):
@@ -1773,7 +1800,7 @@ def _session_schema_validator(schemas: SchemaSet, expected_hash: str, definition
             if message.get("kind") == "request":
                 _check_request(message, extension_contexts=extension_contexts)
             elif message.get("kind") == "snapshot":
-                _check_snapshot(message, extension_contexts)
+                _check_snapshot(message, extension_contexts, rules=rules)
             else:
                 semantic_message(message, "session-contract", expected_hash)
         except ArtifactError as error:
@@ -1814,7 +1841,7 @@ def semantic_session_trace(trace: Mapping[str, Any], expected_hash: str) -> None
             actual = {key: [p.decode("utf-8") for p in value] if key == "payloads" else value for key, value in plan.items()}
         elif kind == "receiver":
             validate("welcome", trace["welcome"])
-            receiver_validate = _session_schema_validator(schemas, expected_hash, trace.get("definitions", []), trace["welcome"]["capabilities"])
+            receiver_validate = _session_schema_validator(schemas, expected_hash, trace.get("definitions", []), trace["welcome"]["capabilities"], rules=trace["welcome"]["rules"])
             receiver = Receiver(trace["welcome"], lambda raw: strict_load_bytes(raw, max_bytes=1048576), receiver_validate, initial_snapshot=trace.get("initial_snapshot", False))
             actual = []
             for step in trace["steps"]:
@@ -1847,7 +1874,7 @@ def semantic_session_trace(trace: Mapping[str, Any], expected_hash: str) -> None
                 for action in session.get("old_actions", []):
                     result = classify_player_input(action, {"identity":identity,"known_request_ids":[],"retired_sessions":retired}, validate)
                     _require(result["code"] == "ignored", "invalid_message", "retired session affected new negotiation")
-                receiver = Receiver(w, lambda raw: strict_load_bytes(raw, max_bytes=1048576), validate)
+                receiver = Receiver(w, lambda raw: strict_load_bytes(raw, max_bytes=1048576), _session_schema_validator(schemas, expected_hash, rules=w["rules"]))
                 for message in session["messages"]:
                     receiver.receive(json.dumps(message, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
                 actual.append({"session_id":w["session_id"],"game_id":w["game_id"],"last_seq":receiver.applied,"ended":receiver.ended})
@@ -1913,7 +1940,7 @@ def semantic_ledger_trace(trace: Mapping[str, Any], expected_hash: str) -> None:
                 negotiate(hello, join, msg, trace.get("context", {}), validate, PROTOCOL, PROFILE_REVISION, expected_hash)
                 _require(all(msg[k] == client[k] for k in ("mode", "view", "seat")), "invalid_message", "capture descriptor differs from welcome")
                 _require(msg["session_id"] == trace["session_id"] and msg["game_id"] == trace["game_id"], "invalid_message", "welcome differs from capture identity")
-                receiver = Receiver(msg, strict_load_bytes, validate, initial_snapshot=msg["mode"] == "spectate" and trace.get("context", {}).get("game_started", False))
+                receiver = Receiver(msg, strict_load_bytes, _session_schema_validator(schemas, expected_hash, rules=msg["rules"]), initial_snapshot=msg["mode"] == "spectate" and trace.get("context", {}).get("game_started", False))
             elif step["direction"] == "in":
                 _require(receiver is not None, "invalid_message", "input before welcome")
                 validate("player-application", msg)
