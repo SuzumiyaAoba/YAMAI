@@ -11,8 +11,8 @@ from session_contract import Receiver, SessionError
 class GameContractTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.vectors = v.strict_load(v.ROOT / f"test-vectors/yrc-0003/{v.PROTOCOL}/vectors.json")
-        cls.rules = v.strict_load(v.ROOT / f"test-vectors/yrc-0005/{v.PROFILE_REVISION}/scoring.json")["rules"]
+        cls.vectors = v.strict_load(v.ROOT / f"test-vectors/protocol/{v.PROTOCOL}/vectors.json")
+        cls.rules = v.strict_load(v.ROOT / f"test-vectors/riichi-4p/{v.PROFILE_REVISION}/scoring.json")["rules"]
 
     def test_complete_choices_ignore_hand_and_consumed_order(self):
         trace = self.vectors["V193_red_consumed_tile_and_compound_discard"]["positive"]["trace"]

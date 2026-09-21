@@ -16,8 +16,8 @@ def main():
         Draft202012Validator.check_schema(schema)
     def check(data, sid):
         Draft202012Validator({"$ref":sid}, registry=registry).validate(data)
-    protocol = f"urn:yamai:schema:yrc-0003:{v.PROTOCOL}:"
-    manifest = v.strict_load(v.ROOT / f"test-vectors/yrc-0003/{v.PROTOCOL}/manifest.json")
+    protocol = f"urn:yamai:schema:protocol:{v.PROTOCOL}:"
+    manifest = v.strict_load(v.ROOT / f"test-vectors/protocol/{v.PROTOCOL}/manifest.json")
     check(manifest, protocol + "vector-manifest")
     vectors = v.strict_load(v.ROOT / manifest["vectors"])
     count = 1
@@ -51,7 +51,7 @@ def main():
                 check(event, protocol + "event#/properties/event")
                 count += 1
     scoring = v.strict_load(v.ROOT / manifest["scoring_vectors"])
-    check(scoring, f"urn:yamai:schema:yrc-0005:{v.PROFILE_REVISION}:scoring-vectors")
+    check(scoring, f"urn:yamai:schema:riichi-4p:{v.PROFILE_REVISION}:scoring-vectors")
     print(f"Draft 2020-12: {len(schemas.schemas)} schemas; {count + 1} independent instance checks")
 
 

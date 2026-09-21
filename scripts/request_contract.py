@@ -1,4 +1,4 @@
-"""Executable selection/ACK contract for YRC 0003 sections 8 and 9.
+"""Executable selection/ACK contract for YAMAI specification sections 8 and 9.
 
 The caller validates request shapes. This finite trace evaluator deliberately
 does not decide mahjong legality, score hands, serialize wire frames, or model

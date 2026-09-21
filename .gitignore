@@ -3,3 +3,5 @@ __pycache__/
 .mdxr/
 *.mdx
 /docs/*.html
+/verification/*.html
+/verification/quint/*.html

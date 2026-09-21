@@ -1,6 +1,6 @@
 # YAMAI 検証ガイド
 
-本書は [YRC 0003](../docs/yamai-protocol.md) `1.0-draft.9` と `riichi-4p` profile `1.0-draft.7` の派生成果物について、検査方法と適合項目との対応を説明する。規範要件は YRC 0003 に従い、検査対象の版とファイルは [release manifest](../release-manifest.json) で確認する。
+本書は YAMAI draft 1 の検査方法、適合35項目との対応、各検査の範囲を定義する。Protocol Version と `riichi-4p` revision は `1.0-draft.1`。規範要件は [仕様書](../docs/yamai-protocol.md)、対象ファイルは [release manifest](../release-manifest.json) に従う。
 
 ## 実行方法
 
@@ -50,7 +50,7 @@ stateful trace は1つの peer session の時刻付き message と不変の wire
 
 ## 適合35項目との対応
 
-番号はYRC 0003 §17と一致する。V番号は現行[公式vectors](../test-vectors/yrc-0003/1.0-draft.9/vectors.json)のID接頭辞であり、各行のvectorは正例と負例を持つ。採点fixtureは[scoring.json](../test-vectors/yrc-0005/1.0-draft.7/scoring.json)にある。本文だけの要件を、Schemaが全て検証したとは扱わない。
+番号はYAMAI 仕様書 §17と一致する。V番号は現行[公式vectors](../test-vectors/protocol/1.0-draft.1/vectors.json)のID接頭辞であり、各行のvectorは正例と負例を持つ。採点fixtureは[scoring.json](../test-vectors/riichi-4p/1.0-draft.1/scoring.json)にある。本文だけの要件を、Schemaが全て検証したとは扱わない。
 
 | §17 | 主な本文 | 正負vector・実行検査 | 検証する境界 |
 |---|---|---|---|
@@ -99,18 +99,20 @@ stateful trace は1つの peer session の時刻付き message と不変の wire
 - event 投影の fixture は event payload と前後状態を検査する。envelope、request、ACK の配送と時計は wire trace、request contract、形式モデルで扱い、Receiver で観測可能な部分を接続する。
 - 5つの形式モデルは、それぞれの有限境界と環境仮定の下で性質を検査する。牌の全組合せ、任意の拡張・ネットワーク、認証サービス、実装コードとの refinement 証明、モデル間の合成証明は対象外である。
 
-draft.8のV276〜V281は、履歴中snapshotと再送終端、ID全体の文字種、終局後の保留stale通知、交渉済み拡張のsession受信、mode/viewの拒否コード、helloのprofile最小件数を検査する。回帰テストではsnapshotがgapの観測終端の前後にある場合、未要求のseq飛越し、未交渉snapshot、不正IDとchomboの分離も検査する。独立Schema検査は`schema_negative: true`と明記した公式負例も拒否することを確認する。
+## 境界条件の検査
 
-draft.9のV282〜V288は、途中流局の点差・tenpai・reason、ACKと採用eventの対応、snapshotの固定選択と計時式を検査する。回帰テストではdefaulted打牌、複合リーチ、槓ドラ・リーチ供託・責任払いの挿入、selectionの全固定member、期限ちょうどのuser/default境界、終端requestの復活、途中で切れたACK結果列、拒否時の原子的な状態保持も確認する。
+| 対象 | 主な検査 |
+|---|---|
+| 交渉と識別子 | version/profile/hash の組、mode/view の拒否理由、文字列全体の制約、session ごとの拡張Schema |
+| JSON と方向 | 不正JSON、frame、未交渉の kind、送信方向。同じ seq や置換済み範囲でも必要な構造検査を行う |
+| 要求とACK | 全3人の選択、期限ちょうどの既定選択、選択元と計時の固定、優先結果、不採用・見送り・取消しと結果eventの対応 |
+| 再接続とsnapshot | 不変の再送範囲、範囲内のsnapshot、未使用seq、終端要求を復活させないこと、transaction途中の置換拒否 |
+| 牌と公開履歴 | 河と副露の一致、赤五を含む加槓、槓宣言牌の在庫、リーチ成立、複合打牌、槓ドラ公開時点 |
+| 局進行 | 通常・途中流局、次局、延長の場風循環、配牌回数、局内・局間・終局での復元 |
+| 採点と精算 | 全和了fixture、複数ロンの共有局面、役・符・本場・供託・責任払い、表裏表示牌を含む物理牌在庫 |
+| 原子性 | 不正入力の拒否で既存状態を部分更新しないこと、失敗した再開でtokenを消費しないこと |
+| hash | identity hashだけを正規化し、同じ文字列を持つ注釈・配列・nested member・wireの他のbyteを保持すること |
 
-draft.9の未公開追補で追加したV289〜V296は、resolving中の継続、取引途中を原因とするsnapshotの拒否、pao履歴の完全一致、槓宣言を原因とするsnapshot、複合打牌フロー、延期ドラ表示と連続槓の窓を検査する。
+公式ベクトルの `schema_negative: true` は、独立した JSON Schema 検査でも拒否すべき入力を指定する。残りの意味的な不正入力は、状態検査や採点検査で拒否を確認する。完結した wire trace では、見送りや不採用の ACK に対応する結果も検査する。
 
-仕様全体レビューで追加したV297〜V304は、赤五を含む加槓のsnapshot表現、副露列途中の加槓後の復元・継続、延長戦の場風循環・配牌回数による座標上限、拡張名・resume token・交渉識別子の文字列全体一致を検査する。§17の7・18・21・24・30・35に対応し、V301〜V303の負例は独立したJSON Schema検査でも拒否を確認する。回帰検査では通常五と赤五の鳴き牌／追加牌の入替え、東風・東南両方の場風循環、局内／局間の復元を扱う。
-
-再レビューで追加したV305〜V319は、局内・局間・終局snapshotの点数と供託の保存、重複seqおよびsnapshot置換済み範囲より先に行うdirection/kind検査、唯一の自摸牌の手出し偽装、固定選択とACKのsource一致、policyと期限に応じたdefault/rejected、単独decision・取消し・後着ACKの区別を検査する。§17の3・4・7・10・18・19・26・27・29・30・32に対応する。回帰検査では供託棒の値0/1000/2000、赤牌と通常牌・同一表記牌の有無、不正kindの型、3種類の不正action policy、期限ちょうどと直前、拒否時の非破壊も検査する。
-
-公開情報の再点検で追加したV320〜V329は、鳴かれた河牌と副露の出現回数の一致、門前リーチ・宣言牌の一意性、非公開手牌から公開された槓宣言牌の在庫、和了の金額再計算、複数ロンの裏表示牌列と物理在庫を検査する。§17の7・11・14・18・20・23・24・28・30・35に対応する。回帰検査では同一表記の2枚を使った2回のチー、可視／非公開の加槓、赤五の内訳、全和了採点fixtureの本場・供託・責任払い、拒否時の状態保持を確認する。hashの回帰検査では、wire内のidentityと同じ文字列を持つ注釈・配列・nested memberを正規化せず、identityのescapeされたキーと複数profileのhashだけを置換することも確認する。
-
-ACK結果と採点境界の再点検で追加したV330〜V341は、新規replayの開始点、不採用の反応から自分の鳴き・和了を生成しないこと、三家和に必要な明示horaと合法な反応窓、chomboによる取消しとpenalty、supersededの優先結果を検査する。N30〜N36は、槍槓の4枚と表裏表示牌の重複、山・槓容量の不足、複数ロンのpending_kan・last_tile不一致を拒否する。正当な複数槍槓・複数河底の正例も追加した。§17の1・4・5・8・9・14・20・23・26・30・31・32に対応する。回帰検査では次の正常な自摸、取消しと後着通知の区別、固定選択sourceを維持した取消し、拒否時の原子的な状態保持を確認する。完結したwire captureは、見送り・不採用のACKに対応する結果も欠落させられない。
-
-検査の成功だけでは YRC 0003 第17節の完全適合や、独立実装間の相互運用性を保証しない。実装の適合表明と安定版の公開条件は [仕様本文](../docs/yamai-protocol.md) と [仕様策定・リリースプロセス](../docs/specification-process.md) に従う。
+検査の成功は各検査層の範囲内の結果である。適合表明は [仕様書第17節](../docs/yamai-protocol.md#17-適合性) に従い、独立実装間の相互運用性は別途検証する。

@@ -79,7 +79,7 @@ def check_snapshot_rinshan(kyoku: dict, rules: dict | None = None) -> None:
 
 
 def next_kyoku(current: dict, result: dict, scores: list[int], kyotaku: int, rules: dict) -> dict:
-    """YRC 0003 §7.2, after settlement and before any next deal."""
+    """YAMAI specification §7.2, after settlement and before any next deal."""
     extra = current["extension_round"]
     extension = rules["extension"]
     oya = current["oya"]

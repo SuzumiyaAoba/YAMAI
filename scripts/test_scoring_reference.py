@@ -10,7 +10,7 @@ from scoring_reference import TILES, ScoringError, calculate_fixture, score_hand
 class ScoringInvariants(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        path = Path(__file__).resolve().parents[1] / 'test-vectors/yrc-0005/1.0-draft.7/scoring.json'
+        path = Path(__file__).resolve().parents[1] / 'test-vectors/riichi-4p/1.0-draft.1/scoring.json'
         data = json.loads(path.read_text())
         cls.rules = data['rules']
         cls.fixtures = {f['id']: f for f in data['fixtures']}

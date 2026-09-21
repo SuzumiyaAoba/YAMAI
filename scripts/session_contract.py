@@ -1,4 +1,4 @@
-"""Executable negotiation, recovery and resource contracts for YRC 0003.
+"""Executable negotiation, recovery and resource contracts for YAMAI specification.
 
 The schema/JSON callbacks are supplied by the artifact validator. These
 contracts do not implement a mahjong game or an authorization service.

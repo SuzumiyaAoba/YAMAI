@@ -6,7 +6,7 @@
 // decision group.  The score scale is deliberately small so that TLC can
 // exhaustively enumerate the state space.
 //
-// The model covers the control properties of YRC 0003 that are useful here:
+// The model covers the control properties of YAMAI specification that are useful here:
 // session lifecycle, host seq allocation, per-member request/action/ack
 // lifecycle, group closure and atomic resolution, timeout/default handling,
 // resume transport state, snapshot sequence replacement, and the
@@ -98,7 +98,7 @@ module yamai_protocol {
 
   val score_total: int = state.score_0 + state.score_1 + state.score_2 + state.score_3
 
-  // YRC 0003's score/kyotaku conservation equation, using the abstract unit
+  // YAMAI specification's score/kyotaku conservation equation, using the abstract unit
   // scale above instead of real mahjong points.
   val score_conservation: bool =
     score_total + state.kyotaku * RIICHI_STICK == TOTAL_POINTS

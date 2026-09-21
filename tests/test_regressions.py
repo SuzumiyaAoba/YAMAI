@@ -1,4 +1,4 @@
-"""Regressions carried across the draft.6 specification integration.
+"""YAMAI protocol, recovery and scoring regression checks.
 
 Official positive/negative traces cover the request and event contracts.
 These additional checks vary inputs and keep independent expected outcomes.
@@ -20,7 +20,7 @@ from game_contract import EventState, GameError, next_kyoku, check_hora_payments
 from scoring_reference import ScoringError, normal_payments, tile_index
 from session_contract import Receiver, SessionError
 
-VECTORS = json.loads((ROOT / "test-vectors/yrc-0003/1.0-draft.9/vectors.json").read_text())
+VECTORS = json.loads((ROOT / "test-vectors/protocol/1.0-draft.1/vectors.json").read_text())
 SCORING = json.loads(oracle.DEFAULT_INPUT.read_text())
 FIXTURES = {f["id"]: f for f in SCORING["fixtures"]}
 
@@ -743,7 +743,7 @@ class ProtocolRegressionTests(unittest.TestCase):
             welcome.update(resumed=True, capabilities=["resume", "snapshot"],
                            resume={"token": "rt_AAAAAAAAAAAAAAAAAAAAAA", "expires_in_ms": 600000},
                            replay_from_seq=1, replay_through_seq=message["replaces_through_seq"])
-        self.schemas.validate(message, {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.9:message"})
+        self.schemas.validate(message, {"$ref": "urn:yamai:schema:protocol:1.0-draft.1:message"})
         checks = {
             "artifact": lambda: validator._check_snapshot(message, rules=rules),
             "event": lambda: EventState(rules).restore(message["state"]),
@@ -950,7 +950,7 @@ class ScoringRegressionTests(unittest.TestCase):
     def test_open_honitsu_is_two_han_in_schema(self):
         schemas = validator.SchemaSet()
         message = {"id": "honitsu", "unit": "han", "value": 2}
-        result = validator.schema_by_id(schemas, "urn:yamai:schema:yrc-0005:1.0-draft.7:scoring-result")
+        result = validator.schema_by_id(schemas, "urn:yamai:schema:riichi-4p:1.0-draft.1:scoring-result")
         schemas._validate(message, result["$defs"]["yaku"], "yaku", result)
 
     def test_draw_tenpai_and_penalty_offender_are_inputs(self):

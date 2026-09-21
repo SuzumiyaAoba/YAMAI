@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Scoring CLI for the current profile; calculations never read expected data.
 
-The draft.5 command and --print interface are preserved. Draft.6 delegates to
-scoring_reference, replacing the old fixture-ID-dependent interpretation and
-settlement logic. This is the CLI for the same reference, not a second engine.
+The CLI evaluates scoring_reference with hand, rules and event inputs, then
+compares the results to the fixtures. --print emits the calculated results.
+It uses the same reference engine as the artifact validator.
 """
 from __future__ import annotations
 import argparse
@@ -14,13 +14,13 @@ from scoring_reference import ScoringError, calculate_fixture as compute_fixture
 import validate_artifacts as v
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_INPUT = ROOT / "test-vectors" / "yrc-0005" / v.PROFILE_REVISION / "scoring.json"
+DEFAULT_INPUT = ROOT / "test-vectors" / "riichi-4p" / v.PROFILE_REVISION / "scoring.json"
 
 
 def run(path: Path, print_json: bool = False) -> int:
     data = v.strict_load(path)
     schemas = v.SchemaSet()
-    schemas.validate(data, {"$ref": f"urn:yamai:schema:yrc-0005:{v.PROFILE_REVISION}:scoring-vectors"})
+    schemas.validate(data, {"$ref": f"urn:yamai:schema:riichi-4p:{v.PROFILE_REVISION}:scoring-vectors"})
     computed = {}
     for fixture in data["fixtures"]:
         actual = compute_fixture(fixture, data["rules"])

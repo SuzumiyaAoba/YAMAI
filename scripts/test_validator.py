@@ -22,7 +22,7 @@ class ValidatorBoundaries(unittest.TestCase):
 
     def test_id_schema_matches_the_entire_decoded_string(self):
         schemas = v.SchemaSet()
-        schema = {'$ref':f'urn:yamai:schema:yrc-0003:{v.PROTOCOL}:common#/$defs/id'}
+        schema = {'$ref':f'urn:yamai:schema:protocol:{v.PROTOCOL}:common#/$defs/id'}
         for value in ('a', 'A0._:-', 'a'*64):
             schemas.validate(value, schema)
         for value in ('', 'a'*65, 'a\n', 'a\r\n', 'a ', 'a\u2028', 'a\u2029', 'あ'):
@@ -31,8 +31,8 @@ class ValidatorBoundaries(unittest.TestCase):
 
     def test_wire_extension_names_reject_trailing_line_terminators(self):
         schemas = v.SchemaSet()
-        vectors = v.strict_load(v.ROOT / f'test-vectors/yrc-0003/{v.PROTOCOL}/vectors.json')
-        schema = schemas.schemas[f'urn:yamai:schema:yrc-0003:{v.PROTOCOL}:message']
+        vectors = v.strict_load(v.ROOT / f'test-vectors/protocol/{v.PROTOCOL}/vectors.json')
+        schema = schemas.schemas[f'urn:yamai:schema:protocol:{v.PROTOCOL}:message']
         for case in ('V18_snapshot_state', 'V104_wire_complete_game'):
             message = deepcopy(vectors[case]['positive'])
             if 'trace' in message:
@@ -48,9 +48,9 @@ class ValidatorBoundaries(unittest.TestCase):
 
     def test_resume_token_rejects_trailing_line_terminators(self):
         schemas = v.SchemaSet()
-        vectors = v.strict_load(v.ROOT / f'test-vectors/yrc-0003/{v.PROTOCOL}/vectors.json')
+        vectors = v.strict_load(v.ROOT / f'test-vectors/protocol/{v.PROTOCOL}/vectors.json')
         welcome = vectors['V104_wire_complete_game']['positive']['trace']['welcome']
-        schema = schemas.schemas[f'urn:yamai:schema:yrc-0003:{v.PROTOCOL}:welcome']
+        schema = schemas.schemas[f'urn:yamai:schema:protocol:{v.PROTOCOL}:welcome']
         for suffix in ('\n', '\r\n', '\u2028', '\u2029'):
             message = deepcopy(welcome)
             message['resume']['token'] += suffix
@@ -58,10 +58,10 @@ class ValidatorBoundaries(unittest.TestCase):
 
     def test_negotiation_lexemes_match_the_entire_string(self):
         schemas = v.SchemaSet()
-        examples = {'version': '1.0-draft.9', 'profileName': 'riichi-4p',
+        examples = {'version': '1.0-draft.1', 'profileName': 'riichi-4p',
                     'profileHash': 'sha256:' + 'a' * 64, 'capabilityName': 'x-review-feature'}
         for name, value in examples.items():
-            schema = {'$ref': f'urn:yamai:schema:yrc-0003:{v.PROTOCOL}:common#/$defs/{name}'}
+            schema = {'$ref': f'urn:yamai:schema:protocol:{v.PROTOCOL}:common#/$defs/{name}'}
             schemas.validate(value, schema)
             for suffix in ('\n', '\r\n', '\u2028', '\u2029'):
                 with self.subTest(name=name, suffix=repr(suffix)):

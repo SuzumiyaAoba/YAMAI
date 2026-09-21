@@ -1,6 +1,6 @@
 # YAMAI の Quint 検証モデル
 
-このディレクトリはYRC 0003 `1.0-draft.9` の制御フローを有限状態へ射影した5モデルを収録する。JSON parser、麻雀の合法手・点数エンジン、認証実装を置き換えるものではない。実際のwireと採点の検査範囲は[検証ガイド](../README.md)および公式vectorを併せて確認する。
+このディレクトリはYAMAI 仕様書 `1.0-draft.1` の制御フローを有限状態へ射影した5モデルを収録する。JSON parser、麻雀の合法手・点数エンジン、認証実装を置き換えるものではない。実際のwireと採点の検査範囲は[検証ガイド](../README.md)および公式vectorを併せて確認する。
 
 ## 5モデルの範囲
 
@@ -12,26 +12,26 @@
 | [yamai_resume_delivery.qnt](yamai_resume_delivery.qnt) | 1peerの履歴・受信位置、有限replay範囲、追加backlog、snapshot、切断中の内部処理、一度だけの適用 | 最大6message、1decision、切断1回、gap1回、snapshot1回。他のgroup memberはothers_readyで要約する。履歴はmessage種別の固定tagを保持する |
 | [yamai_session_ledgers.qnt](yamai_session_ledgers.qnt) | 個別sessionのseq、取消し後の後着診断、終局前に受け付けて終局後に記録する通知、先頭位置での再開、初回観戦snapshot、replayの番号一致 | 2peerのledger、seq上限8と6、1局・1取消し。3人目の反応者と牌山・時計・payloadを省略する。内部状態Cancelledはwireの終端staleに対応する |
 
-baseline/extendedの2反応者は実対局の2人groupを許可する意味ではない。実対局ではYRC 0003に従って3人全員へ要求する。3人目の応答・期限も変動する場合と三家和はrequest_livenessで検査する。baseline/extendedのseqをそのまま4本のwireへ割り当ててはならない。peerごとのseqはrequest_liveness、実際にどこまで届いたかはresume_deliveryが扱う。
+基本モデルと拡張モデルの2反応者は実対局の2人groupを許可する意味ではない。実対局ではYAMAI 仕様書に従って3人全員へ要求する。3人目の応答・期限も変動する場合と三家和はrequest_livenessで検査する。baseline/extendedのseqをそのまま4本のwireへ割り当ててはならない。peerごとのseqはrequest_liveness、実際にどこまで届いたかはresume_deliveryが扱う。
 
 ## 規範との対応
 
 | 要件 | 対応するモデル上の操作・性質 | 規範 |
 |---|---|---|
-| 交渉の一致と拒否 | extendedのsend_hello/send_join_*/send_welcome/reject_join、negotiation_invariant | [YRC 0003](../../docs/yamai-protocol.md) §6 |
-| seqの増加、欠落・重複・内容衝突 | extendedのwire_invariant、host_replay_range、player_*、各witness。deliveryのhistoryとapply_counts | YRC 0003 §5・§12 |
-| 全選択を固定してからACKを生成 | baseline/extendedのGroupOpen→GroupClosed→decided、request_lifecycle_invariant。requestのOpen→Closed→Decided→Acked→Resolved | YRC 0003 §8・§9 |
-| 個別期限、未応答だけのdefault、期限前の選択を保持 | requestのremaining/original_deadlines/selected_at、default_member、request_data_invariant、late_ack_* | YRC 0003 §8.1・§9.1 |
-| 優先順位、頭ハネ、三家和、noneとsupersededの区別 | requestのexpected_chosen/expected_ack、sanchahoTest、selectionBeforeAckTest | YRC 0003 §8.4 |
-| 切断で時計・ACK・内部解決を止めない | deliveryのinternal_progressとdisconnected_internal_invariant。baseline/extendedも内部操作をConnectedで制限しない | YRC 0003 §8.4・§13 |
-| 新規メッセージを既存replayへ混ぜない | deliveryのfrozen_frontier/replay_through、extendedのreplay_to_seq。replay終了後のtailを残す | YRC 0003 §13.2 |
-| hostの生成とpeerの適用を区別 | deliveryのprevious_applied_seq/last_delivery/apply_counts。hostだけの操作はapplied_seqを変えない | YRC 0003 §5・§13 |
-| snapshotで選択済み要求を保持 | deliveryのsnapshot_phase/snapshot_choice、extendedのsnapshot_saved_*、具体的runテスト | YRC 0003 §13.3 |
-| 終了済みsessionへ未配送結果を届ける | baselineのendedReplayTest、extendedのendedResumeTest | YRC 0003 §13.2 |
-| 局結果・終局前に要求を解決 | extendedのround_result_available、end_kyoku/end_game、terminalization_invariant | YRC 0003 §7.5・Appendix A |
-| 供託を含む全体の点数保存 | baseline/extendedのscore_conservation、reach控除とsettle_kyotaku | YRC 0003 §7.2・§7.6.8 |
+| 交渉の一致と拒否 | extendedのsend_hello/send_join_*/send_welcome/reject_join、negotiation_invariant | [YAMAI 仕様書](../../docs/yamai-protocol.md) §6 |
+| seqの増加、欠落・重複・内容衝突 | extendedのwire_invariant、host_replay_range、player_*、各witness。deliveryのhistoryとapply_counts | YAMAI 仕様書 §5・§12 |
+| 全選択を固定してからACKを生成 | baseline/extendedのGroupOpen→GroupClosed→decided、request_lifecycle_invariant。requestのOpen→Closed→Decided→Acked→Resolved | YAMAI 仕様書 §8・§9 |
+| 個別期限、未応答だけのdefault、期限前の選択を保持 | requestのremaining/original_deadlines/selected_at、default_member、request_data_invariant、late_ack_* | YAMAI 仕様書 §8.1・§9.1 |
+| 優先順位、頭ハネ、三家和、noneとsupersededの区別 | requestのexpected_chosen/expected_ack、sanchahoTest、selectionBeforeAckTest | YAMAI 仕様書 §8.4 |
+| 切断で時計・ACK・内部解決を止めない | deliveryのinternal_progressとdisconnected_internal_invariant。baseline/extendedも内部操作をConnectedで制限しない | YAMAI 仕様書 §8.4・§13 |
+| 新規メッセージを既存replayへ混ぜない | deliveryのfrozen_frontier/replay_through、extendedのreplay_to_seq。replay終了後のtailを残す | YAMAI 仕様書 §13.2 |
+| hostの生成とpeerの適用を区別 | deliveryのprevious_applied_seq/last_delivery/apply_counts。hostだけの操作はapplied_seqを変えない | YAMAI 仕様書 §5・§13 |
+| snapshotで選択済み要求を保持 | deliveryのsnapshot_phase/snapshot_choice、extendedのsnapshot_saved_*、具体的runテスト | YAMAI 仕様書 §13.3 |
+| 終了済みsessionへ未配送結果を届ける | baselineのendedReplayTest、extendedのendedResumeTest | YAMAI 仕様書 §13.2 |
+| 局結果・終局前に要求を解決 | extendedのround_result_available、end_kyoku/end_game、terminalization_invariant | YAMAI 仕様書 §7.5・Appendix A |
+| 供託を含む全体の点数保存 | baseline/extendedのscore_conservation、reach控除とsettle_kyotaku | YAMAI 仕様書 §7.2・§7.6.8 |
 
-## 実行方法と検査結果
+## 実行方法
 
 環境はrootの[flake.nix](../../flake.nix)と[flake.lock](../../flake.lock)で固定する。リポジトリのルートで全検査を実行する。
 

@@ -1,0 +1,310 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:yamai:schema:protocol:1.0-draft.1:welcome",
+  "type": "object",
+  "required": [
+    "yamai",
+    "kind",
+    "session_id",
+    "game_id",
+    "resumed",
+    "seat",
+    "mode",
+    "view",
+    "profile",
+    "profile_revision",
+    "profile_hash",
+    "players",
+    "scores",
+    "rules",
+    "capabilities"
+  ],
+  "properties": {
+    "yamai": {
+      "const": "1.0-draft.1"
+    },
+    "kind": {
+      "const": "welcome"
+    },
+    "session_id": {
+      "$ref": "urn:yamai:schema:protocol:1.0-draft.1:common#/$defs/id"
+    },
+    "game_id": {
+      "$ref": "urn:yamai:schema:protocol:1.0-draft.1:common#/$defs/id"
+    },
+    "resumed": {
+      "type": "boolean"
+    },
+    "replay_from_seq": {
+      "$ref": "urn:yamai:schema:protocol:1.0-draft.1:common#/$defs/positiveInteger"
+    },
+    "resume": {
+      "type": "object",
+      "required": [
+        "token",
+        "expires_in_ms"
+      ],
+      "properties": {
+        "token": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._~-]{22,256}(?![\\s\\S])"
+        },
+        "expires_in_ms": {
+          "$ref": "urn:yamai:schema:protocol:1.0-draft.1:common#/$defs/positiveInteger"
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x_(?=[A-Za-z0-9_]{3,62}(?![\\s\\S]))[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*(?![\\s\\S])": {}
+      }
+    },
+    "seat": {
+      "anyOf": [
+        {
+          "$ref": "urn:yamai:schema:protocol:1.0-draft.1:common#/$defs/seat"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "mode": {
+      "type": "string",
+      "enum": [
+        "play",
+        "spectate",
+        "replay"
+      ]
+    },
+    "view": {
+      "anyOf": [
+        {
+          "type": "string",
+          "enum": [
+            "seat",
+            "public",
+            "full"
+          ]
+        },
+        {
+          "type": "object",
+          "required": [
+            "seat"
+          ],
+          "properties": {
+            "seat": {
+              "$ref": "urn:yamai:schema:protocol:1.0-draft.1:common#/$defs/seat"
+            }
+          },
+          "additionalProperties": false,
+          "patternProperties": {
+            "^x_(?=[A-Za-z0-9_]{3,62}(?![\\s\\S]))[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*(?![\\s\\S])": {}
+          }
+        }
+      ]
+    },
+    "profile": {
+      "const": "riichi-4p"
+    },
+    "profile_revision": {
+      "const": "1.0-draft.1"
+    },
+    "profile_hash": {
+      "$ref": "urn:yamai:schema:protocol:1.0-draft.1:common#/$defs/profileHash"
+    },
+    "players": {
+      "type": "array",
+      "minItems": 4,
+      "maxItems": 4,
+      "items": {
+        "type": "object",
+        "required": [
+          "seat",
+          "name"
+        ],
+        "properties": {
+          "seat": {
+            "$ref": "urn:yamai:schema:protocol:1.0-draft.1:common#/$defs/seat"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        "additionalProperties": false,
+        "patternProperties": {
+          "^x_(?=[A-Za-z0-9_]{3,62}(?![\\s\\S]))[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*(?![\\s\\S])": {}
+        }
+      }
+    },
+    "scores": {
+      "$ref": "urn:yamai:schema:protocol:1.0-draft.1:common#/$defs/scoreArray"
+    },
+    "rules": {
+      "$ref": "urn:yamai:schema:riichi-4p:1.0-draft.1:riichi-4p-rules"
+    },
+    "capabilities": {
+      "type": "array",
+      "uniqueItems": true,
+      "maxItems": 128,
+      "items": {
+        "$ref": "urn:yamai:schema:protocol:1.0-draft.1:common#/$defs/capabilityName"
+      }
+    },
+    "replay_through_seq": {
+      "$ref": "urn:yamai:schema:protocol:1.0-draft.1:common#/$defs/nonNegativeInteger"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "mode": {
+            "const": "play"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "seat": {
+            "$ref": "urn:yamai:schema:protocol:1.0-draft.1:common#/$defs/seat"
+          },
+          "view": {
+            "const": "seat"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "mode": {
+            "const": "spectate"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "seat": {
+            "type": "null"
+          },
+          "view": {
+            "const": "public"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "mode": {
+            "const": "replay"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "seat": {
+            "type": "null"
+          },
+          "view": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "public",
+                  "full"
+                ]
+              },
+              {
+                "type": "object",
+                "required": [
+                  "seat"
+                ],
+                "properties": {
+                  "seat": {
+                    "$ref": "urn:yamai:schema:protocol:1.0-draft.1:common#/$defs/seat"
+                  }
+                },
+                "additionalProperties": false,
+                "patternProperties": {
+                  "^x_(?=[A-Za-z0-9_]{3,62}(?![\\s\\S]))[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*(?![\\s\\S])": {}
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "resumed": {
+            "const": true
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "replay_from_seq",
+          "resume",
+          "replay_through_seq"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "resumed": {
+            "const": false
+          }
+        }
+      },
+      "then": {
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "replay_from_seq"
+              ]
+            },
+            {
+              "required": [
+                "replay_through_seq"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "mode": {
+            "enum": [
+              "spectate",
+              "replay"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "resumed": {
+            "const": false
+          }
+        },
+        "not": {
+          "required": [
+            "resume"
+          ]
+        }
+      }
+    }
+  ],
+  "additionalProperties": false,
+  "patternProperties": {
+    "^x_(?=[A-Za-z0-9_]{3,62}(?![\\s\\S]))[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*(?![\\s\\S])": {}
+  }
+}

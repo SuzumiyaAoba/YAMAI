@@ -1,63 +1,62 @@
-# YAMAI
+# YAMAI — draft 1
 
-**Y**et **A**nother **M**ahjong **AI** Interface
+**Yet Another Mahjong AI Interface**
 
-YAMAI は、4人リーチ麻雀の対局ホストと AI プレイヤーが、対局イベント・行動要求・局結果を交換するためのプロトコル仕様提案です。MJAI の牌表記と主要イベント名を引き継ぎ、版交渉、要求と応答の対応、ルール、終局精算、再接続、エラー処理を定義します。
+YAMAI は、4人リーチ麻雀の対局ホストと AI プレイヤーが、対局イベント、行動要求、合法手の選択、局結果を交換するプロトコルです。このリポジトリは仕様書、JSON Schema、識別子 registry、テストベクトルと検査実装を提供します。
 
-現在の提案は **Protocol `1.0-draft.9` / `riichi-4p` profile `1.0-draft.7`** です。実装と相互運用試験を目的とする Draft であり、安定版の公開には二つ以上の独立実装による検証が必要です。
+| 項目 | 値 |
+|---|---|
+| Protocol Version | `1.0-draft.1` |
+| Profile | `riichi-4p@1.0-draft.1` |
+| Release ID | `yamai-1.0-draft.1` |
+| 通信形式 | UTF-8 JSON / JSON Lines / WebSocket |
+| モード | `play` / `spectate` / `replay` |
 
-## 仕様と背景資料
+実装は [YAMAI 仕様書](docs/yamai-protocol.md) を基準にしてください。draft 1 は実装と相互運用試験のための仕様であり、版、profile revision、profile hash を明示的に交渉します。
 
-実装・レビューは [YRC 0003: YAMAI Protocol Version 1](docs/yamai-protocol.md) から始めてください。同文書が、通信と状態遷移、組込み `riichi-4p` の採点規則（第7.6節）、適合要件（第17節）を含む唯一の規範本文です。
+## ドキュメント
 
-| 文書 | 内容 | 位置付け |
+| 文書 | 内容 |
+|---|---|
+| [仕様案内](docs/README.md) | 対象範囲、通信の流れ、実装目的別の参照先 |
+| [YAMAI 仕様書](docs/yamai-protocol.md) | 通信、状態遷移、麻雀ルール、採点、復旧、適合性の規範本文 |
+| [成果物の仕様](docs/artifacts.md) | ファイル構成、版の一致、profile hash、検査層の関係 |
+| [検証ガイド](verification/README.md) | 実行方法、適合35項目と検査の対応、検証範囲 |
+| [形式モデル](verification/quint/README.md) | 5つの Quint モデル、有限境界、性質と前提 |
+
+## 通信と対局の原則
+
+- ホストは `hello` で版と機能を提示し、`join` を検査して `welcome` を返します。
+- ホストは `event` で状態を確定し、`request` で合法候補と期限を通知します。
+- プレイヤーは `request_id` と `action_id` を指定して選択を返します。
+- ホストは競合する選択を確定し、`ack` と結果イベントを原子的に記録します。
+- ホストメッセージは session ごとの `seq` で順序付け、再送で二重適用しません。
+- 各受信者には許可された view を投影し、再接続でも選択と時計を保持します。
+
+`riichi-4p` はルール宣言、牌山、合法手、フリテン、役・符・点数、複数ロン、供託・本場・責任払い、流局、次局と終局を定義します。3人麻雀、AI の内部処理、サービスのアカウント・認証方式・レーティングは対象外です。公開サービスの認可要件は [仕様書第18.6節](docs/yamai-protocol.md#186-サービスの認証認可との境界) を参照してください。
+
+## 成果物
+
+[release-manifest.json](release-manifest.json) が同一 release の対象ファイルを列挙します。
+
+| 成果物 | Protocol | `riichi-4p` |
 |---|---|---|
-| [YRC 0003: YAMAI Protocol Version 1](docs/yamai-protocol.md) | プロトコルと4人リーチ麻雀の規則 | Standards Track Draft |
-| [YRC 0001: デファクト MJAI プロトコル記述仕様](docs/mjai-protocol.md) | 既存のイベントモデルと通信方言 | Informational |
-| [YRC 0002: MJAI プロトコルの設計上の欠陥](docs/mjai-problems.md) | 曖昧さ・実装差・運用障害と設計要求の対応 | Informational |
-| [YRC 0004: 代表的 MJAI 実装プロファイル](docs/mjai-implementations.md) | 主要実装の通信形式と相互運用上の差 | Informational |
+| JSON Schema | [メッセージ](schemas/protocol/1.0-draft.1/message.schema.json) | [ルール](schemas/riichi-4p/1.0-draft.1/riichi-4p-rules.schema.json)、[採点結果](schemas/riichi-4p/1.0-draft.1/scoring-result.schema.json) |
+| Registry | [メッセージと識別子](registry/protocol/1.0-draft.1/registry.json) | [役・符・点数](registry/riichi-4p/1.0-draft.1/registry.json) |
+| テストベクトル | [索引](test-vectors/protocol/1.0-draft.1/manifest.json)、[正例・負例](test-vectors/protocol/1.0-draft.1/vectors.json) | [採点入力と期待結果](test-vectors/riichi-4p/1.0-draft.1/scoring.json) |
 
-YRC（YAMAI Request for Comments）は本プロジェクトの文書系列であり、IETF RFC ではありません。成果物の権威関係、版管理、変更提案と公開の手順は [仕様策定・リリースプロセス](docs/specification-process.md)、版ごとの変更と互換性は [変更履歴](CHANGELOG.md) を参照してください。
+## 検証と閲覧
 
-## 設計原則
-
-1. **要求と応答を明示する** — 行動要求には一意な `request_id` を付けます。
-2. **合法手を列挙する** — プレイヤーはホストが発行した `action_id` を選択します。
-3. **状態遷移を決定的にする** — ホストメッセージには単調増加する `seq` を付けます。
-4. **ルールを暗黙にしない** — 東風・東南、赤牌、複数ロンなどをゲーム開始時に宣言します。
-5. **終局を原子的に精算する** — 複数和了を単一の `end_kyoku` にまとめます。
-6. **通信方式とイベントモデルを分離する** — JSON Lines と WebSocket に同じ意味論を定義します。
-7. **安全に失敗する** — 不正 JSON、未知の必須機能、期限切れ応答、再送を区別します。
-8. **MJAI から移行できる** — 牌表記と主要イベント名を可能な限り維持します。
-
-## 機械可読成果物
-
-Schema、registry、公式テストベクトル、検査実装は規範本文に照合する派生成果物です。[release manifest](release-manifest.json) が同じ版として取得するファイルを列挙します。
-
-| 成果物 | プロトコル | `riichi-4p` のルール・採点 |
-|---|---|---|
-| JSON Schema | [メッセージと参照先](schemas/yrc-0003/1.0-draft.9/message.schema.json) | [ルール](schemas/yrc-0005/1.0-draft.7/riichi-4p-rules.schema.json)、[採点結果](schemas/yrc-0005/1.0-draft.7/scoring-result.schema.json) |
-| Registry | [識別子と許可値](registry/yrc-0003/1.0-draft.9/registry.json) | [役・符・点数](registry/yrc-0005/1.0-draft.7/registry.json) |
-| テストベクトル | [索引](test-vectors/yrc-0003/1.0-draft.9/manifest.json)、[正例と負例](test-vectors/yrc-0003/1.0-draft.9/vectors.json) | [採点入力と期待結果](test-vectors/yrc-0005/1.0-draft.7/scoring.json) |
-
-Protocol Version はメッセージ Schema とその参照先を固定します。`profile_revision` と `profile_hash` は profile 成果物を識別し、hash の対象と正規化方法は release manifest に記載します。採点成果物のパスと Schema ID には `yrc-0005` 名前空間を使用します。
-
-## 検証
-
-リポジトリのルートで、Python 3 の標準ライブラリだけを使って成果物の整合性を検査できます。
+Python 3 の標準ライブラリで成果物の整合性を検査できます。
 
 ```sh
 python3 scripts/validate_artifacts.py
 ```
 
-回帰テスト、独立した JSON Schema 検査、Quint/TLC による形式検証の実行方法と、第17節の適合項目との対応は [検証ガイド](verification/README.md) にまとめています。検査は JSON・Schema・hash、状態遷移、合法候補、採点、有限モデル上の性質を扱い、実装間の相互運用試験は別途必要です。
+HTML の生成には Python 3、Node.js と npm を使用します。mdxr `0.2.0` を使って仕様書と検証ガイドを生成します。
 
-## 対象範囲
+```sh
+python3 scripts/render_docs.py
+```
 
-本提案は4人リーチ麻雀の `play`・`spectate`・`replay`、再接続と状態同期を対象とします。3人麻雀、特定の麻雀エンジン、AI の内部アルゴリズム、対局サービスの認証方式、レーティング方式は対象外です。
-
-公開サービスでのゲーム・牌譜・座席 view・完全情報・resume token へのアクセス制御は、別の認可 profile で定義します。詳細は仕様本文第18節と [仕様策定・リリースプロセス](docs/specification-process.md) 第6節を参照してください。
-
-## 名前について
-
-YAMAI は昔ながらの “Yet Another” 系命名であると同時に、既存プロトコルが抱える「病」を直すという意味を込めています。
+生成後は `docs/index.html` から各文書を開けます。Markdown が原本であり、HTML は同じ内容から生成する閲覧用成果物です。回帰テスト、独立した JSON Schema 検査、形式検証の手順は [検証ガイド](verification/README.md) にあります。

@@ -11,7 +11,7 @@ class SessionInvariants(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.schemas = v.SchemaSet()
-        manifest = v.strict_load(v.ROOT / f'test-vectors/yrc-0003/{v.PROTOCOL}/manifest.json')
+        manifest = v.strict_load(v.ROOT / f'test-vectors/protocol/{v.PROTOCOL}/manifest.json')
         cls.digest = manifest['profile_hash']
         cls.vectors = v.strict_load(v.ROOT / manifest['vectors'])
 
@@ -473,8 +473,8 @@ class SessionInvariants(unittest.TestCase):
                     self.assertFalse(receiver.active_requests)
 
     def test_hash_normalizes_only_wire_identity_values(self):
-        protocol = v.strict_load(v.ROOT / f'registry/yrc-0003/{v.PROTOCOL}/registry.json')
-        rules = v.strict_load(v.ROOT / f'registry/yrc-0005/{v.PROFILE_REVISION}/registry.json')
+        protocol = v.strict_load(v.ROOT / f'registry/protocol/{v.PROTOCOL}/registry.json')
+        rules = v.strict_load(v.ROOT / f'registry/riichi-4p/{v.PROFILE_REVISION}/registry.json')
         one, two = deepcopy(protocol), deepcopy(protocol)
         one['x_test_message'] = {'kind':'join','profile_hash':'sha256:'+'a'*64}
         two['x_test_message'] = {'kind':'join','profile_hash':'sha256:'+'b'*64}
@@ -696,16 +696,16 @@ class SessionInvariants(unittest.TestCase):
         self.assertEqual(caught.exception.code, 'invalid_message')
 
     def test_hash_preserves_schema_property_definitions(self):
-        protocol = v.strict_load(v.ROOT / f'registry/yrc-0003/{v.PROTOCOL}/registry.json')
-        rules = v.strict_load(v.ROOT / f'registry/yrc-0005/{v.PROFILE_REVISION}/registry.json')
+        protocol = v.strict_load(v.ROOT / f'registry/protocol/{v.PROTOCOL}/registry.json')
+        rules = v.strict_load(v.ROOT / f'registry/riichi-4p/{v.PROFILE_REVISION}/registry.json')
         protocol['x_test_schema'] = {'type':'object','properties':{'kind':{'const':'join'},'profile_hash':{'type':'string'}}}
         before = v.profile_hash(protocol, rules)
         protocol['x_test_schema']['properties']['profile_hash'] = {'type':'integer'}
         self.assertNotEqual(before, v.profile_hash(protocol, rules))
 
     def test_wire_hash_normalization_preserves_other_bytes(self):
-        protocol = v.strict_load(v.ROOT / f'registry/yrc-0003/{v.PROTOCOL}/registry.json')
-        rules = v.strict_load(v.ROOT / f'registry/yrc-0005/{v.PROFILE_REVISION}/registry.json')
+        protocol = v.strict_load(v.ROOT / f'registry/protocol/{v.PROTOCOL}/registry.json')
+        rules = v.strict_load(v.ROOT / f'registry/riichi-4p/{v.PROFILE_REVISION}/registry.json')
         one, two = deepcopy(protocol), deepcopy(protocol)
         one['x_test_capture'] = {'wire':json.dumps({'kind':'join','profile_hash':'sha256:'+'a'*64})}
         two['x_test_capture'] = {'wire':json.dumps({'kind':'join','profile_hash':'sha256:'+'b'*64})}
