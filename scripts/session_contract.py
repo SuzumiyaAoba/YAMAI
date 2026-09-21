@@ -24,11 +24,12 @@ def require(condition: bool, code: str, message: str, severity: str = "fatal") -
         raise SessionError(code, message, severity)
 
 
-def check_clock(request: dict, clock: dict, grace: int, *, user: bool = False) -> None:
+def check_clock(request: dict, clock: dict, grace: int, *, user: bool = False, timeout: bool = False) -> None:
     deadline = grace + request["timeout_ms"] + request["time_bank_ms"]
     elapsed = clock["elapsed_ms"]
     require(0 <= elapsed <= deadline and (not user or elapsed < deadline),
             "invalid_message", "selection clock exceeds its original deadline")
+    require(not timeout or elapsed == deadline, "invalid_message", "default before deadline without default policy")
     consumed = min(max(0, elapsed - grace - request["timeout_ms"]), request["time_bank_ms"])
     require(clock["time_bank_ms"] == request["time_bank_ms"] - consumed,
             "invalid_message", "selection time-bank arithmetic differs")
@@ -261,6 +262,9 @@ class Receiver:
     def _receive(self, raw: bytes) -> str:
         message = self.decode(raw)
         require(isinstance(message, dict), "invalid_message", "message is not an object")
+        require(isinstance(message.get("kind"), str)
+                and message["kind"] in {"event", "request", "ack", "error", "snapshot"},
+                "invalid_message", "unexpected host application kind")
         for key in ("yamai", "session_id", "game_id"):
             require(message.get(key) == self.welcome[key], "invalid_message", "application identity differs")
         seq = message.get("seq")
@@ -497,7 +501,8 @@ class Receiver:
                     require(selection["source"] != "default" or selection["action_id"] == request["default_action_id"], "invalid_message", "snapshot default selection differs")
                     require(selection["time_bank_ms"] <= request["time_bank_ms"], "invalid_message", "snapshot selection invents bank time")
                     require(selection["time_bank_ms"] == state["time_bank_ms"], "invalid_message", "selected time bank differs from the shared balance")
-                    check_clock(request, selection, grace, user=selection["source"] == "user")
+                    check_clock(request, selection, grace, user=selection["source"] == "user",
+                                timeout=selection["source"] == "default" and self.welcome["rules"]["invalid_action_policy"] != "default")
                 else:
                     require(request["time_bank_ms"] == state["time_bank_ms"], "invalid_message", "open request changed the shared balance")
                 if request["request_id"] in self.requests:
@@ -578,24 +583,32 @@ class Receiver:
                 if rid not in self.active_requests:
                     require(status == "stale" and (rid in self.request_ids or self.floor > 0), "invalid_message", "ACK refers to an unissued or terminal request")
                     if rid in self.terminal_acks:
+                        require(self.terminal_acks[rid]["status"] in {"defaulted", "stale"},
+                                "invalid_message", "late stale ACK follows an explicit terminal selection")
                         require(all(message[key] == self.terminal_acks[rid][key] for key in ("elapsed_ms", "time_bank_ms")), "invalid_message", "late ACK changed the original clock")
                 else:
                     request = self.requests[rid]
                     grace = self.welcome["rules"]["time_control"]["grace_ms"]
-                    check_clock(request, message, grace, user=status in {"accepted", "passed", "superseded"})
+                    check_clock(request, message, grace, user=status in {"accepted", "passed", "superseded", "rejected"},
+                                timeout=status == "defaulted" and self.welcome["rules"]["invalid_action_policy"] != "default")
                     remaining = message["time_bank_ms"]
                     selection = request.get("selection")
                     if selection is not None:
                         require(status != "rejected" and all(message[k] == selection[k] for k in ("action_id","elapsed_ms","time_bank_ms")), "invalid_message", "ACK changed snapshot's frozen selection")
+                        require(status == "stale" or (status == "defaulted") == (selection["source"] == "default"),
+                                "invalid_message", "ACK changed snapshot's selection source")
                     candidates = {c["action_id"]: c["action"] for c in request["legal_actions"]}
                     aid = message["action_id"]
                     if status == "rejected":
+                        require(self.welcome["rules"]["invalid_action_policy"] != "default", "invalid_message", "default policy cannot send a rejected ACK")
                         require(aid not in candidates, "invalid_message", "legal candidate was rejected as malformed")
-                    elif status != "stale":
+                    else:
                         require(aid in candidates, "invalid_message", "ACK selected an unissued candidate")
                         require(status != "defaulted" or aid == request["default_action_id"], "invalid_message", "default ACK differs from the declared default")
                         require(status != "passed" or candidates[aid]["type"] == "none", "invalid_message", "passed ACK is not a pass")
                         require(status not in {"accepted", "superseded"} or candidates[aid]["type"] != "none", "invalid_message", "none has an invalid terminal status")
+                        require(status != "superseded" or "decision_group_id" in request,
+                                "invalid_message", "single decision cannot be superseded")
                     if status != "rejected":
                         self._expect_effects(request, message)
                         try:

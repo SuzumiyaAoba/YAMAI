@@ -259,7 +259,7 @@ mjai-reviewerは対局ホストではなく、天鳳・Mahjong Soul等の牌譜�
 次はadapterなしで接続できない。
 
 - GimiteまたはMortalのobject streamと、mjai.appまたはAkagiのarray batch
-- arrival-order型botと、`request_id`を必須とするRiichiLab request
+- 全eventへの応答を前提とするbotと、`request_action`にだけ応答を求めるRiichiLab（IDなしresponseを受理する後方互換動作は、この応答契約の差を解消しない）
 - 4人固定botと、Akagi・RiichiLabの3人麻雀event
 - replay consumerと、非公開情報を要求するlive play session
 

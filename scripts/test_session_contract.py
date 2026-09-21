@@ -450,6 +450,87 @@ class SessionInvariants(unittest.TestCase):
                     receiver.receive(self.raw(trace['steps'][6]['message']))
                     self.assertEqual(receiver.time_bank_ms, 0)
 
+    def test_ack_preserves_frozen_selection_source_and_decision_kind(self):
+        for source, status, valid in (
+            ('user', 'accepted', True), ('user', 'defaulted', False),
+            ('user', 'superseded', False), ('user', 'stale', True),
+            ('default', 'defaulted', True), ('default', 'accepted', False),
+            ('default', 'superseded', False), ('default', 'stale', True),
+        ):
+            with self.subTest(source=source, status=status):
+                trace = self.trace('snapshot_validates_selection_clock')
+                # Early default is legal only under this policy; the source
+                # must still survive the snapshot and its terminal ACK.
+                trace['welcome']['rules']['invalid_action_policy'] = 'default'
+                trace['steps'][0]['message']['event']['rules']['invalid_action_policy'] = 'default'
+                trace['steps'][4]['message']['state']['pending_requests'][0]['selection']['source'] = source
+                trace['steps'][5]['message']['status'] = status
+                receiver = self.receiver(trace['welcome'])
+                for step in trace['steps'][:5]:
+                    receiver.receive(self.raw(step['message']))
+                ack = trace['steps'][5]['message']
+                if valid:
+                    receiver.receive(self.raw(ack))
+                    self.assertFalse(receiver.active_requests)
+                else:
+                    self.assert_rejected_atomically(receiver, ack)
+
+    def test_early_default_requires_default_policy_in_snapshot_and_ack(self):
+        for policy in ('reject', 'chombo', 'default'):
+            for snapshot in (False, True):
+                with self.subTest(policy=policy, snapshot=snapshot):
+                    trace = self.trace('snapshot_validates_selection_clock')
+                    trace['welcome']['rules']['invalid_action_policy'] = policy
+                    trace['steps'][0]['message']['event']['rules']['invalid_action_policy'] = policy
+                    receiver = self.receiver(trace['welcome'])
+                    for step in trace['steps'][:4]:
+                        receiver.receive(self.raw(step['message']))
+                    if snapshot:
+                        message = trace['steps'][4]['message']
+                        message['state']['pending_requests'][0]['selection']['source'] = 'default'
+                    else:
+                        message = trace['steps'][5]['message']
+                        message.update(seq=5, status='defaulted')
+                    if policy == 'default':
+                        receiver.receive(self.raw(message))
+                    else:
+                        self.assert_rejected_atomically(receiver, message)
+
+    def test_cancellation_uses_a_candidate_and_late_stale_needs_auto_selection(self):
+        trace = self.trace('wire_complete_game')
+        receiver = self.receiver(trace['welcome'])
+        for step in trace['steps'][:4]:
+            receiver.receive(self.raw(step['message']))
+        ack = deepcopy(trace['steps'][4]['message'])
+        ack.update(status='stale', action_id='unknown')
+        self.assert_rejected_atomically(receiver, ack)
+        receiver = self.receiver(trace['welcome'])
+        for step in trace['steps'][:6]:
+            receiver.receive(self.raw(step['message']))
+        late = deepcopy(trace['steps'][4]['message'])
+        late.update(seq=7, status='stale')
+        self.assert_rejected_atomically(receiver, late)
+
+    def test_rejected_ack_requires_a_rejecting_policy_and_predeadline_clock(self):
+        for policy in ('reject', 'chombo', 'default'):
+            for elapsed in (20000, 21000):
+                with self.subTest(policy=policy, elapsed=elapsed):
+                    trace = self.trace('wire_complete_game')
+                    trace['welcome']['rules']['invalid_action_policy'] = policy
+                    trace['steps'][0]['message']['event']['rules']['invalid_action_policy'] = policy
+                    receiver = self.receiver(trace['welcome'])
+                    for step in trace['steps'][:4]:
+                        receiver.receive(self.raw(step['message']))
+                    ack = deepcopy(trace['steps'][4]['message'])
+                    ack.update(status='rejected', action_id='unknown', elapsed_ms=elapsed,
+                               time_bank_ms=21000 - elapsed)
+                    if policy != 'default' and elapsed < 21000:
+                        receiver.receive(self.raw(ack))
+                        self.assertEqual(receiver.active_requests, {'r1'})
+                        self.assertEqual(receiver.time_bank_ms, 15000)
+                    else:
+                        self.assert_rejected_atomically(receiver, ack)
+
     def test_snapshot_cannot_reopen_a_terminal_request(self):
         trace = self.trace('wire_complete_game')
         receiver = self.receiver(trace['welcome'])

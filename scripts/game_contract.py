@@ -566,6 +566,9 @@ class EventState:
         require(snapshot["game_phase"] != "ended"
                 or snapshot.get("final_rankings") == rankings(snapshot["scores"]),
                 "snapshot rankings differ")
+        require(sum(snapshot["scores"]) + snapshot["kyotaku"] * self.rules["riichi_stick_value"]
+                == 4 * self.rules["starting_points"],
+                "snapshot does not conserve scores and deposits")
         self.self_seat = snapshot["seat"] if snapshot["mode"] == "play" else None
         self.game_phase = snapshot["game_phase"]
         self.scores = snapshot["scores"].copy()
@@ -757,6 +760,9 @@ class EventState:
             require(phase == "awaiting_action" and actor == turn_actor, "discard outside own action phase")
             if event["tsumogiri"]:
                 require(self.last_cause["type"] == "tsumo" and self.last_cause["actor"] == actor and self.last_cause["pai"] in {None, event["pai"]}, "tsumogiri differs from latest draw")
+            elif self.last_cause["type"] == "tsumo" and self.last_cause["pai"] == event["pai"] and "tiles" in r["hands"][actor]:
+                require(r["hands"][actor]["tiles"].count(event["pai"]) >= 2,
+                        "hand discard cannot use the sole drawn tile")
             if r["reach_status"][actor]["state"] == "accepted":
                 require(event["tsumogiri"], "changed discard after accepted riichi")
                 r["reach_status"][actor]["ippatsu"] = False

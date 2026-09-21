@@ -24,7 +24,7 @@ from typing import Any, Dict, Iterable, List, Mapping, Sequence, Tuple
 
 from request_contract import evaluate as evaluate_request_contract
 from scoring_reference import ScoringError, basic_points, normal_payments, validate_score_bounds, MAX_GAME_EVENTS, MAX_HAND_POINTS, calculate_fixture as calculate_scoring_fixture, tile_index
-from session_contract import SessionError, Receiver, negotiate, check_token_trace, replay_plan, resource_trace, classify_player_input
+from session_contract import SessionError, Receiver, negotiate, check_token_trace, replay_plan, resource_trace, classify_player_input, check_clock
 from game_contract import GameError, EventState, next_kyoku, legal_actions, canonical_action, furiten, furiten_step, abortive_reason, kan_sequence, public_pao, round_coordinates_reachable, check_snapshot_rinshan
 
 
@@ -1263,6 +1263,13 @@ def _check_snapshot(message: Mapping[str, Any], extension_contexts: Mapping[str,
                 _require(selection["source"] != "default" or selection["action_id"] == request["default_action_id"], "invalid_message", "snapshot default selection differs")
                 _require(selection["time_bank_ms"] <= request["time_bank_ms"], "invalid_message", "snapshot selection invents bank time")
                 _require(selection["time_bank_ms"] == state["time_bank_ms"], "invalid_message", "selected time bank differs from the shared balance")
+                if rules is not None:
+                    try:
+                        check_clock(request, selection, rules["time_control"]["grace_ms"],
+                                    user=selection["source"] == "user",
+                                    timeout=selection["source"] == "default" and rules["invalid_action_policy"] != "default")
+                    except SessionError as error:
+                        raise ArtifactError(error.code, str(error)) from error
             else:
                 _require(request["time_bank_ms"] == state["time_bank_ms"], "invalid_message", "open request changed the shared balance")
     else:
@@ -1279,6 +1286,10 @@ def _check_snapshot(message: Mapping[str, Any], extension_contexts: Mapping[str,
     if state.get("game_phase") == "ended":
         order = sorted(range(4), key=lambda i: (-state["scores"][i], i))
         _require(state["final_rankings"] == [order.index(i) + 1 for i in range(4)], "invalid_message", "snapshot rankings differ")
+    if rules is not None:
+        _require(sum(state["scores"]) + state["kyotaku"] * rules["riichi_stick_value"]
+                 == 4 * rules["starting_points"],
+                 "invalid_message", "snapshot does not conserve scores and deposits")
     _require(("original_seq" in state) == (mode == "replay"), "invalid_message", "snapshot recording cursor differs from mode")
     _require(message.get("seq") == message.get("replaces_through_seq", -1) + 1, "invalid_message", "snapshot seq does not follow replacement range")
 

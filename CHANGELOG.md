@@ -2,6 +2,18 @@
 
 YAMAI の仕様と成果物の変更、および版間の互換性を記録する。各版は Draft であり、現行成果物は [release manifest](release-manifest.json) に従って取得する。
 
+## draft.9への未公開の追補 — 2026-09-21（仕様全体の再レビュー）
+
+- snapshotの点数と供託の保存を全phaseで明示した。交渉した開始点と供託棒の値から総額を確認し、不正snapshotは状態を置換する前に拒否する。本文、成果物検査、Receiver、EventStateの復元経路を揃えた。
+- host messageのdirection/kind検査を重複seqのbyte比較とsnapshot floor判定より先に実施する。不正なkindを`sequence_conflict`へ誤分類したり、置換済みの古い番号を理由に無視したりしない。
+- 可視手牌に直前の自摸牌と同じ表記の牌が1枚しかない場合、その牌の打牌は`tsumogiri:true`を必須とした。通常五と赤五を区別し、同一表記の牌が複数ある合法な手出しは維持する。
+- snapshotの`selection.source`と終端ACKのstatusの対応、単独decisionの`superseded`禁止、取消しACKの候補ID、明示選択の終端後に新しい`stale`を生成しない規則を受信検査へ反映した。
+- 期限前のdefaultは`invalid_action_policy == default`に限り、`reject`/`chombo`の自動選択は期限時刻の計時値を必須とする。`default` policyの`rejected` ACKと、期限到達後の`rejected` ACKを拒否する。不正actionの即時defaultは選択の固定を指し、反応groupの終端ACKは全memberの選択確定後とする。
+- event/rulesの節参照、`pao`の遷移表、単独decision後のresolving、frameとJSONのエラー優先表を補正した。MJAI実装比較表は、RiichiLabのIDなしresponse互換と矛盾する記述を訂正した。
+- V305〜V319の正負ベクトルと境界条件の回帰検査を追加し、manifestの件数制約を319へ更新した。profile hashは `sha256:7314cafde606d58ff635f141c061889cb51117ff9713c03abde2a7512d51d86b`。
+
+既存の規範要件と派生成果物の整合を修正する未公開追補であり、Protocol Version `1.0-draft.9`とprofile revision `1.0-draft.7`は維持する。成果物一式を新hashへ更新し、旧hashと混在させない。
+
 ## draft.9への未公開の追補 — 2026-09-21（仕様全体レビュー）
 
 - 加槓後のsnapshotで、元のponの位置・target・鳴き牌paiを保持し、手牌から消費した2枚と追加牌をconsumedへ記録することを明確化した。kakan eventの追加牌でpaiを上書きしていた参照実装を修正し、通常五への赤五追加・赤五を鳴いた後の通常五追加の双方を検査する。

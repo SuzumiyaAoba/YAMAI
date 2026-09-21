@@ -106,6 +106,91 @@ class ProtocolRegressionTests(unittest.TestCase):
             receiver.receive(self.raw(snapshot))
         self.assertEqual(receiver.applied, 1)
 
+    def test_snapshot_conserves_scores_and_deposits_before_replacement(self):
+        trace = VECTORS["V104_wire_complete_game"]["positive"]["trace"]
+        for key in ("V18_snapshot_state", "V57_snapshot_between_kyoku_deposits", "V58_snapshot_ended_rankings"):
+            for stick in (0, 1000, 2000):
+                with self.subTest(snapshot=key, stick=stick):
+                    snapshot = copy.deepcopy(VECTORS[key]["positive"])
+                    welcome = copy.deepcopy(trace["welcome"])
+                    rules = welcome["rules"]
+                    rules["riichi_stick_value"] = stick
+                    state = snapshot["state"]
+                    state["scores"][0] += (1000 - stick) * state["kyotaku"]
+                    if state["game_phase"] == "ended":
+                        order = sorted(range(4), key=lambda s: (-state["scores"][s], s))
+                        state["final_rankings"] = [order.index(s) + 1 for s in range(4)]
+                    validator._check_snapshot(snapshot, rules=rules)
+                    game = EventState(rules)
+                    game.restore(state)
+                    before = copy.deepcopy(vars(game))
+                    welcome.update(resumed=True, replay_from_seq=1,
+                                   replay_through_seq=snapshot["replaces_through_seq"], scores=state["scores"])
+                    for delta in (-100, 100):
+                        bad = copy.deepcopy(snapshot)
+                        bad["state"]["scores"][0] += delta
+                        if state["game_phase"] == "ended":
+                            order = sorted(range(4), key=lambda s: (-bad["state"]["scores"][s], s))
+                            bad["state"]["final_rankings"] = [order.index(s) + 1 for s in range(4)]
+                        with self.assertRaisesRegex(validator.ArtifactError, "conserve"):
+                            validator._check_snapshot(bad, rules=rules)
+                        with self.assertRaisesRegex(GameError, "conserve"):
+                            game.restore(bad["state"])
+                        self.assertEqual(vars(game), before)
+                        receiver = self.receiver(welcome)
+                        with self.assertRaises(SessionError) as error:
+                            receiver.receive(self.raw(bad))
+                        self.assertEqual(error.exception.code, "invalid_message")
+                        self.assertEqual((receiver.applied, receiver.game.game_phase), (0, "not_started"))
+
+    def test_host_direction_precedes_duplicate_or_snapshot_floor(self):
+        trace = VECTORS["V104_wire_complete_game"]["positive"]["trace"]
+        for covered in (False, True):
+            for kind in ("action", "join", "future_kind", None, []):
+                with self.subTest(covered=covered, kind=kind):
+                    welcome = copy.deepcopy(trace["welcome"])
+                    if covered:
+                        welcome.update(resumed=True, replay_from_seq=1, replay_through_seq=4)
+                    receiver = self.receiver(welcome)
+                    initial = VECTORS["V18_snapshot_state"]["positive"] if covered else trace["steps"][0]["message"]
+                    receiver.receive(self.raw(initial))
+                    bad = copy.deepcopy(trace["steps"][0]["message"])
+                    bad["kind"] = kind
+                    with self.assertRaises(SessionError) as error:
+                        receiver.receive(self.raw(bad))
+                    self.assertEqual(error.exception.code, "invalid_message")
+                    self.assertEqual(receiver.applied, initial["seq"])
+
+    def test_visible_hand_discard_excludes_the_drawn_physical_tile(self):
+        trace = VECTORS["V104_wire_complete_game"]["positive"]["trace"]
+        for drawn in ("9s", "5m", "5mr"):
+            for duplicate in (False, True):
+                for tsumogiri in (False, True):
+                    with self.subTest(drawn=drawn, duplicate=duplicate, tsumogiri=tsumogiri):
+                        events = [copy.deepcopy(s["message"]["event"]) for s in trace["steps"][:3]]
+                        # Include an ordinary five when drawing a red five:
+                        # it is not the same physical tile for tsumogiri.
+                        events[0]["rules"]["red_fives"]["m"] = 2
+                        hand = ["1m", "2m", "3m", "4m", "6m", "7m", "8m", "9m", "1p", "2p", "3p", "E", "5m"]
+                        if drawn == "5m":
+                            hand[-1] = "5mr"
+                        if duplicate:
+                            hand[-2] = drawn
+                        events[1]["hands"][0] = {"tiles": hand}
+                        events[2]["pai"] = drawn
+                        state = EventState(events[0]["rules"])
+                        for event in events:
+                            state.apply(event)
+                        discard = {"type": "dahai", "actor": 0, "pai": drawn, "tsumogiri": tsumogiri}
+                        if tsumogiri or duplicate:
+                            state.apply(discard)
+                            self.assertEqual(len(state.round["hands"][0]["tiles"]), 13)
+                        else:
+                            before = copy.deepcopy(vars(state))
+                            with self.assertRaisesRegex(GameError, "drawn tile"):
+                                state.apply(discard)
+                            self.assertEqual(vars(state), before)
+
     def test_agariyame_changes_only_final_dealer_win(self):
         rules = copy.deepcopy(SCORING["rules"])
         current = dict(bakaze="S", kyoku=4, oya=3, honba=0, extension_round=0)
