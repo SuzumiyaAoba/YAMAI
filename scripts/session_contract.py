@@ -98,6 +98,9 @@ def negotiate(hello: dict, join: dict, welcome: dict, context: dict,
             require(welcome["scores"] == previous["scores"], "invalid_message", "resumed welcome scores differ from captured state")
     else:
         require(welcome["session_id"] not in context.get("used_session_ids", []), "invalid_message", "new session id was reused")
+        if join["mode"] in {"play", "replay"}:
+            require(welcome["scores"] == [welcome["rules"]["starting_points"]] * 4,
+                    "invalid_message", "new play/replay scores differ from the initial game state")
         if join["mode"] == "play":
             available = context.get("available_seats")
             if available is not None:
@@ -108,7 +111,6 @@ def negotiate(hello: dict, join: dict, welcome: dict, context: dict,
             elif "seat" in join:
                 require(welcome["seat"] == join["seat"], "invalid_message", "welcome changed the requested seat")
             require(welcome["game_id"] not in context.get("finished_game_ids", []), "invalid_message", "new game id was reused")
-            require(welcome["scores"] == [welcome["rules"]["starting_points"]] * 4, "invalid_message", "new game scores differ from rules")
     if check_client_support:
         for path, accepted in context.get("supported_rules", {}).items():
             value: Any = welcome["rules"]
@@ -175,6 +177,7 @@ class Receiver:
         self.requests: dict[str, dict] = {}
         self.terminal_acks: dict[str, dict] = {}
         self.expected_effects: list[dict] = []
+        self.unadopted_reaction: dict | None = None
         self.time_bank_ms = welcome["rules"]["time_control"]["bank_ms"]
         self.original_seq = 0
         self.applications: list[int] = []
@@ -209,10 +212,19 @@ class Receiver:
             raise
 
     def _expect_effects(self, request: dict, ack: dict) -> None:
-        """Bind an adopted core candidate to its subsequent public events."""
+        """Bind terminal decisions to their subsequent public effects."""
+        if ack["status"] == "stale":
+            require(self.welcome["rules"]["invalid_action_policy"] == "chombo",
+                    "invalid_message", "request cancellation is not enabled")
+            self.expected_effects = [{"type": "end_kyoku", "result_type": "penalty"}]
+            return
+        chosen = next(c["action"] for c in request["legal_actions"] if c["action_id"] == ack["action_id"])
+        if "decision_group_id" in request and (ack["status"] in {"passed", "superseded"}
+                                               or ack["status"] == "defaulted" and chosen["type"] == "none"):
+            self.unadopted_reaction = {"status": ack["status"], "type": chosen["type"]}
         if ack["status"] not in {"accepted", "defaulted"}:
             return
-        action = deepcopy(next(c["action"] for c in request["legal_actions"] if c["action_id"] == ack["action_id"]))
+        action = deepcopy(chosen)
         kind = action["type"]
         if kind == "none" or kind.startswith("x-"):
             return  # Private effects are checked by the negotiated owner.
@@ -239,6 +251,41 @@ class Receiver:
         self.expected_effects = effects
 
     def _check_effect(self, event: dict) -> None:
+        if self.unadopted_reaction is not None:
+            reaction = self.unadopted_reaction
+            resolution = event["type"] in {"chi", "pon", "daiminkan", "ankan", "kakan", "tsumo", "end_kyoku"}
+            priority = {"chi": 1, "pon": 2, "daiminkan": 2, "hora": 3}
+            if resolution and reaction["status"] == "superseded" and reaction["type"] in priority:
+                result = event.get("result", {})
+                if event["type"] in {"chi", "pon", "daiminkan"}:
+                    target = event["target"]
+                    require((priority[event["type"]], -((event["actor"] - target) % 4))
+                            > (priority[reaction["type"]], -((self.welcome["seat"] - target) % 4)),
+                            "invalid_message", "superseding call has lower priority")
+                else:
+                    require(result.get("type") == "hora" or result.get("reason") == "sanchaho",
+                            "invalid_message", "superseded choice has no higher-priority result")
+                    if reaction["type"] == "hora" and result.get("type") == "hora":
+                        target = self.game.last_cause["actor"]
+                        require(self.welcome["rules"]["ron_policy"] == "head_bump"
+                                and all((win["actor"] - target) % 4 < (self.welcome["seat"] - target) % 4
+                                        for win in result["wins"]),
+                                "invalid_message", "superseded hora did not lose to head bump")
+            if event["type"] in {"chi", "pon", "daiminkan"}:
+                require(event["actor"] != self.welcome["seat"], "invalid_message",
+                        "unadopted reaction generated its own call")
+            elif event["type"] == "end_kyoku":
+                result = event["result"]
+                require(result["type"] != "penalty", "invalid_message",
+                        "penalty requires a cancellation ACK")
+                if result["type"] == "hora":
+                    require(all(win["actor"] != self.welcome["seat"] for win in result["wins"]),
+                            "invalid_message", "unadopted reaction generated its own win")
+                elif result["type"] == "ryukyoku" and result["reason"] == "sanchaho":
+                    require(self.unadopted_reaction == {"status":"superseded", "type":"hora"},
+                            "invalid_message", "three-ron draw requires this seat's explicit hora")
+            if resolution:
+                self.unadopted_reaction = None
         if not self.expected_effects:
             return
         # A pao assignment belongs between the adopted pon and its discard.
@@ -253,6 +300,9 @@ class Receiver:
         elif "reason" in expected:
             require(event["result"]["type"] == "ryukyoku" and event["result"]["reason"] == expected["reason"],
                     "invalid_message", "settlement differs from acknowledged draw")
+        elif "result_type" in expected:
+            require(event["result"]["type"] == expected["result_type"],
+                    "invalid_message", "cancelled decision did not end with a penalty")
         elif expected["type"] in {"dora", "reach_accepted"}:
             require(all(event.get(k) == value for k, value in expected.items()), "invalid_message", "derived event differs from acknowledged action")
         else:
@@ -280,7 +330,8 @@ class Receiver:
         if kind == "snapshot":
             require("snapshot" in self.welcome["capabilities"], "invalid_message", "snapshot capability is not enabled")
             contiguous = seq == self.applied + 1
-            require(not contiguous or not self.expected_effects, "invalid_message", "snapshot interrupts acknowledged action effects")
+            require(not contiguous or not (self.expected_effects or self.unadopted_reaction),
+                    "invalid_message", "snapshot interrupts acknowledged action effects")
             # A retained snapshot is an ordinary ledger entry. Its old prefix
             # need not cover the current recovery frontier, and applying it
             # must not end replay early. Only a jump needs recovery authority.
@@ -517,6 +568,7 @@ class Receiver:
             self.awaiting_request = False
             self.request_ids |= self.active_requests
             self.expected_effects = []  # A jump can cover the entire result transaction.
+            self.unadopted_reaction = None
             if self.recovery == "initial":
                 self.recovery = None
         else:
@@ -525,7 +577,7 @@ class Receiver:
                 self.recovery = "gap"
                 return "sequence_gap"
             mode = self.welcome["mode"]
-            require(not self.expected_effects or kind == "event" or (kind == "error" and message["severity"] == "fatal"),
+            require(not (self.expected_effects or self.unadopted_reaction) or kind == "event" or (kind == "error" and message["severity"] == "fatal"),
                     "invalid_message", "message interrupts acknowledged action effects")
             require(mode == "play" or kind not in {"request", "ack"}, "invalid_message", "observer received a request or ACK")
             if kind == "event":

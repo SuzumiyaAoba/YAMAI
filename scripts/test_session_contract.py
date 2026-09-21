@@ -33,6 +33,136 @@ class SessionInvariants(unittest.TestCase):
         with self.assertRaises(SessionError):
             plain('host-application', trace['message'])
 
+    def test_new_replay_welcome_requires_initial_scores(self):
+        trace = self.trace('replay_recording_target')
+        validate = v._session_schema_validator(self.schemas, self.digest)
+        def check():
+            return negotiate(trace['hello'], trace['join'], trace['welcome'], trace['context'],
+                             validate, v.PROTOCOL, v.PROFILE_REVISION, self.digest)
+        self.assertEqual(check(), trace['expected'])
+        trace['welcome']['scores'] = [26000, 24000, 25000, 25000]
+        with self.assertRaises(SessionError) as error:
+            check()
+        self.assertEqual(error.exception.code, 'invalid_message')
+
+    def test_unadopted_reaction_cannot_generate_own_call(self):
+        for status, aid in (('passed', 'n'), ('superseded', 'p1'), ('defaulted', 'n')):
+            with self.subTest(status=status):
+                trace = self.trace('wire_call_compound_flow')
+                request = trace['steps'][4]['message']
+                ack = trace['steps'][5]['message']
+                ack.update(status=status, action_id=aid)
+                if status == 'defaulted':
+                    ack.update(elapsed_ms=trace['welcome']['rules']['time_control']['grace_ms']
+                               + request['timeout_ms'] + request['time_bank_ms'], time_bank_ms=0)
+                receiver = self.receiver(trace['welcome'])
+                for step in trace['steps'][:6]:
+                    receiver.receive(self.raw(step['message']))
+                before = deepcopy((vars(receiver.game), receiver.known, receiver.time_bank_ms))
+                with self.assertRaises(SessionError) as error:
+                    receiver.receive(self.raw(trace['steps'][6]['message']))
+                self.assertEqual(error.exception.code, 'invalid_message')
+                self.assertEqual(receiver.applied, 6)
+                self.assertEqual((vars(receiver.game), receiver.known, receiver.time_bank_ms), before)
+
+    def test_pass_allows_the_next_players_draw(self):
+        trace = self.trace('wire_call_compound_flow')
+        trace['steps'][5]['message'].update(status='passed', action_id='n')
+        receiver = self.receiver(trace['welcome'])
+        for step in trace['steps'][:6]:
+            receiver.receive(self.raw(step['message']))
+        draw = deepcopy(trace['steps'][6]['message'])
+        draw['event'] = {'type':'tsumo', 'actor':1, 'pai':'9s'}
+        self.assertEqual(receiver.receive(self.raw(draw)), 'applied')
+        self.assertTrue(receiver.awaiting_request)
+
+    def test_superseded_core_choice_requires_a_higher_priority_result(self):
+        for suffix, aid in (('wire_call_compound_flow', 'p1'), ('pass_cannot_generate_own_hora', 'h')):
+            for outcome in ('draw', 'farther_pon'):
+                with self.subTest(choice=aid, outcome=outcome):
+                    trace = self.trace(suffix)
+                    trace['steps'][5]['message'].update(status='superseded', action_id=aid)
+                    receiver = self.receiver(trace['welcome'])
+                    for step in trace['steps'][:6]:
+                        receiver.receive(self.raw(step['message']))
+                    message = trace['steps'][6]['message']
+                    message['event'] = ({'type':'tsumo', 'actor':1, 'pai':'9s'} if outcome == 'draw'
+                                        else {'type':'pon', 'actor':2, 'target':0, 'pai':'3m', 'consumed':['3m','3m']})
+                    with self.assertRaises(SessionError) as error:
+                        receiver.receive(self.raw(message))
+                    self.assertEqual(error.exception.code, 'invalid_message')
+
+    def test_unadopted_reaction_cannot_become_a_win_or_three_ron_draw(self):
+        for suffix in ('pass_cannot_generate_own_hora', 'sanchaho_requires_own_hora_selection'):
+            with self.subTest(case=suffix):
+                case = next(c for key, c in self.vectors.items() if key.endswith('_' + suffix))
+                for valid in (True, False):
+                    trace = deepcopy(case['positive' if valid else 'negative']['trace'])
+                    receiver = self.receiver(trace['welcome'])
+                    for step in trace['steps'][:-1]:
+                        receiver.receive(self.raw(step['message']))
+                    if valid:
+                        self.assertEqual(receiver.receive(self.raw(trace['steps'][-1]['message'])), 'applied')
+                    else:
+                        before = deepcopy((vars(receiver.game), receiver.known, receiver.unadopted_reaction))
+                        with self.assertRaises(SessionError) as error:
+                            receiver.receive(self.raw(trace['steps'][-1]['message']))
+                        self.assertEqual(error.exception.code, 'invalid_message')
+                        self.assertEqual((vars(receiver.game), receiver.known, receiver.unadopted_reaction), before)
+
+    def test_cancellation_cannot_apply_the_cancelled_discard(self):
+        trace = self.trace('cancellation_candidate_id')
+        receiver = self.receiver(trace['welcome'])
+        for step in trace['steps']:
+            receiver.receive(self.raw(step['message']))
+        discard = deepcopy(self.trace('wire_complete_game')['steps'][5]['message'])
+        discard['seq'] = receiver.applied + 1
+        before = deepcopy((vars(receiver.game), receiver.known, receiver.time_bank_ms))
+        with self.assertRaises(SessionError) as error:
+            receiver.receive(self.raw(discard))
+        self.assertEqual(error.exception.code, 'invalid_message')
+        self.assertEqual((vars(receiver.game), receiver.known, receiver.time_bank_ms), before)
+
+    def test_cancellation_requires_chombo_policy(self):
+        for policy in ('reject', 'default'):
+            with self.subTest(policy=policy):
+                trace = self.trace('wire_complete_game')
+                trace['welcome']['rules']['invalid_action_policy'] = policy
+                trace['steps'][0]['message']['event']['rules']['invalid_action_policy'] = policy
+                receiver = self.receiver(trace['welcome'])
+                for step in trace['steps'][:4]:
+                    receiver.receive(self.raw(step['message']))
+                ack = trace['steps'][4]['message']
+                ack['status'] = 'stale'
+                with self.assertRaises(SessionError) as error:
+                    receiver.receive(self.raw(ack))
+                self.assertEqual(error.exception.code, 'invalid_message')
+
+    def test_penalty_requires_cancellation_instead_of_pass(self):
+        for status in ('passed', 'defaulted'):
+            with self.subTest(status=status):
+                trace = self.trace('passed_cannot_generate_own_call')
+                trace['welcome']['rules']['invalid_action_policy'] = 'chombo'
+                trace['steps'][0]['message']['event']['rules']['invalid_action_policy'] = 'chombo'
+                ack = trace['steps'][5]['message']
+                ack['status'] = status
+                if status == 'defaulted':
+                    ack.update(elapsed_ms=21000, time_bank_ms=0)
+                receiver = self.receiver(trace['welcome'])
+                for step in trace['steps'][:-1]:
+                    receiver.receive(self.raw(step['message']))
+                event = deepcopy(self.trace('cancellation_requires_penalty_result')['steps'][-1]['message']['event'])
+                event['result']['offender'] = 2
+                event['result']['penalty']['payments'] = [
+                    {'from':2, 'to':0, 'points':2800}, {'from':2, 'to':1, 'points':2600},
+                    {'from':2, 'to':3, 'points':2600}]
+                event.update(deltas=[2800,2600,-8000,2600], scores=[27800,27600,17000,27600])
+                message = trace['steps'][-1]['message']
+                message['event'] = event
+                with self.assertRaises(SessionError) as error:
+                    receiver.receive(self.raw(message))
+                self.assertEqual(error.exception.code, 'invalid_message')
+
     def test_failed_event_does_not_advance_recording_cursor(self):
         trace = self.trace('snapshot_restores_recording_cursor')
         receiver = self.receiver(trace['welcome'])
@@ -465,6 +595,14 @@ class SessionInvariants(unittest.TestCase):
                 trace['steps'][0]['message']['event']['rules']['invalid_action_policy'] = 'default'
                 trace['steps'][4]['message']['state']['pending_requests'][0]['selection']['source'] = source
                 trace['steps'][5]['message']['status'] = status
+                if status == 'stale':
+                    trace['welcome']['rules']['invalid_action_policy'] = 'chombo'
+                    trace['steps'][0]['message']['event']['rules']['invalid_action_policy'] = 'chombo'
+                    if source == 'default':
+                        state = trace['steps'][4]['message']['state']
+                        state['time_bank_ms'] = state['kyoku']['self_state']['time_bank_ms'] = 0
+                        state['pending_requests'][0]['selection'].update(elapsed_ms=21000, time_bank_ms=0)
+                        trace['steps'][5]['message'].update(elapsed_ms=21000, time_bank_ms=0)
                 receiver = self.receiver(trace['welcome'])
                 for step in trace['steps'][:5]:
                     receiver.receive(self.raw(step['message']))

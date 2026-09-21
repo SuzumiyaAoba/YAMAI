@@ -2160,7 +2160,9 @@ def semantic_ledger_trace(trace: Mapping[str, Any], expected_hash: str) -> None:
                         pending_transaction = None
                 seen.add(seq)
         _require(receiver is not None and set(ledger) == seen, "invalid_message", "capture omits ledger messages")
-        _require(trace.get("allow_open_requests", False) or (not receiver.active_requests and not receiver.awaiting_request and not receiver.expected_effects), "invalid_message", "capture ends with an unresolved decision or missing action effects")
+        _require(trace.get("allow_open_requests", False) or (not receiver.active_requests and not receiver.awaiting_request
+                 and not receiver.expected_effects and not receiver.unadopted_reaction),
+                 "invalid_message", "capture ends with an unresolved decision or missing action effects")
         for lifecycle in trace.get("request_lifecycles", []):
             semantic_lifecycle_trace(lifecycle)
             _require(lifecycle["grace_ms"] == receiver.welcome["rules"]["time_control"]["grace_ms"] and all(lifecycle[k] == receiver.welcome["rules"][k] for k in ("ron_policy", "invalid_action_policy")), "invalid_message", "lifecycle rules differ from negotiation")

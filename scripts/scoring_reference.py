@@ -280,6 +280,8 @@ def _context(data: dict[str, Any], state: dict[str, Any], fixed: tuple[Meld, ...
     pending = state["pending_kan"]
     if pending:
         require(data["win_method"] == "ron" and pending["actor"] == target and pending["pai"] == data["winning_tile"], "invalid_context", "chankan target/tile differs")
+        require(state["wall_remaining"] > 0 and sum(state["kan_counts"]) < 4,
+                "invalid_context", "robbed declaration has no live-wall or kan capacity")
         require(tile_index(data["winning_tile"]) not in {tile_index(t) for t in physical}, "invalid_hand", "opponent's kan and own tile exceed four copies")
     if state["events"]:
         source = state["events"][-1]
@@ -287,6 +289,11 @@ def _context(data: dict[str, Any], state: dict[str, Any], fixed: tuple[Meld, ...
         require(source["type"] == expected_kind and source["actor"] == target and source.get("pai") == data["winning_tile"],
                 "invalid_context", "winning tile differs from the final projected source event")
     dora, ura = data["dora_markers"], data["ura_dora_markers"]
+    if pending:
+        # All four copies belong to the declarer's hand/pon. The virtual
+        # winning tile is one of those copies, not a fifth physical tile.
+        require(all(tile_index(t) != tile_index(data["winning_tile"]) for t in [*dora, *ura]),
+                "invalid_hand", "opponent's kan and indicator exceed four copies")
     kan_counts = state["kan_counts"]
     require(kan_counts[actor] == sum(m.kind == "quad" for m in fixed) and sum(kan_counts) <= 4,
             "invalid_context", "kan counts differ from committed melds")
@@ -507,7 +514,7 @@ def calculate_fixture(fixture: dict[str, Any], base_rules: dict[str, Any]) -> di
         scored = [(d,s,score_hand(d,s,rules)) for d,s in entries]
         if len(scored)>1:
             require(all(d["win_method"]=="ron" and d["target"]==data["target"] and d["winning_tile"]==data["winning_tile"] for d,s,c in scored),"invalid_context","winners do not share one discard")
-            shared=("oya","bakaze","kyoku","honba","kyotaku","wall_remaining","kan_counts","scores")
+            shared=("oya","bakaze","kyoku","honba","kyotaku","wall_remaining","kan_counts","scores","pending_kan","last_tile")
             require(all(all(s[key]==state[key] for key in shared) and d["dora_markers"]==data["dora_markers"] for d,s,c in scored),"invalid_context","winner contexts differ")
             require(state["kyotaku"] >= sum(s["reach_accepted"] for d,s,c in scored), "invalid_context", "multiple riichi deposits are missing")
             exposed_ura = [d["ura_dora_markers"] for d,s,c in scored if s["reach_accepted"]]

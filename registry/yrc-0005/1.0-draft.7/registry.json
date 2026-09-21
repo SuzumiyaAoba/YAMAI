@@ -7,7 +7,7 @@
   "rules_schema": "urn:yamai:schema:yrc-0005:1.0-draft.7:riichi-4p-rules",
   "scoring_vectors_schema": "urn:yamai:schema:yrc-0005:1.0-draft.7:scoring-vectors",
   "scoring_vectors": "test-vectors/yrc-0005/1.0-draft.7/scoring.json",
-  "scoring_fixture_count": 76,
+  "scoring_fixture_count": 78,
   "schema_files": [
     "schemas/yrc-0005/1.0-draft.7/riichi-4p-rules.schema.json",
     "schemas/yrc-0005/1.0-draft.7/scoring-result.schema.json",
@@ -376,5 +376,5 @@
       "bonus_red_ura_dora"
     ]
   },
-  "scoring_negative_fixture_count": 29
+  "scoring_negative_fixture_count": 36
 }

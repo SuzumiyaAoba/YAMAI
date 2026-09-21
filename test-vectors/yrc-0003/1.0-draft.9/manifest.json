@@ -3,7 +3,7 @@
   "protocol_version": "1.0-draft.9",
   "profile": "riichi-4p",
   "profile_revision": "1.0-draft.7",
-  "profile_hash": "sha256:4725579ef92f6aaff87413a57b092632a826f90e2895002f3566ffb16ed123c8",
+  "profile_hash": "sha256:a96f0f0868200838494573ac479f182c0a7a94c91e10ee1263d2108091dad934",
   "registry": [
     "registry/yrc-0003/1.0-draft.9/registry.json",
     "registry/yrc-0005/1.0-draft.7/registry.json"
@@ -1994,6 +1994,78 @@
     {
       "id": "V329_hora_revealed_tile_inventory",
       "area": "hora-revealed-tile-inventory",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V330_replay_welcome_initial_scores",
+      "area": "replay-welcome-starting-points",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V331_passed_cannot_generate_own_call",
+      "area": "ack-unadopted-reaction",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V332_superseded_cannot_generate_own_call",
+      "area": "ack-unadopted-reaction",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V333_defaulted_cannot_generate_own_call",
+      "area": "ack-unadopted-reaction",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V334_pass_cannot_generate_own_hora",
+      "area": "ack-pass-winning-seat",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V335_sanchaho_requires_own_hora_selection",
+      "area": "ack-three-explicit-ron-choices",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V336_sanchaho_requires_robbable_ankan",
+      "area": "sanchaho-legal-ron-window",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V337_sanchaho_precedes_reach_acceptance",
+      "area": "sanchaho-no-accepted-reach-deposit",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V338_cancellation_requires_penalty_result",
+      "area": "ack-cancellation-penalty-effects",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V339_cancellation_requires_chombo_policy",
+      "area": "ack-cancellation-policy",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V340_superseded_call_requires_priority_winner",
+      "area": "ack-superseded-result-priority",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V341_superseded_hora_requires_priority_winner",
+      "area": "ack-superseded-hora-result",
       "expect_positive": "valid",
       "expect_negative": "invalid_message"
     }

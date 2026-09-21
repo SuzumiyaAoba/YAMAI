@@ -105,6 +105,63 @@ class ScoringInvariants(unittest.TestCase):
             calculate_fixture(f, self.rules)
         self.assertEqual(error.exception.code, 'invalid_context')
 
+    def test_chankan_inventory_includes_the_opponents_entire_quad(self):
+        for name in ('yaku_chankan', 'yakuman_kokushi_ankan_robbery'):
+            with self.subTest(fixture=name):
+                original = self.fixtures[name]
+                self.assertEqual(calculate_fixture(original, self.rules), original['expected'])
+                f = deepcopy(original)
+                f['input']['dora_markers'][0] = f['state']['pending_kan']['pai']
+                with self.assertRaises(ScoringError) as error:
+                    calculate_fixture(f, self.rules)
+                self.assertEqual(error.exception.code, 'invalid_hand')
+
+        f = deepcopy(self.fixtures['yakuman_kokushi_ankan_robbery'])
+        for state in (f['state'], f['state']['pre_state']):
+            state.update(reach_accepted=True, kyotaku=1, scores=[25000, 24000, 25000, 25000])
+        f['input']['ura_dora_markers'] = ['2p']
+        self.assertEqual(calculate_fixture(f, self.rules)['result_type'], 'hora')
+        f['input']['ura_dora_markers'] = ['E']
+        with self.assertRaises(ScoringError) as error:
+            calculate_fixture(f, self.rules)
+        self.assertEqual(error.exception.code, 'invalid_hand')
+
+    def test_chankan_declaration_requires_live_wall_and_kan_capacity(self):
+        for wall, counts in ((0, [0, 0, 0, 0]), (40, [4, 0, 0, 0])):
+            with self.subTest(wall=wall, counts=counts):
+                f = deepcopy(self.fixtures['yaku_chankan'])
+                for state in (f['state'], f['state']['pre_state']):
+                    state.update(wall_remaining=wall, kan_counts=counts)
+                f['input']['dora_markers'] = ['3m', '6m', '7m', '8m', '9p'][:1 + sum(counts)]
+                with self.assertRaises(ScoringError) as error:
+                    calculate_fixture(f, self.rules)
+                self.assertEqual(error.exception.code, 'invalid_context')
+
+    def test_multiple_ron_shares_last_tile_and_pending_kan(self):
+        f = deepcopy(self.fixtures['settlement_multiple_ron'])
+        contexts = [f['state'], f['input']['other_winners'][0]['state']]
+        for state in contexts:
+            state.update(wall_remaining=0, last_tile=True)
+            state['pre_state'].update(wall_remaining=0, last_tile=True)
+        self.assertEqual(calculate_fixture(f, self.rules)['result_type'], 'hora')
+        contexts[1]['last_tile'] = contexts[1]['pre_state']['last_tile'] = False
+        with self.assertRaises(ScoringError) as error:
+            calculate_fixture(f, self.rules)
+        self.assertEqual(error.exception.code, 'invalid_context')
+
+        f = deepcopy(self.fixtures['yaku_chankan'])
+        other = deepcopy(f['input'])
+        other.pop('type')
+        other.update(actor=2, state=deepcopy(f['state']))
+        other['hand']['melds'][0]['tiles'] = ['P'] * 3
+        other['hand']['concealed_tiles'][other['hand']['concealed_tiles'].index('5m')] = '5mr'
+        f['input']['other_winners'] = [other]
+        self.assertEqual(calculate_fixture(f, self.rules)['result_type'], 'hora')
+        other['state'].update(pending_kan=None, events=[])
+        with self.assertRaises(ScoringError) as error:
+            calculate_fixture(f, self.rules)
+        self.assertEqual(error.exception.code, 'invalid_context')
+
 
 if __name__ == '__main__':
     unittest.main()

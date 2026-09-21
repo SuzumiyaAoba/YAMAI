@@ -970,7 +970,18 @@ class EventState:
                     require(result["tenpai"] is None and event["deltas"] == [0] * 4,
                             "abortive draw must preserve scores without tenpai settlement")
                     if reason == "sanchaho":
-                        require(self.rules["ron_policy"] == "double_only" and phase == "awaiting_responses", "sanchaho without a ron group")
+                        cause = self.last_cause
+                        require(self.rules["ron_policy"] == "double_only" and phase == "awaiting_responses"
+                                and cause["type"] in {"dahai", "ankan_declared", "kakan_declared"},
+                                "sanchaho without a ron group")
+                        if cause["type"] == "dahai":
+                            river = r["rivers"][cause["actor"]]
+                            require(not (river and river[-1]["reach"] and r["reach_status"][cause["actor"]]["state"] == "accepted"),
+                                    "sanchaho after the reach discard was accepted")
+                        elif cause["type"] == "ankan_declared":
+                            require(self.rules["ankan_chankan"] == "kokushi_only"
+                                    and tile_index(cause["consumed"][0]) in ORPHANS,
+                                    "sanchaho on an ankan that cannot be robbed")
                     elif reason == "kyushukyuhai":
                         require(phase == "awaiting_action" and r["first_turn_eligible"][turn_actor], "nine-orphans draw after first turn interruption")
                         if "tiles" in r["hands"][turn_actor]:

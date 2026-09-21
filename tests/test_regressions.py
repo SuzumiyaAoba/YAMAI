@@ -352,6 +352,39 @@ class ProtocolRegressionTests(unittest.TestCase):
         with self.assertRaises(GameError):
             state.apply(bad)
 
+    def test_sanchaho_requires_a_legal_ankan_ron_window(self):
+        for rule, tiles, valid in (('kokushi_only', ['E'] * 4, True),
+                                   ('never', ['E'] * 4, False),
+                                   ('kokushi_only', ['5m'] * 3 + ['5mr'], False)):
+            with self.subTest(rule=rule, tiles=tiles):
+                state = self._dealt({**SCORING['rules'], 'ankan_chankan': rule})
+                state.apply({'type': 'tsumo', 'actor': 0, 'pai': None})
+                state.apply({'type': 'ankan_declared', 'actor': 0, 'consumed': tiles})
+                end = self._end_kyoku({'type': 'ryukyoku', 'reason': 'sanchaho', 'tenpai': None},
+                    [0] * 4, [25000] * 4, {'type': 'renchan', 'bakaze': 'E', 'kyoku': 1,
+                    'oya': 0, 'honba': 1, 'kyotaku': 0, 'extension_round': 0})
+                if valid:
+                    state.apply(end)
+                    self.assertEqual(state.game_phase, 'between_kyoku')
+                else:
+                    before = copy.deepcopy(vars(state))
+                    with self.assertRaises(GameError):
+                        state.apply(end)
+                    self.assertEqual(vars(state), before)
+
+    def test_sanchaho_cannot_follow_reach_acceptance(self):
+        state = self._dealt()
+        state.apply({'type': 'tsumo', 'actor': 0, 'pai': None})
+        state.apply({'type': 'reach', 'actor': 0})
+        state.apply({'type': 'dahai', 'actor': 0, 'pai': '9s', 'tsumogiri': True})
+        state.apply({'type': 'reach_accepted', 'actor': 0, 'deltas': [-1000, 0, 0, 0],
+                     'scores': [24000, 25000, 25000, 25000], 'kyotaku': 1})
+        end = self._end_kyoku({'type': 'ryukyoku', 'reason': 'sanchaho', 'tenpai': None},
+            [0] * 4, state.scores, {'type': 'renchan', 'bakaze': 'E', 'kyoku': 1,
+            'oya': 0, 'honba': 1, 'kyotaku': 1, 'extension_round': 0})
+        with self.assertRaises(GameError):
+            state.apply(end)
+
     def test_ura_markers_follow_reach_acceptance(self):
         state = self._dealt()
         self._open_reaction(state)
