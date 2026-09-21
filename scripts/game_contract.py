@@ -33,6 +33,50 @@ def rankings(scores: list[int]) -> list[int]:
     return [order.index(seat) + 1 for seat in range(4)]
 
 
+def round_coordinates_reachable(coords: dict, rules: dict) -> bool:
+    """Necessary coordinate bounds without reconstructing unseen round results."""
+    extra = coords["extension_round"]
+    scheduled_winds = 1 if rules["game_length"] == "tonpu" else 2
+    if (coords["bakaze"] not in {"E", "S", "W", "N"}
+            or not 1 <= coords["kyoku"] <= 4 or coords["oya"] != coords["kyoku"] - 1
+            or not 0 <= extra <= rules["extension"]["max_extra_rounds"]):
+        return False
+    coordinate = "ESWN".index(coords["bakaze"]) * 4 + coords["kyoku"] - 1
+    if extra == 0:
+        return coordinate < scheduled_winds * 4
+    # Each extra deal advances by either zero (renchan/penalty) or one
+    # coordinate; winds wrap after 16 rotations, without resetting extra.
+    return (rules["extension"]["mode"] == "sudden_death"
+            and (coordinate - scheduled_winds * 4) % 16 <= extra - 1)
+
+
+def check_snapshot_rinshan(kyoku: dict, rules: dict | None = None) -> None:
+    """Check facts visible in a snapshot, preserving original pon ordering."""
+    turn = kyoku["turn"]
+    melds = kyoku["melds"][turn["actor"]]
+    # Kakan updates its original pon in place. Any kakan, or a newly
+    # appended ankan/daiminkan, may therefore be the most recent kan.
+    possible_kans = {m["type"] for i, m in enumerate(melds)
+                     if m["type"] == "kakan" or i == len(melds) - 1 and m["type"] in {"ankan", "daiminkan"}}
+    rinshan_decision = turn["last_event"]["type"] == "tsumo" and turn["phase"] in {"awaiting_action", "resolving"}
+    pending = kyoku["pending_dora"]
+    require(pending is None or (pending["timing"] == "after_rinshan_discard" and rinshan_decision),
+            "deferred dora marker survives outside the rinshan decision")
+    require(pending is None or (kyoku["rinshan"] and pending["kan_type"] in possible_kans),
+            "deferred dora marker lacks its committed kan")
+    require(not kyoku["haitei"] or kyoku["wall_remaining"] == 0,
+            "last-tile flag without an exhausted live wall")
+    require(not (kyoku["rinshan"] and kyoku["haitei"]), "rinshan and last-live-tile flags are mutually exclusive")
+    require(not kyoku["rinshan"] or (possible_kans and (rinshan_decision or kyoku["pending_kan"] is not None)),
+            "rinshan draw pending without a committed kan or its decision window")
+    if rules is not None and kyoku["rinshan"] and rinshan_decision:
+        if pending is not None:
+            valid_timing = rules["kan_dora_timing"][pending["kan_type"]] == "after_rinshan_discard"
+        else:
+            valid_timing = any(rules["kan_dora_timing"][kind] == "before_rinshan" for kind in possible_kans)
+        require(valid_timing, "deferred dora marker missing for the committed kan or timing differs")
+
+
 def next_kyoku(current: dict, result: dict, scores: list[int], kyotaku: int, rules: dict) -> dict:
     """YRC 0003 §7.2, after settlement and before any next deal."""
     extra = current["extension_round"]
@@ -340,17 +384,12 @@ class EventState:
         kyoku = snapshot["kyoku"]
         require((kyoku is not None) == (snapshot["game_phase"] == "in_kyoku"),
                 "snapshot kyoku presence differs from phase")
-        last_wind = "E" if self.rules["game_length"] == "tonpu" else "S"
-        def reachable(coords: dict) -> bool:
-            return (coords["oya"] == coords["kyoku"] - 1
-                    and coords["extension_round"] <= self.rules["extension"]["max_extra_rounds"]
-                    and ("ESWN".index(coords["bakaze"]) > "ESWN".index(last_wind)) == (coords["extension_round"] > 0))
         nxt = snapshot["next_kyoku"]
         require((nxt is not None) == (snapshot["game_phase"] == "between_kyoku")
-                and (nxt is None or (nxt["kyotaku"] == snapshot["kyotaku"] and reachable(nxt))),
+                and (nxt is None or (nxt["kyotaku"] == snapshot["kyotaku"] and round_coordinates_reachable(nxt, self.rules))),
                 "snapshot next kyotaku differs")
         if kyoku is not None:
-            require(reachable(kyoku), "snapshot round coordinates are unreachable")
+            require(round_coordinates_reachable(kyoku, self.rules), "snapshot round coordinates are unreachable")
             require(sorted(kyoku["pao"],key=lambda p:(p["actor"],p["yaku_id"])) == public_pao(kyoku["melds"],self.rules), "snapshot pao differs from public meld history")
             # A snapshot is fixed only at a transaction boundary, so its last
             # committed event is a decision cause or the round start — never
@@ -444,7 +483,7 @@ class EventState:
                         require(not needed - Counter(hand["tiles"]), "kan declaration uses absent visible tiles")
             # Self furiten flags follow public state: riichi furiten exists
             # only under an accepted declaration, and a seat's own draw
-            # clears its temporary furiten (§10.6, §13.3).
+            # clears its temporary furiten (§10.4, §13.3).
             if self_state is not None:
                 seat = snapshot.get("seat")
                 require(isinstance(seat, int) and 0 <= seat <= 3, "self state without a play seat")
@@ -489,26 +528,7 @@ class EventState:
                                 and any(m["type"] != "ankan" and m["target"] == seat and m.get("pai") == tile["pai"]
                                         for m in kyoku["melds"][caller])),
                             "called river tile has no matching meld")
-            pending_dora = kyoku["pending_dora"]
-            require(pending_dora is None
-                    or (pending_dora["timing"] == "after_rinshan_discard"
-                        and cause_type == "tsumo" and phase in {"awaiting_action", "resolving"}),
-                    "deferred dora marker survives outside the rinshan decision")
-            require(pending_dora is None
-                    or (kyoku["melds"][kyoku["turn"]["actor"]] and kyoku["melds"][kyoku["turn"]["actor"]][-1]["type"] == pending_dora["kan_type"]),
-                    "deferred dora marker lacks its committed kan")
-            require(not kyoku["haitei"] or kyoku["wall_remaining"] == 0,
-                    "last-tile flag without an exhausted live wall")
-            last_meld = kyoku["melds"][kyoku["turn"]["actor"]][-1] if kyoku["melds"][kyoku["turn"]["actor"]] else None
-            rinshan_decision = cause_type == "tsumo" and phase in {"awaiting_action", "resolving"}
-            require(not kyoku["rinshan"]
-                    or (last_meld is not None and last_meld["type"] in {"ankan", "daiminkan", "kakan"}
-                        and (rinshan_decision or kyoku["pending_kan"] is not None)),
-                    "rinshan draw pending without a committed kan or its decision window")
-            if kyoku["rinshan"] and rinshan_decision and last_meld["type"] in {"ankan", "daiminkan", "kakan"}:
-                deferred = self.rules["kan_dora_timing"][last_meld["type"]] == "after_rinshan_discard"
-                require((pending_dora is not None) == deferred,
-                        "deferred dora marker missing for the committed kan")
+            check_snapshot_rinshan(kyoku, self.rules)
             require(sum(s["state"] == "accepted" for s in kyoku["reach_status"]) <= kyoku["kyotaku"],
                     "accepted riichi deposits exceed the round's deposit count")
             for a in range(4):
@@ -610,7 +630,8 @@ class EventState:
             old = candidates[0]
             require(tile_index(event["pai"]) == tile_index(old["pai"]), "added tile differs from pon kind")
             self._hand(actor, remove=[event["pai"]])
-            old.update(deepcopy(event), target=old["target"])
+            old.update(deepcopy(event), target=old["target"], pai=old["pai"],
+                       consumed=[*old["consumed"], event["pai"]])
         else:
             indices = sorted(tile_index(t) for t in event["consumed"])
             if kind != "ankan":

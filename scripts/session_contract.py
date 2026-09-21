@@ -8,7 +8,7 @@ from __future__ import annotations
 from collections import Counter
 from copy import deepcopy
 from typing import Any, Callable
-from game_contract import EventState, GameError, canonical_action
+from game_contract import EventState, GameError, canonical_action, round_coordinates_reachable, check_snapshot_rinshan
 from scoring_reference import ScoringError, tile_index
 
 
@@ -311,10 +311,7 @@ class Receiver:
                                                 "view": self.welcome["view"], "seat": self.welcome["seat"]})
                 require(kyoku["kyotaku"] == state["kyotaku"], "invalid_message", "snapshot kyotaku differs")
                 rules = self.welcome["rules"]
-                last_wind = "E" if rules["game_length"] == "tonpu" else "S"
-                require(kyoku["oya"] == kyoku["kyoku"] - 1
-                        and kyoku["extension_round"] <= rules["extension"]["max_extra_rounds"]
-                        and ("ESWN".index(kyoku["bakaze"]) > "ESWN".index(last_wind)) == (kyoku["extension_round"] > 0),
+                require(round_coordinates_reachable(kyoku, rules),
                         "invalid_message", "snapshot round coordinates are unreachable")
                 self_state = kyoku.get("self_state")
                 if self_state is not None:
@@ -396,7 +393,7 @@ class Receiver:
                             require(not needed - Counter(hand["tiles"]), "invalid_message", "kan declaration uses absent visible tiles")
                 # Self furiten flags follow public state: riichi furiten
                 # exists only under an accepted declaration, and a seat's own
-                # draw clears its temporary furiten (§10.6, §13.3).
+                # draw clears its temporary furiten (§10.4, §13.3).
                 if self_state is not None:
                     seat = state.get("seat")
                     require(isinstance(seat, int) and 0 <= seat <= 3, "invalid_message", "self state without a play seat")
@@ -406,27 +403,10 @@ class Receiver:
                     require(not self_state["temporary_furiten"]
                             or cause["type"] != "tsumo" or cause["actor"] != seat,
                             "invalid_message", "temporary furiten survives its own draw")
-                pending_dora = kyoku["pending_dora"]
-                require(pending_dora is None
-                        or (pending_dora["timing"] == "after_rinshan_discard"
-                            and turn["last_event"]["type"] == "tsumo" and turn["phase"] in {"awaiting_action", "resolving"}),
-                        "invalid_message", "deferred dora marker survives outside the rinshan decision")
-                require(pending_dora is None
-                        or (kyoku["melds"][turn["actor"]] and kyoku["melds"][turn["actor"]][-1]["type"] == pending_dora["kan_type"]),
-                        "invalid_message", "deferred dora marker lacks its committed kan")
-                require(not kyoku["haitei"] or kyoku["wall_remaining"] == 0,
-                        "invalid_message", "last-tile flag without an exhausted live wall")
-                last_meld = kyoku["melds"][turn["actor"]][-1] if kyoku["melds"][turn["actor"]] else None
-                rinshan_decision = (turn["last_event"]["type"] == "tsumo"
-                                    and turn["phase"] in {"awaiting_action", "resolving"})
-                require(not kyoku["rinshan"]
-                        or (last_meld is not None and last_meld["type"] in {"ankan", "daiminkan", "kakan"}
-                            and (rinshan_decision or kyoku["pending_kan"] is not None)),
-                        "invalid_message", "rinshan draw pending without a committed kan or its decision window")
-                if kyoku["rinshan"] and rinshan_decision and last_meld["type"] in {"ankan", "daiminkan", "kakan"}:
-                    deferred = self.welcome["rules"]["kan_dora_timing"][last_meld["type"]] == "after_rinshan_discard"
-                    require((pending_dora is not None) == deferred,
-                            "invalid_message", "deferred dora marker missing for the committed kan")
+                try:
+                    check_snapshot_rinshan(kyoku, rules)
+                except GameError as error:
+                    raise SessionError("invalid_message", str(error)) from error
                 require(sum(s["state"] == "accepted" for s in kyoku["reach_status"]) <= kyoku["kyotaku"],
                         "invalid_message", "accepted riichi deposits exceed the round's deposit count")
                 for a in range(4):
@@ -485,12 +465,8 @@ class Receiver:
                         "invalid_message", "dora count differs from kan state")
             if state.get("next_kyoku") is not None:
                 nxt = state["next_kyoku"]
-                last_wind = "E" if self.welcome["rules"]["game_length"] == "tonpu" else "S"
                 rules = self.welcome["rules"]
-                require(nxt["kyotaku"] == state["kyotaku"]
-                        and nxt["oya"] == nxt["kyoku"] - 1
-                        and nxt["extension_round"] <= rules["extension"]["max_extra_rounds"]
-                        and ("ESWN".index(nxt["bakaze"]) > "ESWN".index(last_wind)) == (nxt["extension_round"] > 0),
+                require(nxt["kyotaku"] == state["kyotaku"] and round_coordinates_reachable(nxt, rules),
                         "invalid_message", "snapshot next kyotaku differs")
             if state.get("game_phase") == "ended":
                 order = sorted(range(4), key=lambda i: (-state["scores"][i], i))

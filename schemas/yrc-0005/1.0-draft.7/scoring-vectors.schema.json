@@ -1061,7 +1061,7 @@
           "uniqueItems": true,
           "items": {
             "type": "string",
-            "pattern": "^x_(?=[A-Za-z0-9_.-]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_.-]*$"
+            "pattern": "^x_(?=[A-Za-z0-9_.-]{3,62}(?![\\s\\S]))[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_.-]*(?![\\s\\S])"
           }
         }
       },

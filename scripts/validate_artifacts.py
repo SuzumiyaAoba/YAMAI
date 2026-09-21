@@ -25,7 +25,7 @@ from typing import Any, Dict, Iterable, List, Mapping, Sequence, Tuple
 from request_contract import evaluate as evaluate_request_contract
 from scoring_reference import ScoringError, basic_points, normal_payments, validate_score_bounds, MAX_GAME_EVENTS, MAX_HAND_POINTS, calculate_fixture as calculate_scoring_fixture, tile_index
 from session_contract import SessionError, Receiver, negotiate, check_token_trace, replay_plan, resource_trace, classify_player_input
-from game_contract import GameError, EventState, next_kyoku, legal_actions, canonical_action, furiten, furiten_step, abortive_reason, kan_sequence, public_pao
+from game_contract import GameError, EventState, next_kyoku, legal_actions, canonical_action, furiten, furiten_step, abortive_reason, kan_sequence, public_pao, round_coordinates_reachable, check_snapshot_rinshan
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -1152,7 +1152,7 @@ def _check_snapshot(message: Mapping[str, Any], extension_contexts: Mapping[str,
                     _require(not needed - Counter(hand["tiles"]), "invalid_message", "kan declaration uses absent visible tiles")
         # Self furiten flags follow public state: riichi furiten exists only
         # under an accepted declaration, and a seat's own draw clears its
-        # temporary furiten (§10.6, §13.3).
+        # temporary furiten (§10.4, §13.3).
         self_state = kyoku.get("self_state")
         if self_state is not None:
             _require(isinstance(seat, int) and 0 <= seat <= 3, "invalid_message", "self state without a play seat")
@@ -1162,30 +1162,10 @@ def _check_snapshot(message: Mapping[str, Any], extension_contexts: Mapping[str,
             _require(not self_state["temporary_furiten"]
                      or cause["type"] != "tsumo" or cause["actor"] != seat,
                      "invalid_message", "temporary furiten survives its own draw")
-        pending_dora = kyoku["pending_dora"]
-        _require(pending_dora is None
-                 or (pending_dora["timing"] == "after_rinshan_discard"
-                     and turn["last_event"]["type"] == "tsumo"
-                     and phase in {"awaiting_action", "resolving"}),
-                 "invalid_message", "deferred dora marker survives outside the rinshan decision")
-        _require(pending_dora is None
-                 or (kyoku["melds"][turn["actor"]] and kyoku["melds"][turn["actor"]][-1]["type"] == pending_dora["kan_type"]),
-                 "invalid_message", "deferred dora marker lacks its committed kan")
-        _require(not kyoku["haitei"] or kyoku["wall_remaining"] == 0,
-                 "invalid_message", "last-tile flag without an exhausted live wall")
-        last_meld = kyoku["melds"][turn["actor"]][-1] if kyoku["melds"][turn["actor"]] else None
-        # A rinshan flag survives either the open rinshan decision or a
-        # consecutive kan declaration pending inside that same turn.
-        rinshan_decision = (turn["last_event"]["type"] == "tsumo"
-                            and phase in {"awaiting_action", "resolving"})
-        _require(not kyoku["rinshan"]
-                 or (last_meld is not None and last_meld["type"] in {"ankan", "daiminkan", "kakan"}
-                     and (rinshan_decision or kyoku["pending_kan"] is not None)),
-                 "invalid_message", "rinshan draw pending without a committed kan or its decision window")
-        if rules is not None and kyoku["rinshan"] and rinshan_decision and last_meld["type"] in {"ankan", "daiminkan", "kakan"}:
-            deferred = rules["kan_dora_timing"][last_meld["type"]] == "after_rinshan_discard"
-            _require((pending_dora is not None) == deferred,
-                     "invalid_message", "deferred dora marker missing for the committed kan")
+        try:
+            check_snapshot_rinshan(kyoku, rules)
+        except GameError as error:
+            raise ArtifactError("invalid_message", str(error)) from error
         _require(sum(s["state"] == "accepted" for s in kyoku["reach_status"]) <= kyoku["kyotaku"],
                  "invalid_message", "accepted riichi deposits exceed the round's deposit count")
         for a in range(4):
@@ -1194,9 +1174,7 @@ def _check_snapshot(message: Mapping[str, Any], extension_contexts: Mapping[str,
         _require(kyoku["kyotaku"] == state["kyotaku"], "invalid_message", "snapshot kyotaku differs")
         _require(kyoku["oya"] == kyoku["kyoku"] - 1, "invalid_message", "snapshot round coordinates are unreachable")
         if rules is not None:
-            last_wind = "E" if rules["game_length"] == "tonpu" else "S"
-            _require(kyoku["extension_round"] <= rules["extension"]["max_extra_rounds"]
-                     and ("ESWN".index(kyoku["bakaze"]) > "ESWN".index(last_wind)) == (kyoku["extension_round"] > 0),
+            _require(round_coordinates_reachable(kyoku, rules),
                      "invalid_message", "snapshot round coordinates are unreachable")
         if mode == "play":
             _require(kyoku["self_state"]["time_bank_ms"] == state["time_bank_ms"], "invalid_message", "snapshot time bank differs")
@@ -1296,9 +1274,7 @@ def _check_snapshot(message: Mapping[str, Any], extension_contexts: Mapping[str,
         _require(nxt["kyotaku"] == state["kyotaku"] and nxt["oya"] == nxt["kyoku"] - 1,
                  "invalid_message", "snapshot next kyotaku differs")
         if rules is not None:
-            last_wind = "E" if rules["game_length"] == "tonpu" else "S"
-            _require(nxt["extension_round"] <= rules["extension"]["max_extra_rounds"]
-                     and ("ESWN".index(nxt["bakaze"]) > "ESWN".index(last_wind)) == (nxt["extension_round"] > 0),
+            _require(round_coordinates_reachable(nxt, rules),
                      "invalid_message", "snapshot next kyotaku differs")
     if state.get("game_phase") == "ended":
         order = sorted(range(4), key=lambda i: (-state["scores"][i], i))

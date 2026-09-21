@@ -103,4 +103,10 @@ draft.8のV276〜V281は、履歴中snapshotと再送終端、ID全体の文字�
 
 draft.9のV282〜V288は、途中流局の点差・tenpai・reason、ACKと採用eventの対応、snapshotの固定選択と計時式を検査する。回帰テストではdefaulted打牌、複合リーチ、槓ドラ・リーチ供託・責任払いの挿入、selectionの全固定member、期限ちょうどのuser/default境界、終端requestの復活、途中で切れたACK結果列、拒否時の原子的な状態保持も確認する。
 
+draft.9の未公開追補で追加したV289〜V296は、resolving中の継続、取引途中を原因とするsnapshotの拒否、pao履歴の完全一致、槓宣言を原因とするsnapshot、複合打牌フロー、延期ドラ表示と連続槓の窓を検査する。
+
+仕様全体レビューで追加したV297〜V304は、赤五を含む加槓のsnapshot表現、副露列途中の加槓後の復元・継続、延長戦の場風循環・配牌回数による座標上限、拡張名・resume token・交渉識別子の文字列全体一致を検査する。§17の7・18・21・24・30・35に対応し、V301〜V303の負例は独立したJSON Schema検査でも拒否を確認する。回帰検査では通常五と赤五の鳴き牌／追加牌の入替え、東風・東南両方の場風循環、局内／局間の復元を扱う。
+
+2026-09-21の[レビュー記録（HTML）](../docs/specification-review-2026-09-21.html)に、修正と再確認の経緯・検証範囲をまとめた。別profileで扱う[認証・認可の実装計画（HTML）](../docs/auth-implementation-plan.html)も参照できる。
+
 検査の成功だけでは YRC 0003 第17節の完全適合や、独立実装間の相互運用性を保証しない。実装の適合表明と安定版の公開条件は [仕様本文](../docs/yamai-protocol.md) と [仕様策定・リリースプロセス](../docs/specification-process.md) に従う。

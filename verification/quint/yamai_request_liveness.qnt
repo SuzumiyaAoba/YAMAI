@@ -1,4 +1,4 @@
-// Finite scheduler model for YRC 0003 draft.8 sections 8 and 9.
+// Finite scheduler model for YRC 0003 draft.9 sections 8 and 9.
 // One single decision or one complete three-seat reaction group per run.
 // Each peer has its own relative host sequence; wire delivery is a separate model.
 module yamai_request_liveness {

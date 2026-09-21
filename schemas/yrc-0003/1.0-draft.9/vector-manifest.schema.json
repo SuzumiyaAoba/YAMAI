@@ -30,7 +30,7 @@
     },
     "profile_hash": {
       "type": "string",
-      "pattern": "^sha256:[0-9a-f]{64}$"
+      "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])"
     },
     "registry": {
       "type": "array",
@@ -62,8 +62,8 @@
     },
     "cases": {
       "type": "array",
-      "minItems": 296,
-      "maxItems": 296,
+      "minItems": 304,
+      "maxItems": 304,
       "items": {
         "type": "object",
         "required": [
@@ -87,18 +87,18 @@
           },
           "negative_profile_hash": {
             "type": "string",
-            "pattern": "^sha256:[0-9a-f]{64}$"
+            "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])"
           }
         },
         "additionalProperties": false,
         "patternProperties": {
-          "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
+          "^x_(?=[A-Za-z0-9_]{3,62}(?![\\s\\S]))[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*(?![\\s\\S])": {}
         }
       }
     }
   },
   "additionalProperties": false,
   "patternProperties": {
-    "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
+    "^x_(?=[A-Za-z0-9_]{3,62}(?![\\s\\S]))[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*(?![\\s\\S])": {}
   }
 }

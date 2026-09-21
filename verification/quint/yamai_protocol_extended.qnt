@@ -11,7 +11,7 @@ module yamai_protocol_extended {
   type SessionState = Idle | Negotiating | Active | Ended
   type TransportState = Connected | Disconnected
   type NegotiationState = NoNegotiation | HelloSent | JoinSent | NegotiationAccepted | Rejected
-  type Version = NoVersion | Draft6 | UnsupportedVersion
+  type Version = NoVersion | Draft9 | UnsupportedVersion
   type Profile = NoProfile | Riichi4p | UnsupportedProfile
   type ProfileHash = NoProfileHash | GoodProfileHash | BadProfileHash
   type Capability = ResumeCap | SnapshotCap | UnknownCap
@@ -161,8 +161,8 @@ module yamai_protocol_extended {
     state.session.in(Set(Idle, Negotiating, Active, Ended)),
     state.transport.in(Set(Connected, Disconnected)),
     state.negotiation.in(Set(NoNegotiation, HelloSent, JoinSent, NegotiationAccepted, Rejected)),
-    state.hello_version.in(Set(NoVersion, Draft6, UnsupportedVersion)),
-    state.join_version.in(Set(NoVersion, Draft6, UnsupportedVersion)),
+    state.hello_version.in(Set(NoVersion, Draft9, UnsupportedVersion)),
+    state.join_version.in(Set(NoVersion, Draft9, UnsupportedVersion)),
     state.hello_profile.in(Set(NoProfile, Riichi4p, UnsupportedProfile)),
     state.join_profile.in(Set(NoProfile, Riichi4p, UnsupportedProfile)),
     state.hello_hash.in(Set(NoProfileHash, GoodProfileHash, BadProfileHash)),
@@ -230,8 +230,8 @@ module yamai_protocol_extended {
 
   val negotiation_invariant: bool = and {
     state.session == Active implies state.negotiation == NegotiationAccepted,
-    state.session == Active implies state.hello_version == Draft6,
-    state.session == Active implies state.join_version == Draft6,
+    state.session == Active implies state.hello_version == Draft9,
+    state.session == Active implies state.join_version == Draft9,
     state.session == Active implies state.hello_profile == Riichi4p,
     state.session == Active implies state.join_profile == Riichi4p,
     state.session == Active implies state.hello_hash == GoodProfileHash,
@@ -437,7 +437,7 @@ module yamai_protocol_extended {
     state' = {
       session: Negotiating,
       negotiation: HelloSent,
-      hello_version: Draft6,
+      hello_version: Draft9,
       hello_profile: Riichi4p,
       hello_hash: GoodProfileHash,
       hello_required: Set(),
@@ -452,7 +452,7 @@ module yamai_protocol_extended {
     state.negotiation == HelloSent,
     state' = {
       negotiation: JoinSent,
-      join_version: Draft6,
+      join_version: Draft9,
       join_profile: Riichi4p,
       join_hash: GoodProfileHash,
       join_required: Set(),
@@ -482,7 +482,7 @@ module yamai_protocol_extended {
     state.negotiation == HelloSent,
     state' = {
       negotiation: JoinSent,
-      join_version: Draft6,
+      join_version: Draft9,
       join_profile: UnsupportedProfile,
       join_hash: BadProfileHash,
       join_required: Set(),
@@ -497,7 +497,7 @@ module yamai_protocol_extended {
     state.negotiation == HelloSent,
     state' = {
       negotiation: JoinSent,
-      join_version: Draft6,
+      join_version: Draft9,
       join_profile: Riichi4p,
       join_hash: GoodProfileHash,
       join_required: Set(UnknownCap),
@@ -510,7 +510,7 @@ module yamai_protocol_extended {
   action reject_join = all {
     state.session == Negotiating,
     state.negotiation == JoinSent,
-    state.join_version != Draft6 or state.join_profile != Riichi4p or state.join_hash != GoodProfileHash or not(state.join_required.subseteq(SUPPORTED_CAPS)),
+    state.join_version != Draft9 or state.join_profile != Riichi4p or state.join_hash != GoodProfileHash or not(state.join_required.subseteq(SUPPORTED_CAPS)),
     state' = {
       session: Ended,
       negotiation: Rejected,
@@ -522,7 +522,7 @@ module yamai_protocol_extended {
   action send_welcome = all {
     state.session == Negotiating,
     state.negotiation == JoinSent,
-    state.join_version == Draft6,
+    state.join_version == Draft9,
     state.join_profile == Riichi4p,
     state.join_hash == GoodProfileHash,
     state.hello_required.subseteq(SUPPORTED_CAPS),

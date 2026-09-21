@@ -218,6 +218,8 @@ message は [RFC 8259] の JSON object でなければならない（MUST）。
 - 未知の標準フィールドは拒否（MUST）。`x_<owner>_<name>` 形式の拡張フィールドだけは、第14節の条件を満たす場合に限り無視してよい（MAY）
 - 未知の `kind`、`type`、必須 capability は拒否（MUST）
 
+版・profile・hash・capability・resume tokenおよび拡張member名の字句制約は、復号した文字列全体に適用する（MUST）。正しい接頭辞の後に改行や空白がある文字列を受理してはならない（MUST NOT）。JSON Schemaの正規表現にもこの条件を適用し、最終改行の直前へ一致する終端表現だけでは検査を済ませない。
+
 各endpointは、自身が受信可能な上限を `hello.receive_limits` または `join.receive_limits` で通知しなければならない（MUST）。送信者はpeerの `receive_limits` を超えるmessageを送信してはならない（MUST NOT）。`max_message_bytes` は65,536以上1,048,576以下、`max_json_depth` は16以上64以下、`max_unresolved_requests` は1以上4以下でなければならない（MUST）。`riichi-4p` profileは `max_unresolved_requests >= 4` を要求し、提示値を満たせないendpointは、ゲーム開始前に `unsupported_limit` で拒否しなければならない（MUST）。
 
 深さはobjectとarrayだけを数え、top-level objectを1とする。キーとscalar値は深さを増やさず、空object/arrayも1段と数える。数値の整数制約は表記ではなく値に適用し、`1`、`1.0`、`1e0` は同じ整数を表す。交渉が完了する前は両者とも既定の1 MiB・深さ64で受信し、最初のhello/join自体を未通知の下限へ合わせる必要はない。
@@ -342,7 +344,7 @@ hostは同一 `seq` の再送、resume replayおよびrange replayに、ledger e
         "1.0-draft.7"
       ],
       "hashes": {
-        "1.0-draft.7": "sha256:f30f7cfa57df86443b8ded561fdf704d30038a19844ab6760529491b16876760"
+        "1.0-draft.7": "sha256:278ea1cff888a0370d6f8fc32213f89b45e000a7a7efe2449f17c9c20b623799"
       },
       "protocol_versions": {
         "1.0-draft.7": [
@@ -377,7 +379,7 @@ hostは同一 `seq` の再送、resume replayおよびrange replayに、ledger e
   "seat": 0,
   "profile": "riichi-4p",
   "profile_revision": "1.0-draft.7",
-  "profile_hash": "sha256:f30f7cfa57df86443b8ded561fdf704d30038a19844ab6760529491b16876760",
+  "profile_hash": "sha256:278ea1cff888a0370d6f8fc32213f89b45e000a7a7efe2449f17c9c20b623799",
   "client": {
     "name": "ExampleAI",
     "version": "2.3.0"
@@ -421,7 +423,7 @@ profile_hashは、vector manifestのprofile_hash_inputsに列挙したJSONをpro
   "view": "seat",
   "profile": "riichi-4p",
   "profile_revision": "1.0-draft.7",
-  "profile_hash": "sha256:f30f7cfa57df86443b8ded561fdf704d30038a19844ab6760529491b16876760",
+  "profile_hash": "sha256:278ea1cff888a0370d6f8fc32213f89b45e000a7a7efe2449f17c9c20b623799",
   "client": {
     "name": "ExampleAI",
     "version": "2.3.0"
@@ -467,7 +469,7 @@ profile_hashは、vector manifestのprofile_hash_inputsに列挙したJSONをpro
   "view": "seat",
   "profile": "riichi-4p",
   "profile_revision": "1.0-draft.7",
-  "profile_hash": "sha256:f30f7cfa57df86443b8ded561fdf704d30038a19844ab6760529491b16876760",
+  "profile_hash": "sha256:278ea1cff888a0370d6f8fc32213f89b45e000a7a7efe2449f17c9c20b623799",
   "players": [
     {
       "seat": 0,
@@ -676,7 +678,7 @@ Wは登録済み12役満と4種の倍化を全て合計した16倍役満の親�
 
 `noten_payment.total_points` は通常流局で授受する総点数である。聴牌者数を `t` とし、`total_points` は600の倍数でなければならない（MUST）。`0 < t < 4` の場合、各seatの純差額は、`t==1` なら聴牌者 `+total_points`・各不聴者 `-total_points/3`、`t==2` なら各聴牌者 `+total_points/2`・各不聴者 `-total_points/2`、`t==3` なら各聴牌者 `+total_points/3`・不聴者 `-total_points` とする。`t==0` または `t==4` の場合は全seatの差額を0とする。配分はseat単位の純差額で表し、個別seat間の支払明細を要求してはならない（MUST）。
 
-`chombo.penalty_points` はchomboで移動する総点数であり、distribution=equal_other_playersならoffenderから他の3seatへ100点単位で等分し、余りをoffender以外の最小seatへ加算する。正の支払いだけをresult.penalty.paymentsへ記録し、総額0なら空配列とする。deltasはその合計と一致させる（MUST）。
+`chombo.penalty_points` はchomboで移動する総点数であり、distribution=equal_other_playersならoffenderから他の3seatへ100点単位で等分し、余りをoffender以外の最小seatへ加算する。正の支払いだけをresult.penalty.paymentsへ記録し、総額0なら空配列とする。各seatのdeltasは、そのseatの受取総額から支払総額を引いた値とし、全seatの合計は0とする（MUST）。詳細は第7.6.8.2節に従う。
 
 新規gameは東1局、oya=0、honba=0、kyotaku=0、extension_round=0、全seatのscore=`starting_points` で開始する。局終了後、ホストは次の順にnextを決め、最初に該当した終了条件を採用する（MUST）。
 
@@ -706,7 +708,7 @@ renchanはbakaze、kyoku、oyaを維持する。rotateはoyaを `(oya+1) mod 4`�
 
 反応の和了・三家和は第8.4節で最初に確定する。打牌への和了がない場合は、必要なリーチ成立を反映してから、`suucha_riichi`、`suufon_renda`、`suukan_sanra`、`fanpai` の順で最初に成立するreasonを採用する（MUST）。採用された鳴きがある場合は四風連打と通常流局を成立させない。四家立直では全員が成立済みリーチのため鳴きはなく、四槓散了を待つ最終打牌では7.3.1節により鳴きを提示しない。九種九牌は自摸番の明示選択であり、この自動判定へ混ぜない。
 
-この一覧で表現できない必須ルールは、交渉済み capability と namespaced rule key を使用しなければならない（MUST）。状態または点数へ影響するルールを、説明文だけで追加してはならない（MUST NOT）。
+この一覧で表現できない必須ルールは、交渉済み capability と namespaced rule key を使用しなければならない（MUST）。namespaced rule key は `rules` object の member 名であり、第14節の field 形式 `x_<owner>_<name>` に従う。状態または点数へ影響するルールを、説明文だけで追加してはならない（MUST NOT）。
 
 ### 7.3 牌
 
@@ -1015,7 +1017,7 @@ chi/ponの複合打牌では `tsumogiri:false` とする。喰い替えは、鳴
 
 `result.type == "ryukyoku"` の場合、`result.reason` は `fanpai`、`kyushukyuhai`、`suufon_renda`、`suucha_riichi`、`suukan_sanra`、`sanchaho` のいずれかとする（MUST）。`fanpai` の `result.tenpai` は4要素の boolean arrayでなければならず、途中流局の残る5 reasonでは常に `null` とする（MUST）。`illegal_action` は `penalty` のreasonであり、流局へ流用してはならない。通常流局で `0 < t < 4` の場合、`deltas` は `rules.noten_payment.total_points` のseat単位の純差額規則に従い、各seatの受取または支払の純差額と一致しなければならない（MUST）。個別seat間の支払明細を要求してはならない。
 
-`result.type == "penalty"` の場合、`result.offender`、登録済み `result.reason`、`result.penalty.payments` および top-level `deltas` を持たなければならない（MUST）。各paymentは `{from,to,points}` で、`from` は offender、`to` は他seat、合計とtop-level `deltas`は一致しなければならない。このvariantは `invalid_action_policy == "chombo"` またはprofileが登録した penalty ruleでのみ使用できる（MUST）。
+`result.type == "penalty"` の場合、`result.offender`、登録済み `result.reason`、`result.penalty.payments` および top-level `deltas` を持たなければならない（MUST）。各paymentは `{from,to,points}` で、`from` は offender、`to` は他seatとする。各seatのtop-level `deltas`は、そのseatへの受取総額からそのseatの支払総額を引いた値と一致しなければならない（MUST）。このvariantは `invalid_action_policy == "chombo"` またはprofileが登録した penalty ruleでのみ使用できる（MUST）。
 
 ### 7.6 `riichi-4p` の採点規範（完全定義）
 
@@ -1041,7 +1043,7 @@ chi/ponの複合打牌では `tsumogiri:false` とする。喰い替えは、鳴
 
 通常形は論理面子4個と雀頭1個、七対子は異なる牌種7組、国士無双は么九牌13種とそのうち1種の重複でなければならない（MUST）。槓子は論理面子1個として数えるが、物理牌は4枚として保持する。完成した和了形は、特殊形を除き論理上14枚であり、任意の牌種が物理的に4枚を超えてはならない（MUST）。
 
-ホストは正規化局面から、通常形、七対子および国士無双の全ての合法な評価候補を列挙しなければならない（MUST）。各候補について面子の所属、和了牌の所属、待ち、門前/副露状態、役、符、ドラbonus、`han` および支払額を独立に計算し、2.4節の比較規則で1候補を選択する。特定の分解順、牌の配列順または実装内部の探索順を結果決定に使用してはならない（MUST NOT）。
+ホストは正規化局面から、通常形、七対子および国士無双の全ての合法な評価候補を列挙しなければならない（MUST）。各候補について面子の所属、和了牌の所属、待ち、門前/副露状態、役、符、ドラbonus、`han` および支払額を独立に計算し、第7.6.2.4節の比較規則で1候補を選択する。特定の分解順、牌の配列順または実装内部の探索順を結果決定に使用してはならない（MUST NOT）。
 
 ##### 7.6.2.2 門前
 
@@ -1067,7 +1069,7 @@ chi/ponの複合打牌では `tsumogiri:false` とする。喰い替えは、鳴
 
 同じ和了牌に複数の解釈がある場合、hand_points、真の役満value合計、han、fuの順に大きい候補を採用し、それでも同じなら成立役IDをASCII昇順に並べた配列の辞書順が小さい候補を採用する（MUST）。真の役満がない候補の役満valueは0である。この比較により、支払額が同じ真の役満と数え役満では真の役満を優先する。本場・供託や責任seatへの移し替えで分解の選択を変えない。
 
-候補比較の「合法」とは、2.1節の牌数・面子数・特殊形の条件を満たし、各物理牌を1回だけ使用し、和了牌を1回だけ追加した候補をいう。成立しない候補の役・符・点数を比較対象へ含めてはならない（MUST NOT）。
+候補比較の「合法」とは、第7.6.2.1節の牌数・面子数・特殊形の条件を満たし、各物理牌を1回だけ使用し、和了牌を1回だけ追加した候補をいう。成立しない候補の役・符・点数を比較対象へ含めてはならない（MUST NOT）。
 
 ##### 7.6.2.5 風の対応
 
@@ -1091,7 +1093,7 @@ chi/ponの複合打牌では `tsumogiri:false` とする。喰い替えは、鳴
 
 ##### 7.6.2.7 聴牌
 
-通常流局の `tenpai` は、当該seatの和了前局面へ合法な牌種を1枚追加したとき、2.1節のいずれかの合法な和了形を少なくとも1個得られることをいう（MUST）。和了に必要な役の有無、フリテン、牌山に残る実枚数は `tenpai` の真偽を変更しない。したがって、役なし形でも形が完成するなら聴牌である。赤五は牌種として通常五と同じ候補を生成し、物理牌が5枚になる候補は除外する。
+通常流局の `tenpai` は、当該seatの和了前局面へ合法な牌種を1枚追加したとき、第7.6.2.1節のいずれかの合法な和了形を少なくとも1個得られることをいう（MUST）。和了に必要な役の有無、フリテン、牌山に残る実枚数は `tenpai` の真偽を変更しない。したがって、役なし形でも形が完成するなら聴牌である。赤五は牌種として通常五と同じ候補を生成し、物理牌が5枚になる候補は除外する。
 
 七対子および国士無双をtenpai候補へ含め、槓子は論理面子1個として通常形の候補へ含める。`tenpai == null` は本書が定める途中流局またはチョンボなど、判定を行わない結果に限る（MUST）。
 
@@ -1134,7 +1136,7 @@ chi/ponの複合打牌では `tsumogiri:false` とする。喰い替えは、鳴
 
 同一役を構成する独立した組が複数あっても、役IDの加算回数は表の役ごとに1回とする。ただし `seat_wind` と `round_wind` は別役である。`honitsu` と `chinitsu` は排他的であり、同じ和了に両方を加算してはならない（MUST）。`ryanpeikou` と `iipeikou`、`double_riichi` と `riichi` も同様に排他的である。`chanta` と `junchan` も、前者が要求する字牌を含むため同時成立しない。`suuankou` のような役満が成立する候補では通常役を加算せず、複数役満だけを加算する。
 
-`iipeikou` は同一色・同一数字の順子が2組以上ある候補に1回だけ加算する。`ryanpeikou` は同一色・同一数字の順子の組が2組ある一盃口形を2組持つ候補に1回だけ加算し、成立時は `iipeikou` を加算しない。4枚の同一牌を七対子の2組へ分割してはならず、赤五と通常五は2.3節の牌種単位で同一対子として判定する。
+`iipeikou` は同一色・同一数字の順子が2組以上ある候補に1回だけ加算する。`ryanpeikou` は同一色・同一数字の順子の組が2組ある一盃口形を2組持つ候補に1回だけ加算し、成立時は `iipeikou` を加算しない。4枚の同一牌を七対子の2組へ分割してはならず、赤五と通常五は第7.6.2.3節の牌種単位で同一対子として判定する。
 
 wireへ出力する通常役IDは重複してはならず、各IDの `value` は本表の門前・副露欄に固定された値でなければならない（MUST）。`tanyao` の副露時だけは `rules.kuitan` により役ID自体を出力しない場合がある。
 
@@ -1162,7 +1164,7 @@ wireへ出力する通常役IDは重複してはならず、各IDの `value` は
 - `junsei_chuuren`: 純正九蓮宝燈の9面待ちで和了する
 - `daisuushii`: 大四喜をダブル役満とする
 
-`kokushi_13_wait` および `junsei_chuuren` は、2.7節と同じ方法で和了前局面の合法な和了牌種集合を生成し、その集合の大きさがそれぞれ13種または9種である場合にだけ成立する。`suuankou_tanki` は、和了前局面の選択候補が単騎待ちであり、和了後に四暗刻となる場合にだけ成立する。和了後の牌姿だけを見て待ちを推測してはならない（MUST NOT）。`daisuushii` は大四喜の役満候補が成立している場合にだけ適用する。
+`kokushi_13_wait` および `junsei_chuuren` は、第7.6.2.7節と同じ方法で和了前局面の合法な和了牌種集合を生成し、その集合の大きさがそれぞれ13種または9種である場合にだけ成立する。`suuankou_tanki` は、和了前局面の選択候補が単騎待ちであり、和了後に四暗刻となる場合にだけ成立する。和了後の牌姿だけを見て待ちを推測してはならない（MUST NOT）。`daisuushii` は大四喜の役満候補が成立している場合にだけ適用する。
 
 役満候補の判定でも、赤五は通常五と同じ牌種へ正規化し、槓子は論理面子1個として扱う。役満候補が1個以上成立した場合、その候補に含まれる通常役およびbonusは全て無視する。複数役満が同じ合法候補に成立する場合だけ、それぞれの役満valueを合計する。
 
@@ -1210,9 +1212,9 @@ wireへ出力する通常役IDは重複してはならず、各IDの `value` は
 
 ##### 7.6.6.3 丸めと例外
 
-通常形の符は、(1) 20符を置き、(2) 門前ロン、ツモ、役牌雀頭、待ちおよび面子符を加算し、(3) 副露ロンで加算後の合計が20符の場合だけ30符へ置き換え、(4) 10符単位へ切り上げる順に計算する（MUST）。副露ロンの20符特例は10符単位への切り上げより前に適用する。平和ツモはツモ2符を加算せず20符とする。七対子は常に25符とし、他の符を加算せず、10符単位へ切り上げない。役満和了は4節の規定により0符とする。
+通常形の符は、(1) 20符を置き、(2) 門前ロン、ツモ、役牌雀頭、待ちおよび面子符を加算し、(3) 副露ロンで加算後の合計が20符の場合だけ30符へ置き換え、(4) 10符単位へ切り上げる順に計算する（MUST）。副露ロンの20符特例は10符単位への切り上げより前に適用する。平和ツモはツモ2符を加算せず20符とする。七対子は常に25符とし、他の符を加算せず、10符単位へ切り上げない。役満和了は第7.6.4節の規定により0符とする。
 
-「雀頭に符がない」とは、三元牌、自風および場風のいずれにも該当しない牌種の雀頭をいう。符計算に使う待ちは、2.4節で選択した候補の和了牌割当から導出する。通常形以外へ通常形の面子符・待ち符を加算してはならない（MUST NOT）。
+「雀頭に符がない」とは、三元牌、自風および場風のいずれにも該当しない牌種の雀頭をいう。符計算に使う待ちは、第7.6.2.4節で選択した候補の和了牌割当から導出する。通常形以外へ通常形の面子符・待ち符を加算してはならない（MUST NOT）。
 
 #### 7.6.7. 基本点と支払い
 
@@ -1293,7 +1295,7 @@ fixtureのpaymentsはseat間の支払いだけを表し、本場と責任払い�
 
 ##### 7.6.8.2 チョンボ精算
 
-`result.type == "penalty"` かつ `result.reason == "illegal_action"` で `rules.chombo.distribution == "equal_other_players"` の場合、違反seatを除く3 seatへ `rules.chombo.penalty_points` を配分する。`q = floor(P / (3 × 100)) × 100`、`r = P - 3 × q`（`P = penalty_points`）とし、各seatへ `q` を支払い、`remainder == "lowest_seat"` なら違反seat以外で最小のabsolute seatへ `r` を加算する（MUST）。従って `P=8,000`、違反seatが0の場合は seat 1へ2,800、seat 2と3へ2,600を支払う。`payments` の合計および `deltas` は `P` と一致しなければならない（MUST）。
+`result.type == "penalty"` かつ `result.reason == "illegal_action"` で `rules.chombo.distribution == "equal_other_players"` の場合、違反seatを除く3 seatへ `rules.chombo.penalty_points` を配分する。`q = floor(P / (3 × 100)) × 100`、`r = P - 3 × q`（`P = penalty_points`）とし、各seatへ `q` を支払い、`remainder == "lowest_seat"` なら違反seat以外で最小のabsolute seatへ `r` を加算する（MUST）。従って `P=8,000`、違反seatが0の場合は seat 1へ2,800、seat 2と3へ2,600を支払う。`payments[].points` の合計と違反seat以外の `deltas` の合計は `P`、違反seatの `deltas` は `-P` とし、全seatの `sum(deltas)` は0でなければならない（MUST）。
 
 #### 7.6.9. 非対応ルール
 
@@ -1314,7 +1316,7 @@ fixtureファイルのrulesをbase ruleとし、rule_overridesを最上位member
 | input.type | 必須の評価入力 |
 |---|---|
 | hora | hand、winning_tile、win_method、actor、target、dora_markers、ura_dora_markers。複数ロンではother_winnersへ他の和了入力と各seatのstateを記録し、expectedを入力内へ埋め込まない |
-| ryukyoku | reason=fanpai、4seatの和了前の完全なhands。tenpaiはこれらから2.7節で計算する |
+| ryukyoku | reason=fanpai、4seatの和了前の完全なhands。tenpaiはこれらから第7.6.2.7節で計算する |
 | penalty | offender。invalid_action_policy=chomboが必要。和了牌や和了手を仮に付けてはならない |
 
 stateは場・局・親、本場・供託、scores、live wall残数、kan_counts、pending_kan、リーチ成立、double_riichi、ippatsu、first_turn、last_tile、rinshan、furitenを明示する。省略による暗黙の0/falseを許さない（MUST NOT）。first_turnは評価seatの第一巡資格、last_tileは和了の原因が最後のlive wall自摸またはその直後の打牌であること、furitenはYRC 0003の3種のフリテンの論理和である。真の役満に通常役を付けるためのフラグではない。
@@ -1355,11 +1357,11 @@ fixture集合はregistryの全通常役・全役満、通常形・七対子・�
 
 ##### 7.6.A.6 複数分解の選択
 
-門前13枚 `1122334455667m` に `7m` をロンし、ドラや状況役がない場合、`11m` を雀頭、`234m`×2および`567m`×2とする通常形は、`chinitsu` 6飜、`ryanpeikou` 3飜、両面待ちの `pinfu` 1飜で10飜30符となる。同じ物理牌の七対子解釈は `chinitsu` 6飜と `chiitoitsu` 2飜の8飜25符である。子ロンはどちらも倍満16,000点なので、2.4節の同点時の飜数比較により通常形を採用する。
+門前13枚 `1122334455667m` に `7m` をロンし、ドラや状況役がない場合、`11m` を雀頭、`234m`×2および`567m`×2とする通常形は、`chinitsu` 6飜、`ryanpeikou` 3飜、両面待ちの `pinfu` 1飜で10飜30符となる。同じ物理牌の七対子解釈は `chinitsu` 6飜と `chiitoitsu` 2飜の8飜25符である。子ロンはどちらも倍満16,000点なので、第7.6.2.4節の同点時の飜数比較により通常形を採用する。
 
 ##### 7.6.A.7 役なし形の聴牌
 
-`123m 456m 789p 234s E` は `E` 待ちであり、`E` を加えると通常形が完成する。リーチなどの状況役がないロンでは役を持たないが、2.7節の形の聴牌を満たすため、通常流局の `tenpai` はtrueである。和了の可否（2.1節）とノーテン精算用の聴牌判定（2.7節）を混同してはならない。
+`123m 456m 789p 234s E` は `E` 待ちであり、`E` を加えると通常形が完成する。リーチなどの状況役がないロンでは役を持たないが、第7.6.2.7節の形の聴牌を満たすため、通常流局の `tenpai` はtrueである。和了の可否（第7.6.2.1節）とノーテン精算用の聴牌判定（第7.6.2.7節）を混同してはならない。
 
 ## 8. 行動要求
 
@@ -1623,9 +1625,15 @@ flowchart TD
   A["event dahai"] --> B["request(s) chi/pon/daiminkan/hora/none"]
   B --> C["action(s)"]
   C --> D["ack(s)"]
-  D --> E{"全てnone？"}
-  E -->|はい| F["event tsumo"]
-  E -->|いいえ| G["event chi|pon|daiminkan と event dahai、または end_kyoku"]
+  D --> E{"ロン・三家和・penalty？"}
+  E -->|はい| F["end_kyoku"]
+  E -->|いいえ| G["必要なら reach_accepted"]
+  G --> H{"途中流局・通常流局が成立？"}
+  H -->|はい| F
+  H -->|いいえ| I{"採用された鳴き"}
+  I -->|chi / pon| J["chi / pon → 必要なら pao → 複合 dahai"]
+  I -->|daiminkan| K["第10.2節の槓・嶺上処理"]
+  I -->|なし| L["次seatの tsumo"]
 ```
 
 ### 10.2 加槓・暗槓と槍槓
@@ -1635,9 +1643,9 @@ flowchart TD
   A["event kakan_declared"] --> B["request(s) hora/none to other seats"]
   B --> C["action(s)"]
   C --> D["ack(s)"]
-  D --> E{"hora accepted？"}
+  D --> E{"ロン・三家和・penaltyで終局？"}
   E -->|はい| F["end_kyoku"]
-  E -->|いいえ| G["event kakan（otherwise, commit the meld）"]
+  E -->|いいえ| G["event kakan → 槓ドラ・嶺上処理"]
 ```
 
 槓宣言後の反応では `hora` と `none` だけを許可する。加槓へのロンは通常の役・フリテン条件を満たす場合に許可し、暗槓へのロンは `ankan_chankan == "kokushi_only"` で国士無双かつフリテンでない場合だけ許可する（MUST）。`never` では暗槓へのロンを許可しない。`never` または全員に合法な和了がない場合も、他家3seat全員へ `none` を含む反応requestを発行し、通常どおり選択・期限・全終端ACKを処理する（MUST）。和了判定が不要なことを理由に反応groupを省略してはならない（MUST NOT）。見送られた宣言の槓だけを成立させる。
@@ -1678,12 +1686,12 @@ flowchart TD
   A["event reach"] --> B["event dahai"]
   B --> C["request(s) reactions to dahai"]
   C --> D["ack(s)"]
-  D --> E{"hora採用？"}
+  D --> E{"ロン・三家和・penaltyで終局？"}
   E -->|はい| F["end_kyoku"]
-  E -->|いいえ| G{"ロン・三家和・penaltyによる終局がない？"}
-  G -->|はい| H["event reach_accepted"]
-  G -->|いいえ| I["event chi|pon|daiminkan と event dahai、または event tsumo"]
-  H --> I
+  E -->|いいえ| H["event reach_accepted"]
+  H --> G{"四家立直などの流局が成立？"}
+  G -->|はい| F
+  G -->|いいえ| I["採用された鳴き、または次seatの tsumo"]
 ```
 
 リーチ打牌への反応を解決し、ロン・三家和・penaltyによる終局がなければ、全終端ACKの後、採用された鳴きeventまたは次の自摸より前に `reach_accepted` を送信する（MUST）。chi/pon/daiminkanでリーチ打牌を鳴かれてもリーチは成立し、供託を控除する。その鳴きによって一発資格だけが失効する。ロン・三家和・penaltyなら宣言を破棄し、供託を控除してはならない（MUST NOT）。4人目の成立直後に四家立直で流局する場合は、4本目も供託へ加算してからend_kyokuを送る。
@@ -2197,15 +2205,19 @@ state.kyotakuは局外・局内・終了後を通じた供託本数である。�
 
 `next_kyoku` は次局の座標を直接指定し、前局結果の `next.type` を含めない。between_kyokuの復元後はこれらの座標と一致する `start_kyoku` を受理する（MUST）。前局のrenchan/rotate tagの復元を追加条件として要求してはならず、between_kyoku snapshotだけから `end_game` を許可してはならない（MUST NOT）。終了済み状態にはended snapshotを使用する。
 
+局内の座標と `next_kyoku` は、`oya == kyoku - 1` と延長局数の上限を満たす（MUST）。通常局は規定最終場風までに限る。延長局では第7.2節の場風循環を許可し、現在の場風の大小だけから通常局へ戻ったと判断してはならない（MUST NOT）。東・南・西・北を0～3とする `w`、`c = 4w + kyoku - 1`、最初の延長局の座標 `b`（東風戦は4、東南戦は8）を用い、延長中は `extension.mode == "sudden_death"`、`1 <= extension_round <= max_extra_rounds` および `(c - b) mod 16 <= extension_round - 1` を必要条件として検査する（MUST）。modの値は0～15とする。連荘とpenaltyによる再配牌では座標を進めず延長局数を増やすため、両者の差の一致は要求しない。
+
 replayのstateには `original_seq` memberを必須とし、そのcheckpointまでに扱った元記録eventの最大original_seqを値とする。他modeではこのmemberを省略する。受信者は元記録の位置も復元し、以後のevent.original_seqをその値より大きくする。snapshotで元記録の位置を巻き戻してはならない（MUST NOT）。
 
 #### 局stateとvisibility
 
 handsは現在の手牌または正確な非公開枚数である。riversは捨て牌の履歴を保持し、各要素は `{pai,tsumogiri,reach,called_by}` とする。`pai` と `tsumogiri` は対応する `dahai` eventの値とし、`reach` はその打牌がリーチ宣言の複合打牌である場合だけtrueとする（MUST）。called_byは鳴かれていなければnull、鳴かれた牌なら鳴いたseatである（MUST）。`reach` は宣言の受理・破棄や牌の鳴かれで取り消さず、鳴かれた牌もcalled_byを記録したままriverへ残す。物理牌の重複を数えるときはcalled_byがnullの牌だけをriver所属とし、捨て牌フリテンでは鳴かれた履歴も含める。
 
-meldsはseat別の成立済みchi、pon、daiminkan、ankan、kakanだけを持ち、宣言eventを入れてはならない（MUST NOT）。各要素は最初の成立順に保持し、対応するeventのmemberを持つ。kakanは元のponの配列位置と捨て牌を供給したtargetを保持する。actorは外側のseatと一致する。鳴きで成立した副露の `pai`/`target` は取り込んだ打牌を指し、その牌は `target` の河に `called_by == actor` のまま残る。逆に `called_by` を持つ河牌は、鳴き手のmelds内に同じ `pai` と `target` を持つ副露を必ず持つ（MUST）。pending_kanはnullまたは未成立のankan_declared/kakan_declaredであり、その物理牌はまだ元の手牌・ponに所属する。
+meldsはseat別の成立済みchi、pon、daiminkan、ankan、kakanだけを持ち、宣言eventを入れてはならない（MUST NOT）。各要素は最初の成立順に保持し、kakan以外は対応するeventのmemberを持つ。kakanは元のponの配列位置、捨て牌を供給したtarget、その打牌のpaiを保持し、consumedを「元のponで手牌から消費した2枚と今回加えた1枚」の3枚へ更新する（MUST）。加えた牌をpai、元のpon全3枚をconsumedとするkakan eventとは、このsnapshot表現を区別する。例えば通常五のponへ赤五を加えた場合、snapshotのpaiは通常五のまま、consumedに赤五が入る。actorは外側のseatと一致する。鳴きで成立した副露の `pai`/`target` は取り込んだ打牌を指し、その牌は `target` の河に `called_by == actor` のまま残る。逆に `called_by` を持つ河牌は、鳴き手のmelds内に同じ `pai` と `target` を持つ副露を必ず持つ（MUST）。pending_kanはnullまたは未成立のankan_declared/kakan_declaredであり、その物理牌はまだ元の手牌・ponに所属する。
 
 dora_markersは公開済み表示牌1～5枚、pending_doraはnullまたは `{kan_type,timing:"after_rinshan_discard"}` とする。後者は成立済み槓の表示牌を嶺上手番の選択後まで延期していることを表し、未公開牌そのものは含めない。paoは必須の配列で、各要素が `{actor,yaku_id,liable_seat}` を持ち、同じ(actor,yaku_id)を重複させない。公開済み副露履歴から導かれる全ての責任対応を、重複も欠落もなく保持する（MUST）。
+
+加槓は元のpon位置を保持するため、melds末尾を常に最新の槓と解釈してはならない（MUST NOT）。snapshot単体では、末尾のankan/daiminkanまたは列内のkakanが最新の成立槓になり得る。rinshanとpending_doraはこの候補およびrules.kan_dora_timingと矛盾してはならず、pending_doraがある場合はrinshan=trueかつ対応kan_typeの候補が必要である（MUST）。rinshanの自摸判断中にpending_doraがなければ、before_rinshanの候補を少なくとも1個持つ。履歴を持つホストは実際の直前の成立槓を用いて検証する。rinshanとhaiteiは同時にtrueにしてはならない（MUST NOT）。
 
 turnはactor、phase、last_event_seq、last_eventを持つ。last_eventは最後に確定したevent payloadの全体であり、viewの秘匿を適用する。last_event_seqは置換範囲内の正のseqである。ただし新規観戦のseq=1/replaces_through_seq=0では、当該sessionに過去eventが存在しないためlast_event_seqをnullとし、last_eventには現在gameの最新eventを投影して入れる（MUST）。それ以外でnullを使わない。復元したeventはpending requestのcaused_by_seqの権威として使用できるが、新しいeventとして二重適用しない。
 
@@ -2364,6 +2376,12 @@ action replay は第9節の冪等規則で処理しなければならない（MU
 
 `timeout_ms` と `time_bank_ms` は対局結果へ影響する。ホストは全 seat へ同じ rule で時間を計測し、transport latency を含むか否かを一貫させなければならない（MUST）。クライアントが送る elapsed time を権威として使用してはならない（MUST NOT）。
 
+### 18.6 サービスの認証・認可との境界
+
+本書は対局サービスの認証方式、アカウント管理および権限モデルを定義しない。公開サービスでのゲーム・記録へのアクセス、playの座席、replayの座席view・full view、resume tokenおよびログの認可は、別のsecurity/authorization profileで定義しなければならない（MUST）。public viewは情報の投影範囲を表し、対象gameを誰でも取得できることを意味しない。Protocol Version、profile hashの一致やTLSの確立だけを、これらのアクセスが認可された証拠として使用してはならない（MUST NOT）。
+
+当該profileはtransport側の資格検証、対象・mode/view・座席の許可判定、失効および拒否時の動作を定める。認証・認可が未定義であることを補うために、未交渉の標準memberや新しいerror codeを本版のmessageへ追加してはならない（MUST NOT）。resume tokenの一回使用・失効・座席固定は第13節に従う。
+
 ## 19. Registry Considerations
 
 YAMAI Project は次の registry を本書と同じ repository で管理する。
@@ -2391,7 +2409,7 @@ YAMAI Project は次の registry を本書と同じ repository で管理する�
 
 `x-<owner>-<name>` capability および type、ならびに `x_<owner>_<name>` member は Private Use とし、登録を要求しない。実験値を安定値として依存させてはならない（MUST NOT）。
 
-`riichi-4p` の初期Yaku IDsは次の値とし、成立条件と飜数は §7.6.2〜§7.6.3 の表に従う。
+`riichi-4p` の初期Yaku IDsは次の値とし、成立条件と飜数は §7.6.3〜§7.6.4 の表に従う。
 
 ```text
 riichi, double_riichi, ippatsu, menzen_tsumo, tanyao, pinfu,

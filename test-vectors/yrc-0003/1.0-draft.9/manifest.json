@@ -3,7 +3,7 @@
   "protocol_version": "1.0-draft.9",
   "profile": "riichi-4p",
   "profile_revision": "1.0-draft.7",
-  "profile_hash": "sha256:f30f7cfa57df86443b8ded561fdf704d30038a19844ab6760529491b16876760",
+  "profile_hash": "sha256:278ea1cff888a0370d6f8fc32213f89b45e000a7a7efe2449f17c9c20b623799",
   "registry": [
     "registry/yrc-0003/1.0-draft.9/registry.json",
     "registry/yrc-0005/1.0-draft.7/registry.json"
@@ -1796,6 +1796,54 @@
     {
       "id": "V296_snapshot_consecutive_kan_window",
       "area": "snapshot-state-consistency",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V297_kakan_snapshot_preserves_called_red_identity",
+      "area": "snapshot-state-consistency",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V298_nonfinal_kakan_snapshot_continues",
+      "area": "snapshot-recovery",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V299_extension_wind_wrap_snapshot",
+      "area": "snapshot-round-progression",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V300_extension_next_coordinate_bound",
+      "area": "snapshot-round-progression",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V301_extension_member_whole_string",
+      "area": "schema-lexical-boundary",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V302_resume_token_whole_string",
+      "area": "schema-lexical-boundary",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V303_negotiation_lexemes_whole_string",
+      "area": "schema-lexical-boundary",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V304_red_kakan_event_snapshot_projection",
+      "area": "kan-state-projection",
       "expect_positive": "valid",
       "expect_negative": "invalid_message"
     }

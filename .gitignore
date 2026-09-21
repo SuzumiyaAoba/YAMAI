@@ -1,3 +1,4 @@
 _apalache-out/
 __pycache__/
 .mdxr/
+*.mdx

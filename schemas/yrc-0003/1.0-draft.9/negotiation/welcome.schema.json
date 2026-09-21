@@ -47,7 +47,7 @@
       "properties": {
         "token": {
           "type": "string",
-          "pattern": "^[A-Za-z0-9._~-]{22,256}$"
+          "pattern": "^[A-Za-z0-9._~-]{22,256}(?![\\s\\S])"
         },
         "expires_in_ms": {
           "$ref": "urn:yamai:schema:yrc-0003:1.0-draft.9:common#/$defs/positiveInteger"
@@ -55,7 +55,7 @@
       },
       "additionalProperties": false,
       "patternProperties": {
-        "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
+        "^x_(?=[A-Za-z0-9_]{3,62}(?![\\s\\S]))[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*(?![\\s\\S])": {}
       }
     },
     "seat": {
@@ -98,7 +98,7 @@
           },
           "additionalProperties": false,
           "patternProperties": {
-            "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
+            "^x_(?=[A-Za-z0-9_]{3,62}(?![\\s\\S]))[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*(?![\\s\\S])": {}
           }
         }
       ]
@@ -134,7 +134,7 @@
         },
         "additionalProperties": false,
         "patternProperties": {
-          "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
+          "^x_(?=[A-Za-z0-9_]{3,62}(?![\\s\\S]))[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*(?![\\s\\S])": {}
         }
       }
     },
@@ -229,7 +229,7 @@
                 },
                 "additionalProperties": false,
                 "patternProperties": {
-                  "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
+                  "^x_(?=[A-Za-z0-9_]{3,62}(?![\\s\\S]))[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*(?![\\s\\S])": {}
                 }
               }
             ]
@@ -305,6 +305,6 @@
   ],
   "additionalProperties": false,
   "patternProperties": {
-    "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
+    "^x_(?=[A-Za-z0-9_]{3,62}(?![\\s\\S]))[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*(?![\\s\\S])": {}
   }
 }

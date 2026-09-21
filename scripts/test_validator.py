@@ -1,6 +1,7 @@
 """Regression checks for the artifact checker; run with Python's unittest."""
 
 import unittest
+from copy import deepcopy
 from decimal import Decimal
 
 import validate_artifacts as v
@@ -27,6 +28,44 @@ class ValidatorBoundaries(unittest.TestCase):
         for value in ('', 'a'*65, 'a\n', 'a\r\n', 'a ', 'a\u2028', 'a\u2029', 'あ'):
             with self.subTest(value=repr(value)):
                 self.assert_error('invalid_message', schemas.validate, value, schema)
+
+    def test_wire_extension_names_reject_trailing_line_terminators(self):
+        schemas = v.SchemaSet()
+        vectors = v.strict_load(v.ROOT / f'test-vectors/yrc-0003/{v.PROTOCOL}/vectors.json')
+        schema = schemas.schemas[f'urn:yamai:schema:yrc-0003:{v.PROTOCOL}:message']
+        for case in ('V18_snapshot_state', 'V104_wire_complete_game'):
+            message = deepcopy(vectors[case]['positive'])
+            if 'trace' in message:
+                message = deepcopy(message['trace']['welcome'])
+            for suffix in ('', '\n', '\r\n', '\u2028', '\u2029'):
+                candidate = deepcopy(message)
+                candidate['x_review_label' + suffix] = 'annotation'
+                with self.subTest(case=case, suffix=repr(suffix)):
+                    if suffix:
+                        self.assert_error('invalid_message', schemas.validate, candidate, schema)
+                    else:
+                        schemas.validate(candidate, schema)
+
+    def test_resume_token_rejects_trailing_line_terminators(self):
+        schemas = v.SchemaSet()
+        vectors = v.strict_load(v.ROOT / f'test-vectors/yrc-0003/{v.PROTOCOL}/vectors.json')
+        welcome = vectors['V104_wire_complete_game']['positive']['trace']['welcome']
+        schema = schemas.schemas[f'urn:yamai:schema:yrc-0003:{v.PROTOCOL}:welcome']
+        for suffix in ('\n', '\r\n', '\u2028', '\u2029'):
+            message = deepcopy(welcome)
+            message['resume']['token'] += suffix
+            self.assert_error('invalid_message', schemas.validate, message, schema)
+
+    def test_negotiation_lexemes_match_the_entire_string(self):
+        schemas = v.SchemaSet()
+        examples = {'version': '1.0-draft.9', 'profileName': 'riichi-4p',
+                    'profileHash': 'sha256:' + 'a' * 64, 'capabilityName': 'x-review-feature'}
+        for name, value in examples.items():
+            schema = {'$ref': f'urn:yamai:schema:yrc-0003:{v.PROTOCOL}:common#/$defs/{name}'}
+            schemas.validate(value, schema)
+            for suffix in ('\n', '\r\n', '\u2028', '\u2029'):
+                with self.subTest(name=name, suffix=repr(suffix)):
+                    self.assert_error('invalid_message', schemas.validate, value + suffix, schema)
 
     def test_json_fraction_does_not_round_to_integer(self):
         value = v.strict_load_bytes(b'{"seq":1.00000000000000000000001}')

@@ -478,9 +478,102 @@ class ProtocolRegressionTests(unittest.TestCase):
         with self.assertRaisesRegex(validator.ArtifactError, "next kyotaku"):
             validator._check_snapshot(bad, rules=rules)
 
+    def _public_kan_snapshot(self, called="5m", added="5mr"):
+        snapshot = copy.deepcopy(VECTORS["V111_initial_observer_has_no_prior_seq"]["positive"])
+        rules = copy.deepcopy(SCORING["rules"])
+        state = EventState(rules)
+        events = [
+            {"type": "start_game", "players": snapshot["state"]["players"], "rules": rules, "scores": [25000] * 4},
+            {"type": "start_kyoku", "bakaze": "E", "kyoku": 1, "oya": 0, "honba": 0, "kyotaku": 0,
+             "extension_round": 0, "scores": [25000] * 4, "dora_marker": "9s", "hands": [{"count": 13} for _ in range(4)]},
+            {"type": "tsumo", "actor": 0, "pai": None},
+            {"type": "dahai", "actor": 0, "pai": called, "tsumogiri": False},
+            {"type": "pon", "actor": 1, "target": 0, "pai": called, "consumed": ["5m", "5m"]},
+            {"type": "dahai", "actor": 1, "pai": "9p", "tsumogiri": False},
+            {"type": "tsumo", "actor": 2, "pai": None},
+            {"type": "dahai", "actor": 2, "pai": "6p", "tsumogiri": False},
+            {"type": "pon", "actor": 1, "target": 2, "pai": "6p", "consumed": ["6p", "6p"]},
+            {"type": "dahai", "actor": 1, "pai": "8p", "tsumogiri": False},
+        ]
+        for actor, tile in [(2, "7p"), (3, "6s"), (0, "7s")]:
+            events.extend([{"type": "tsumo", "actor": actor, "pai": None},
+                           {"type": "dahai", "actor": actor, "pai": tile, "tsumogiri": True}])
+        events.extend([
+            {"type": "tsumo", "actor": 1, "pai": None},
+            {"type": "kakan_declared", "actor": 1, "pai": added, "consumed": [called, "5m", "5m"]},
+            {"type": "kakan", "actor": 1, "pai": added, "consumed": [called, "5m", "5m"]},
+            {"type": "tsumo", "actor": 1, "pai": None},
+        ])
+        for event in events:
+            state.apply(event)
+        snapshot["state"]["kyoku"] = copy.deepcopy(state.round)
+        snapshot["state"]["kyoku"]["turn"].update(last_event_seq=None, last_event=events[-1])
+        return rules, state, snapshot
+
+    def _check_public_snapshot_layers(self, rules, snapshot):
+        validator._check_snapshot(snapshot, rules=rules)
+        restored = EventState(rules)
+        restored.restore(snapshot["state"])
+        welcome = copy.deepcopy(VECTORS["V104_wire_complete_game"]["positive"]["trace"]["welcome"])
+        welcome.update(mode="spectate", view="public", seat=None, capabilities=["snapshot"], rules=rules)
+        welcome.pop("resume")
+        receiver = self.receiver(welcome, initial_snapshot=True)
+        self.assertEqual(receiver.receive(self.raw(snapshot)), "applied")
+        return receiver
+
+    def test_kakan_snapshot_preserves_original_called_tile(self):
+        for called, added in [("5m", "5mr"), ("5mr", "5m")]:
+            with self.subTest(called=called, added=added):
+                _, state, _ = self._public_kan_snapshot(called, added)
+                meld = state.round["melds"][1][0]
+                self.assertEqual(meld["pai"], called)
+                self.assertCountEqual(meld["consumed"], ["5m", "5m", added])
+                self.assertEqual(meld["target"], 0)
+                self.assertEqual(state.round["melds"][1][1]["type"], "pon")
+
+    def test_nonfinal_kakan_snapshot_restores_and_continues(self):
+        rules, _, snapshot = self._public_kan_snapshot()
+        # Express the normative snapshot independently of event projection.
+        snapshot["state"]["kyoku"]["melds"][1][0].update(pai="5m", consumed=["5m", "5m", "5mr"])
+        receiver = self._check_public_snapshot_layers(rules, snapshot)
+        for seq, event in enumerate([
+            {"type": "dora", "dora_marker": "1p"},
+            {"type": "dahai", "actor": 1, "pai": "8s", "tsumogiri": True},
+        ], 2):
+            message = {k: snapshot[k] for k in ("yamai", "session_id", "game_id")}
+            message.update(kind="event", seq=seq, event=event)
+            self.assertEqual(receiver.receive(self.raw(message)), "applied")
+        self.assertEqual(receiver.game.round["turn"]["phase"], "awaiting_responses")
+
+    def test_extension_wrap_snapshots_are_restorable_in_all_layers(self):
+        for length, extension in [("tonnan", 9), ("tonpu", 13)]:
+            with self.subTest(length=length):
+                rules = copy.deepcopy(SCORING["rules"])
+                rules.update(game_length=length, extension={"mode": "sudden_death", "target_points": 30000, "max_extra_rounds": 100})
+                snapshot = copy.deepcopy(VECTORS["V111_initial_observer_has_no_prior_seq"]["positive"])
+                snapshot["state"]["kyoku"].update(bakaze="E", extension_round=extension)
+                self._check_public_snapshot_layers(rules, snapshot)
+                # The same coordinates must also survive a between-round checkpoint.
+                snapshot["state"].update(game_phase="between_kyoku", kyoku=None,
+                    next_kyoku={"bakaze": "E", "kyoku": 1, "oya": 0, "honba": 0,
+                                "kyotaku": 0, "extension_round": extension})
+                self._check_public_snapshot_layers(rules, snapshot)
+
+    def test_extension_snapshot_cannot_rotate_faster_than_deal_counter(self):
+        rules = copy.deepcopy(SCORING["rules"])
+        rules["extension"]["max_extra_rounds"] = 100
+        for wind, kyoku, extra in [("W", 4, 1), ("N", 1, 4), ("E", 1, 8)]:
+            snapshot = copy.deepcopy(VECTORS["V111_initial_observer_has_no_prior_seq"]["positive"])
+            snapshot["state"]["kyoku"].update(bakaze=wind, kyoku=kyoku, oya=kyoku - 1, extension_round=extra)
+            with self.subTest(wind=wind, kyoku=kyoku, extra=extra):
+                with self.assertRaisesRegex(validator.ArtifactError, "coordinates"):
+                    validator._check_snapshot(snapshot, rules=rules)
+                with self.assertRaisesRegex(GameError, "coordinates"):
+                    EventState(rules).restore(snapshot["state"])
+
     def test_snapshot_self_furiten_follows_public_state(self):
         # riichi_furiten implies an accepted declaration, and a seat's own
-        # draw clears its temporary furiten (§10.6).
+        # draw clears its temporary furiten (§10.4).
         snapshot = self._accepted_reach_snapshot(ippatsu_window=True)
         snapshot["state"]["kyoku"]["self_state"]["riichi_furiten"] = True
         validator._check_snapshot(snapshot)   # accepted reach + riichi furiten: consistent

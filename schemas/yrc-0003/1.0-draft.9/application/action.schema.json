@@ -32,7 +32,7 @@
       },
       "additionalProperties": false,
       "patternProperties": {
-        "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
+        "^x_(?=[A-Za-z0-9_]{3,62}(?![\\s\\S]))[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*(?![\\s\\S])": {}
       }
     },
     "meld": {
@@ -74,7 +74,7 @@
           },
           "additionalProperties": false,
           "patternProperties": {
-            "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
+            "^x_(?=[A-Za-z0-9_]{3,62}(?![\\s\\S]))[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*(?![\\s\\S])": {}
           }
         },
         {
@@ -114,7 +114,7 @@
           },
           "additionalProperties": false,
           "patternProperties": {
-            "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
+            "^x_(?=[A-Za-z0-9_]{3,62}(?![\\s\\S]))[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*(?![\\s\\S])": {}
           }
         },
         {
@@ -150,7 +150,7 @@
           },
           "additionalProperties": false,
           "patternProperties": {
-            "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
+            "^x_(?=[A-Za-z0-9_]{3,62}(?![\\s\\S]))[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*(?![\\s\\S])": {}
           }
         }
       ]
@@ -172,7 +172,7 @@
           },
           "additionalProperties": false,
           "patternProperties": {
-            "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
+            "^x_(?=[A-Za-z0-9_]{3,62}(?![\\s\\S]))[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*(?![\\s\\S])": {}
           }
         },
         {
@@ -194,7 +194,7 @@
           },
           "additionalProperties": false,
           "patternProperties": {
-            "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
+            "^x_(?=[A-Za-z0-9_]{3,62}(?![\\s\\S]))[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*(?![\\s\\S])": {}
           }
         },
         {
@@ -213,7 +213,7 @@
           },
           "additionalProperties": false,
           "patternProperties": {
-            "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
+            "^x_(?=[A-Za-z0-9_]{3,62}(?![\\s\\S]))[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*(?![\\s\\S])": {}
           }
         },
         {
@@ -244,7 +244,7 @@
           },
           "additionalProperties": false,
           "patternProperties": {
-            "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
+            "^x_(?=[A-Za-z0-9_]{3,62}(?![\\s\\S]))[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*(?![\\s\\S])": {}
           }
         },
         {
@@ -276,7 +276,7 @@
           },
           "additionalProperties": false,
           "patternProperties": {
-            "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
+            "^x_(?=[A-Za-z0-9_]{3,62}(?![\\s\\S]))[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*(?![\\s\\S])": {}
           }
         },
         {
@@ -299,7 +299,7 @@
           },
           "additionalProperties": false,
           "patternProperties": {
-            "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
+            "^x_(?=[A-Za-z0-9_]{3,62}(?![\\s\\S]))[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*(?![\\s\\S])": {}
           }
         }
       ]
@@ -320,7 +320,7 @@
       },
       "additionalProperties": false,
       "patternProperties": {
-        "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
+        "^x_(?=[A-Za-z0-9_]{3,62}(?![\\s\\S]))[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*(?![\\s\\S])": {}
       }
     }
   },
@@ -355,6 +355,6 @@
   },
   "additionalProperties": false,
   "patternProperties": {
-    "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
+    "^x_(?=[A-Za-z0-9_]{3,62}(?![\\s\\S]))[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*(?![\\s\\S])": {}
   }
 }

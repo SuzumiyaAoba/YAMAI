@@ -77,7 +77,7 @@
       },
       "additionalProperties": false,
       "patternProperties": {
-        "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
+        "^x_(?=[A-Za-z0-9_]{3,62}(?![\\s\\S]))[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*(?![\\s\\S])": {}
       }
     },
     "ranking_policy": {
@@ -109,7 +109,7 @@
       },
       "additionalProperties": false,
       "patternProperties": {
-        "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
+        "^x_(?=[A-Za-z0-9_]{3,62}(?![\\s\\S]))[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*(?![\\s\\S])": {}
       }
     },
     "kuitan": {
@@ -150,7 +150,7 @@
       },
       "additionalProperties": false,
       "patternProperties": {
-        "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
+        "^x_(?=[A-Za-z0-9_]{3,62}(?![\\s\\S]))[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*(?![\\s\\S])": {}
       }
     },
     "bankruptcy": {
@@ -182,7 +182,7 @@
       },
       "additionalProperties": false,
       "patternProperties": {
-        "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
+        "^x_(?=[A-Za-z0-9_]{3,62}(?![\\s\\S]))[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*(?![\\s\\S])": {}
       }
     },
     "abortive_draw_continuation": {
@@ -214,7 +214,7 @@
       },
       "additionalProperties": false,
       "patternProperties": {
-        "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
+        "^x_(?=[A-Za-z0-9_]{3,62}(?![\\s\\S]))[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*(?![\\s\\S])": {}
       }
     },
     "riichi_stick_value": {
@@ -294,7 +294,7 @@
       },
       "additionalProperties": false,
       "patternProperties": {
-        "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
+        "^x_(?=[A-Za-z0-9_]{3,62}(?![\\s\\S]))[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*(?![\\s\\S])": {}
       }
     },
     "chombo": {
@@ -320,7 +320,7 @@
       },
       "additionalProperties": false,
       "patternProperties": {
-        "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
+        "^x_(?=[A-Za-z0-9_]{3,62}(?![\\s\\S]))[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*(?![\\s\\S])": {}
       }
     },
     "ankan_chankan": {
@@ -362,7 +362,7 @@
       },
       "additionalProperties": false,
       "patternProperties": {
-        "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
+        "^x_(?=[A-Za-z0-9_]{3,62}(?![\\s\\S]))[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*(?![\\s\\S])": {}
       }
     },
     "invalid_action_policy": {
@@ -401,7 +401,7 @@
       },
       "additionalProperties": false,
       "patternProperties": {
-        "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
+        "^x_(?=[A-Za-z0-9_]{3,62}(?![\\s\\S]))[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*(?![\\s\\S])": {}
       }
     },
     "abortive_draws": {
@@ -424,13 +424,12 @@
       "uniqueItems": true,
       "items": {
         "type": "string",
-        "pattern": "^x_(?=[A-Za-z0-9_.-]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_.-]*$"
+        "pattern": "^x_(?=[A-Za-z0-9_.-]{3,62}(?![\\s\\S]))[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_.-]*(?![\\s\\S])"
       }
     }
   },
   "patternProperties": {
-    "^x_[A-Za-z0-9][A-Za-z0-9.-]*_[A-Za-z0-9][A-Za-z0-9_.-]*$": {},
-    "^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$": {}
+    "^x_(?=[A-Za-z0-9_]{3,62}(?![\\s\\S]))[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*(?![\\s\\S])": {}
   },
   "additionalProperties": false,
   "allOf": [
