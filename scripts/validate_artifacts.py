@@ -25,7 +25,7 @@ from typing import Any, Dict, Iterable, List, Mapping, Sequence, Tuple
 from request_contract import evaluate as evaluate_request_contract
 from scoring_reference import ScoringError, basic_points, normal_payments, validate_score_bounds, MAX_GAME_EVENTS, MAX_HAND_POINTS, calculate_fixture as calculate_scoring_fixture, tile_index
 from session_contract import SessionError, Receiver, negotiate, check_token_trace, replay_plan, resource_trace, classify_player_input, check_clock
-from game_contract import GameError, EventState, next_kyoku, legal_actions, canonical_action, furiten, furiten_step, abortive_reason, kan_sequence, public_pao, round_coordinates_reachable, check_snapshot_rinshan
+from game_contract import GameError, EventState, next_kyoku, legal_actions, canonical_action, furiten, furiten_step, abortive_reason, kan_sequence, public_pao, round_coordinates_reachable, check_snapshot_rinshan, check_snapshot_public_history, known_round_tiles
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -640,6 +640,70 @@ def canonical(value: Any) -> bytes:
     return json.dumps(prepare(value), ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode("utf-8")
 
 
+def normalize_wire_profile_hashes(wire: str) -> str:
+    """Replace only identity-value tokens; retain every unrelated wire byte."""
+    try:
+        value = strict_load_bytes(wire.encode("utf-8"))
+    except ArtifactError:
+        return wire
+    if not isinstance(value, dict):
+        return wire
+    paths = set()
+    valid_hash = lambda item: isinstance(item, str) and re.fullmatch(r"sha256:[0-9a-f]{64}", item) is not None
+    if value.get("kind") in ("join", "welcome") and valid_hash(value.get("profile_hash")):
+        paths.add(("profile_hash",))
+    elif value.get("kind") == "hello" and isinstance(value.get("profiles"), list):
+        for i, profile in enumerate(value["profiles"]):
+            if isinstance(profile, dict) and isinstance(profile.get("hashes"), dict):
+                paths.update(("profiles", i, "hashes", revision) for revision, digest in profile["hashes"].items() if valid_hash(digest))
+    if not paths:
+        return wire
+    decoder = json.JSONDecoder()
+    replacements = []
+    cursor = 0
+
+    def whitespace() -> None:
+        nonlocal cursor
+        while cursor < len(wire) and wire[cursor] in " \t\r\n":
+            cursor += 1
+
+    def visit(path: tuple) -> None:
+        nonlocal cursor
+        whitespace()
+        if wire[cursor] in "{[":
+            is_object = wire[cursor] == "{"
+            closing = "}" if is_object else "]"
+            cursor += 1
+            whitespace()
+            index = 0
+            while wire[cursor] != closing:
+                if is_object:
+                    key, cursor = decoder.raw_decode(wire, cursor)
+                    whitespace()
+                    cursor += 1  # colon; the complete JSON was validated above
+                else:
+                    key = index
+                    index += 1
+                visit((*path, key))
+                whitespace()
+                if wire[cursor] == ",":
+                    cursor += 1
+                    whitespace()
+                else:
+                    break
+            cursor += 1
+        else:
+            start = cursor
+            _, cursor = decoder.raw_decode(wire, cursor)
+            if path in paths:
+                replacements.append((start, cursor))
+
+    visit(())
+    for start, end in reversed(replacements):
+        wire = wire[:start] + json.dumps("sha256:" + "0" * 64) + wire[end:]
+    return wire
+
+
 def profile_hash(protocol_registry: Dict[str, Any], rules_registry: Dict[str, Any]) -> str:
     manifest = strict_load(ROOT / "test-vectors/yrc-0003/1.0-draft.9/manifest.json")
     vectors = strict_load(ROOT / manifest["vectors"])
@@ -656,22 +720,7 @@ def profile_hash(protocol_registry: Dict[str, Any], rules_registry: Dict[str, An
         if isinstance(value, dict):
             result = {key: normalize_profile_hashes(item) for key, item in value.items()}
             if isinstance(value.get("wire"), str):
-                try:
-                    wire_value = strict_load_bytes(value["wire"].encode("utf-8"))
-                except ArtifactError:
-                    wire_value = None
-                identities = set()
-                if isinstance(wire_value, dict):
-                    if isinstance(wire_value.get("kind"), str) and wire_value["kind"] in {"join", "welcome"}:
-                        candidate = wire_value.get("profile_hash")
-                        if isinstance(candidate, str) and re.fullmatch(r"sha256:[0-9a-f]{64}", candidate):
-                            identities.add(candidate)
-                    elif wire_value.get("kind") == "hello":
-                        for profile in wire_value.get("profiles", []) if isinstance(wire_value.get("profiles"), list) else []:
-                            if isinstance(profile, dict) and isinstance(profile.get("hashes"), dict):
-                                identities.update(h for h in profile["hashes"].values() if isinstance(h, str) and re.fullmatch(r"sha256:[0-9a-f]{64}", h))
-                if identities:
-                    result["wire"] = re.sub(r'"(?:[^"\\]|\\.)*"', lambda match: json.dumps(zero_hash) if json.loads(match[0]) in identities else match[0], value["wire"])
+                result["wire"] = normalize_wire_profile_hashes(value["wire"])
             if isinstance(value.get("kind"), str) and value["kind"] in {"join", "welcome"} and isinstance(value.get("profile_hash"), str) and re.fullmatch(r"sha256:[0-9a-f]{64}", value["profile_hash"]):
                 result["profile_hash"] = zero_hash
             if value.get("kind") == "hello" and isinstance(result.get("profiles"), list):
@@ -1218,6 +1267,10 @@ def _check_snapshot(message: Mapping[str, Any], extension_contexts: Mapping[str,
                              and any(m["type"] != "ankan" and m["target"] == actor and m.get("pai") == tile["pai"]
                                      for m in kyoku["melds"][caller])),
                          "invalid_message", "called river tile has no matching meld")
+        try:
+            check_snapshot_public_history(kyoku)
+        except GameError as error:
+            raise ArtifactError("invalid_message", str(error)) from error
         _require(sum(kyoku["kan_counts"]) <= 4, "invalid_message", "too many kans")
         for actor in range(4):
             count = sum(m["type"] in {"ankan", "daiminkan", "kakan"} for m in kyoku["melds"][actor])
@@ -1228,17 +1281,10 @@ def _check_snapshot(message: Mapping[str, Any], extension_contexts: Mapping[str,
         dead_count = 14 + int(kyoku["rinshan"] and phase == "awaiting_draw")
         _require(concealed_count + meld_count + river_count + kyoku["wall_remaining"] + dead_count == 136, "invalid_message", "snapshot loses or creates physical tiles")
         # Every publicly visible tile — own hand, uncalled river discards,
-        # committed meld tiles and revealed dora markers — is bounded by the
+        # committed melds, declared kan tiles and dora markers — is bounded by the
         # physical wall: at most four copies of a tile kind, and the red/ordinary
         # five split negotiated in the rules when they are known.
-        known = [t for hand in kyoku["hands"] for t in hand.get("tiles", [])]
-        known += [t["pai"] for river in kyoku["rivers"] for t in river if t["called_by"] is None]
-        for row in kyoku["melds"]:
-            for m in row:
-                known += m["consumed"]
-                if m["type"] != "ankan":
-                    known.append(m["pai"])
-        known += kyoku["dora_markers"]
+        known = known_round_tiles(kyoku)
         _require(all(n <= 4 for n in Counter(tile_index(t) for t in known).values()),
                  "invalid_message", "more than four copies of a tile")
         if rules is not None:

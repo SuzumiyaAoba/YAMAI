@@ -134,6 +134,26 @@ class ValidatorBoundaries(unittest.TestCase):
         self.assert_error('hash_error', v.canonical, {'\ud800': 0})
         self.assert_error('hash_error', v.canonical, {'x': '\ud800'})
 
+    def test_wire_hash_normalization_uses_identity_paths(self):
+        digest = 'sha256:' + 'a' * 64
+        zero = 'sha256:' + '0' * 64
+        for kind in ('join', 'welcome'):
+            wire = ('{ "kind": "' + kind + '", "x_test_note": "' + digest +
+                    '", "profile_ha\\u0073h" : "' + digest +
+                    '", "x_test_nested": [{"profile_hash":"' + digest + '"},true,3,null] }')
+            expected = wire.replace('"profile_ha\\u0073h" : "' + digest + '"',
+                                    '"profile_ha\\u0073h" : "' + zero + '"')
+            self.assertEqual(v.normalize_wire_profile_hashes(wire), expected)
+        wire = ('{ "kind":"hello", "x_test_note":"' + digest + '", "profiles":['
+                '{"hashes":{"r1":"' + digest + '","r2":"invalid"},"x_test_note":"' + digest + '"},'
+                '{"hashes":{"r3":"' + digest + '"}}] }')
+        expected = wire.replace('"r1":"' + digest + '"', '"r1":"' + zero + '"')
+        expected = expected.replace('"r3":"' + digest + '"', '"r3":"' + zero + '"')
+        self.assertEqual(v.normalize_wire_profile_hashes(wire), expected)
+        for wire in ('{"kind":"join","profile_hash":3}', '{"kind":[],"profile_hash":"' + digest + '"}',
+                     '{"kind":"join","profile_hash":"' + digest + '","bad":}'):
+            self.assertEqual(v.normalize_wire_profile_hashes(wire), wire)
+
     def test_anyof_does_not_skip_sibling_constraints(self):
         schema = {'anyOf':[{'type':'integer'},{'type':'string'}], 'const':3}
         v.SchemaSet().validate(3, schema)

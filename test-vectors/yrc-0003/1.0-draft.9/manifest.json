@@ -3,7 +3,7 @@
   "protocol_version": "1.0-draft.9",
   "profile": "riichi-4p",
   "profile_revision": "1.0-draft.7",
-  "profile_hash": "sha256:7314cafde606d58ff635f141c061889cb51117ff9713c03abde2a7512d51d86b",
+  "profile_hash": "sha256:4725579ef92f6aaff87413a57b092632a826f90e2895002f3566ffb16ed123c8",
   "registry": [
     "registry/yrc-0003/1.0-draft.9/registry.json",
     "registry/yrc-0005/1.0-draft.7/registry.json"
@@ -1934,6 +1934,66 @@
     {
       "id": "V319_rejection_policy",
       "area": "rejected-ack-policy",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V320_snapshot_called_discard_multiplicity",
+      "area": "snapshot-called-discard-multiplicity",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V321_snapshot_repeated_chi_sources",
+      "area": "snapshot-repeated-chi-sources",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V322_snapshot_riichi_requires_closed_hand",
+      "area": "snapshot-riichi-requires-closed-hand",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V323_snapshot_single_riichi_discard",
+      "area": "snapshot-single-riichi-discard",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V324_snapshot_pending_ankan_inventory",
+      "area": "snapshot-pending-ankan-inventory",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V325_snapshot_pending_kakan_inventory",
+      "area": "snapshot-pending-kakan-inventory",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V326_public_hora_hand_points",
+      "area": "public-hora-hand-points",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V327_public_hora_payment_deltas",
+      "area": "public-hora-payment-deltas",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V328_multiple_ron_shared_ura",
+      "area": "multiple-ron-shared-ura",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V329_hora_revealed_tile_inventory",
+      "area": "hora-revealed-tile-inventory",
       "expect_positive": "valid",
       "expect_negative": "invalid_message"
     }

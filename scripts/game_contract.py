@@ -16,6 +16,7 @@ from typing import Any
 from scoring_reference import (
     Meld, ORPHANS, TILES, ScoringError, hand_parts, inventory,
     score_hand, shapes, tile_index, waits, pao_assignments,
+    basic_points, normal_payments, settle_win,
 )
 
 
@@ -149,14 +150,74 @@ def canonical_action(action: dict) -> str:
     return json.dumps(project(action), sort_keys=True, separators=(",", ":"))
 
 
+def scoring_melds(row: list[dict]) -> list[dict]:
+    return [{"kind": m["type"], "open": m["type"] != "ankan",
+             "tiles": [*m["consumed"], *([m["pai"]] if m["type"] != "ankan" else [])],
+             **({"source": m["target"]} if m["type"] != "ankan" else {})} for m in row]
+
+
 def public_pao(melds: list[list[dict]], rules: dict) -> list[dict]:
     result = []
     for actor, row in enumerate(melds):
-        hand = {"melds":[{"kind":m["type"],"open":m["type"] != "ankan",
-                          "tiles":[*m["consumed"], *([m["pai"]] if m["type"] != "ankan" else [])],
-                          **({"source":m["target"]} if m["type"] != "ankan" else {})} for m in row]}
+        hand = {"melds": scoring_melds(row)}
         result.extend({"actor":actor,"yaku_id":yaku,"liable_seat":seat} for yaku,seat in pao_assignments(hand,rules).items())
     return sorted(result,key=lambda p:(p["actor"],p["yaku_id"]))
+
+
+def check_snapshot_public_history(kyoku: dict) -> None:
+    """Match called discard occurrences, and preserve the riichi contract."""
+    called = Counter((target, tile["called_by"], tile["pai"])
+                     for target, river in enumerate(kyoku["rivers"])
+                     for tile in river if tile["called_by"] is not None)
+    claimed = Counter((meld["target"], actor, meld["pai"])
+                      for actor, row in enumerate(kyoku["melds"])
+                      for meld in row if meld["type"] != "ankan")
+    require(called == claimed, "called discard occurrences do not match committed melds")
+    for seat, reach in enumerate(kyoku["reach_status"]):
+        marks = sum(tile["reach"] for tile in kyoku["rivers"][seat])
+        require(marks == int(reach["state"] != "none"), "riichi must have exactly one declaration discard")
+        require(reach["state"] == "none" or all(m["type"] == "ankan" for m in kyoku["melds"][seat]),
+                "riichi snapshot contains an open meld")
+
+
+def known_round_tiles(kyoku: dict) -> list[str]:
+    """One entry per observed physical tile, including a pending declaration."""
+    known = [t for hand in kyoku["hands"] for t in hand.get("tiles", [])]
+    known.extend(t["pai"] for river in kyoku["rivers"] for t in river if t["called_by"] is None)
+    for row in kyoku["melds"]:
+        for meld in row:
+            known.extend(meld["consumed"])
+            if meld["type"] != "ankan":
+                known.append(meld["pai"])
+    known.extend(kyoku["dora_markers"])
+    pending = kyoku["pending_kan"]
+    if pending is not None and "tiles" not in kyoku["hands"][pending["actor"]]:
+        # Ankan's four tiles, or kakan's added tile, still belong to the
+        # concealed hand. Kakan's original pon is already counted above.
+        known.extend(pending["consumed"] if pending["type"] == "ankan_declared" else [pending["pai"]])
+    return known
+
+
+def check_hora_payments(wins: list[dict], kyoku: dict, rules: dict) -> None:
+    """Recompute public amounts without assuming access to hidden hands."""
+    nearest = min(wins, key=lambda w: (w["actor"] - w["target"]) % 4)["actor"]
+    total_credit = kyoku["kyotaku"] * rules["riichi_stick_value"]
+    share = total_credit // (len(wins) * 100) * 100 if rules["multiple_ron_settlement"]["kyotaku"] == "equal_split" else 0
+    credits = {win["actor"]: share for win in wins}
+    credits[nearest] += total_credit - sum(credits.values())
+    for win in wins:
+        score = {k: win[k] for k in ("fu", "han", "yakus", "bonuses", "hand_points")}
+        score["basic_points"] = basic_points(win["fu"], win["han"],
+            sum(y["value"] for y in win["yakus"] if y["unit"] == "yakuman"), rules)
+        require(win["hand_points"] == sum(normal_payments(score["basic_points"], win["actor"], win["target"], kyoku["oya"]).values()),
+                "hand points differ from public fu/han/yakuman")
+        data = {"actor": win["actor"], "target": win["target"], "winning_tile": win["pai"],
+                "ura_dora_markers": win["ura_dora_markers"],
+                "hand": {"melds": scoring_melds(kyoku["melds"][win["actor"]])}}
+        honba = kyoku["honba"] if len(wins) == 1 or rules["multiple_ron_settlement"]["honba"] == "each_winner" or win["actor"] == nearest else 0
+        result = settle_win(data, kyoku, score, rules, honba, credits[win["actor"]])
+        require(win["pao"] == result["pao"] and win["deltas"] == result["deltas"],
+                "win deltas differ from public payments, honba or deposits")
 
 
 def riichi_ankan(hand: dict, drawn: str, rules: dict) -> bool:
@@ -528,6 +589,7 @@ class EventState:
                                 and any(m["type"] != "ankan" and m["target"] == seat and m.get("pai") == tile["pai"]
                                         for m in kyoku["melds"][caller])),
                             "called river tile has no matching meld")
+            check_snapshot_public_history(kyoku)
             check_snapshot_rinshan(kyoku, self.rules)
             require(sum(s["state"] == "accepted" for s in kyoku["reach_status"]) <= kyoku["kyotaku"],
                     "accepted riichi deposits exceed the round's deposit count")
@@ -554,15 +616,7 @@ class EventState:
                     "snapshot loses or creates physical tiles")
             require(len(kyoku["dora_markers"]) == 1 + sum(kyoku["kan_counts"]) - int(kyoku["pending_dora"] is not None),
                     "dora count differs from kan state")
-            known = [t for hand in kyoku["hands"] for t in hand.get("tiles", [])]
-            known.extend(t["pai"] for river in kyoku["rivers"] for t in river if t["called_by"] is None)
-            for row in kyoku["melds"]:
-                for meld in row:
-                    known.extend(meld["consumed"])
-                    if meld["type"] != "ankan":
-                        known.append(meld["pai"])
-            known.extend(kyoku["dora_markers"])
-            inventory(known, self.rules)
+            inventory(known_round_tiles(kyoku), self.rules)
         require(snapshot["game_phase"] != "ended"
                 or snapshot.get("final_rankings") == rankings(snapshot["scores"]),
                 "snapshot rankings differ")
@@ -667,16 +721,7 @@ class EventState:
         r["pending_dora"] = {"kan_type": event["type"], "timing": timing}
 
     def _inventory(self) -> None:
-        r = self.round
-        known = [t for hand in r["hands"] for t in hand.get("tiles", [])]
-        known.extend(t["pai"] for river in r["rivers"] for t in river if t["called_by"] is None)
-        for melds in r["melds"]:
-            for meld in melds:
-                known.extend(meld["consumed"])
-                if meld["type"] != "ankan":
-                    known.append(meld["pai"])
-        known.extend(r["dora_markers"])
-        inventory(known, self.rules)
+        inventory(known_round_tiles(self.round), self.rules)
 
     def _automatic_draw_reason(self) -> str | None:
         r = self.round
@@ -882,6 +927,14 @@ class EventState:
                     yakus = {y["id"] for y in win["yakus"]}
                     expected_pao = [{"yaku_id":p["yaku_id"],"liable_seat":p["liable_seat"]} for p in r["pao"] if p["actor"] == win["actor"] and p["yaku_id"] in yakus]
                     require(win["pao"] == sorted(expected_pao,key=lambda p:p["yaku_id"]), "winner pao differs from public assignment history")
+                ura = [win["ura_dora_markers"] for win in result["wins"] if win["ura_dora_markers"]]
+                require(not ura or all(markers == ura[0] for markers in ura),
+                        "winners do not share ura indicator positions")
+                known = known_round_tiles(r)
+                if cause["type"] == "tsumo" and "tiles" not in r["hands"][cause["actor"]]:
+                    known.append(result["wins"][0]["pai"])
+                inventory([*known, *(ura[0] if ura else [])], self.rules)
+                check_hora_payments(result["wins"], r, self.rules)
             elif result["type"] == "penalty":
                 require(self.rules["invalid_action_policy"] == "chombo", "penalty is disabled")
                 offender = result["offender"]

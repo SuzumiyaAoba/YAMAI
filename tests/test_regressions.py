@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 import score_oracle as oracle
 import validate_artifacts as validator
-from game_contract import EventState, GameError, next_kyoku
+from game_contract import EventState, GameError, next_kyoku, check_hora_payments
 from scoring_reference import ScoringError, normal_payments, tile_index
 from session_contract import Receiver, SessionError
 
@@ -700,7 +700,185 @@ class ProtocolRegressionTests(unittest.TestCase):
             receiver.receive(self.raw(snapshot))
 
 
+    def check_snapshot_layers(self, message, rules, *, valid):
+        welcome = copy.deepcopy(VECTORS["V298_nonfinal_kakan_snapshot_continues"]["positive"]["trace"]["welcome"])
+        welcome.update(rules=rules, scores=message["state"]["scores"])
+        for key in ("mode", "seat", "view"):
+            welcome[key] = message["state"][key]
+        initial = message["seq"] == 1
+        if not initial:
+            welcome.update(resumed=True, capabilities=["resume", "snapshot"],
+                           resume={"token": "rt_AAAAAAAAAAAAAAAAAAAAAA", "expires_in_ms": 600000},
+                           replay_from_seq=1, replay_through_seq=message["replaces_through_seq"])
+        self.schemas.validate(message, {"$ref": "urn:yamai:schema:yrc-0003:1.0-draft.9:message"})
+        checks = {
+            "artifact": lambda: validator._check_snapshot(message, rules=rules),
+            "event": lambda: EventState(rules).restore(message["state"]),
+            "receiver": lambda: self.receiver(welcome, initial_snapshot=initial).receive(self.raw(message)),
+        }
+        for layer, check in checks.items():
+            with self.subTest(layer=layer):
+                if valid:
+                    check()
+                else:
+                    with self.assertRaises((validator.ArtifactError, GameError, ScoringError, SessionError)):
+                        check()
+
+    def test_snapshot_called_discards_have_one_meld_each(self):
+        base = copy.deepcopy(VECTORS["V297_kakan_snapshot_preserves_called_red_identity"]["positive"])
+        rules = SCORING["rules"]
+        self.check_snapshot_layers(base, rules, valid=True)
+        repeated = copy.deepcopy(base)
+        repeated["state"]["kyoku"]["rivers"][0].append(copy.deepcopy(repeated["state"]["kyoku"]["rivers"][0][0]))
+        self.check_snapshot_layers(repeated, rules, valid=False)
+
+        # Two separate copies of the same discard can legitimately feed two
+        # chi melds. The match is a multiset, not a uniqueness constraint.
+        two = copy.deepcopy(base)
+        r = two["state"]["kyoku"]
+        r["melds"][1] = [
+            {"type": "chi", "actor": 1, "target": 0, "pai": "3m", "consumed": ["1m", "2m"]},
+            {"type": "chi", "actor": 1, "target": 0, "pai": "3m", "consumed": ["4m", "5mr"]},
+        ]
+        r["rivers"][0][0]["pai"] = "3m"
+        r["rivers"][0].append(copy.deepcopy(r["rivers"][0][0]))
+        r["rivers"][2].pop(0)
+        r.update(kan_counts=[0] * 4, rinshan=False, pending_dora=None, wall_remaining=64)
+        self.check_snapshot_layers(two, rules, valid=True)
+        r["rivers"][0].pop()
+        self.check_snapshot_layers(two, rules, valid=False)
+
+    def test_snapshot_riichi_requires_one_declaration_and_closed_hand(self):
+        base = copy.deepcopy(VECTORS["V297_kakan_snapshot_preserves_called_red_identity"]["positive"])
+        for seat, double, ippatsu in ((0, True, True), (1, False, False)):
+            with self.subTest(seat=seat):
+                message = copy.deepcopy(base)
+                r = message["state"]["kyoku"]
+                r["reach_status"][seat] = {"state": "accepted", "double": double, "ippatsu": ippatsu}
+                r["rivers"][seat][0]["reach"] = True
+                if seat == 0:
+                    r["rivers"][seat][1]["reach"] = True
+                r["kyotaku"] = message["state"]["kyotaku"] = 1
+                message["state"]["scores"][seat] -= 1000
+                self.check_snapshot_layers(message, SCORING["rules"], valid=False)
+
+    def test_snapshot_pending_kan_counts_revealed_tiles(self):
+        base = copy.deepcopy(VECTORS["V293_snapshot_kan_declaration_cause"]["positive"])
+        self.check_snapshot_layers(base, SCORING["rules"], valid=True)
+        # The declarer's hand is hidden, but all four declared tiles are public.
+        base["state"]["kyoku"]["hands"][1]["tiles"][0] = "9s"
+        self.check_snapshot_layers(base, SCORING["rules"], valid=False)
+
+    def test_live_pending_kan_counts_revealed_tiles(self):
+        trace = VECTORS["V104_wire_complete_game"]["positive"]["trace"]
+        for conflict in (False, True):
+            game = EventState(trace["welcome"]["rules"])
+            game.apply(copy.deepcopy(trace["steps"][0]["message"]["event"]))
+            deal = copy.deepcopy(trace["steps"][1]["message"]["event"])
+            deal["hands"] = [{"count": 13} for _ in range(4)]
+            deal["dora_marker"] = "9s" if conflict else "2p"
+            game.apply(deal)
+            game.apply({"type": "tsumo", "actor": 0, "pai": None})
+            declared = {"type": "ankan_declared", "actor": 0, "consumed": ["9s"] * 4}
+            with self.subTest(conflict=conflict):
+                if conflict:
+                    with self.assertRaises((GameError, ScoringError)):
+                        game.apply(declared)
+                else:
+                    game.apply(declared)
+
+    def test_pending_kakan_inventory_avoids_double_counting(self):
+        rules = copy.deepcopy(SCORING["rules"])
+        rules["red_fives"]["p"] = 0
+        # Visible added tile and pon are already counted; the hidden variant
+        # reveals just the extra tile, while retaining the same pon source.
+        visible = copy.deepcopy(VECTORS["V296_snapshot_consecutive_kan_window"]["positive"])
+        self.check_snapshot_layers(visible, rules, valid=True)
+        hidden = copy.deepcopy(VECTORS["V325_snapshot_pending_kakan_inventory"]["positive"])
+        self.check_snapshot_layers(hidden, rules, valid=True)
+        hidden["state"]["kyoku"]["dora_markers"][0] = "3m"
+        self.check_snapshot_layers(hidden, rules, valid=False)
+
+        red = copy.deepcopy(VECTORS["V325_snapshot_pending_kakan_inventory"]["positive"])
+        r = red["state"]["kyoku"]
+        r["melds"][0][0].update(pai="5mr", consumed=["5m", "5m"])
+        r["rivers"][2][0]["pai"] = "5mr"
+        r["pending_kan"].update(pai="5m", consumed=["5mr", "5m", "5m"])
+        r["turn"]["last_event"] = copy.deepcopy(r["pending_kan"])
+        self.check_snapshot_layers(red, rules, valid=True)
+        r["pending_kan"]["pai"] = r["turn"]["last_event"]["pai"] = "5mr"
+        self.check_snapshot_layers(red, rules, valid=False)
+
+    def test_public_ura_is_shared_and_counted_once(self):
+        for key in ("V328_multiple_ron_shared_ura", "V329_hora_revealed_tile_inventory"):
+            for side in ("positive", "negative"):
+                trace = VECTORS[key][side]["trace"]
+                receiver = self.receiver(trace["welcome"], initial_snapshot=True)
+                receiver.receive(self.raw(trace["steps"][0]["message"]))
+                before = copy.deepcopy((vars(receiver.game), receiver.applied, receiver.known))
+                with self.subTest(vector=key, side=side):
+                    if side == "positive":
+                        receiver.receive(self.raw(trace["steps"][1]["message"]))
+                        self.assertEqual(receiver.game.scores, [25000, 23000, 27000, 25000])
+                    else:
+                        with self.assertRaises(SessionError) as caught:
+                            receiver.receive(self.raw(trace["steps"][1]["message"]))
+                        self.assertEqual(caught.exception.code, "invalid_message")
+                        self.assertEqual((vars(receiver.game), receiver.applied, receiver.known), before)
+
+    def test_public_hora_payment_amounts_are_recomputed(self):
+        trace = VECTORS["V104_wire_complete_game"]["positive"]["trace"]
+        for mutation in ("hand_points", "deltas"):
+            receiver = self.receiver(trace["welcome"])
+            for step in trace["steps"][:-2]:
+                receiver.receive(self.raw(step["message"]))
+            message = copy.deepcopy(trace["steps"][-2]["message"])
+            event = message["event"]
+            win = event["result"]["wins"][0]
+            if mutation == "hand_points":
+                win["hand_points"] += 100
+            else:
+                win["deltas"][win["actor"]] += 100
+                win["deltas"][win["target"]] -= 100
+                event["deltas"] = win["deltas"].copy()
+                event["scores"] = [s + d for s, d in zip(receiver.game.scores, event["deltas"])]
+            before = copy.deepcopy((vars(receiver.game), receiver.applied, receiver.known))
+            with self.subTest(mutation=mutation):
+                with self.assertRaises(SessionError) as caught:
+                    receiver.receive(self.raw(message))
+                self.assertEqual(caught.exception.code, "invalid_message")
+                self.assertEqual((vars(receiver.game), receiver.applied, receiver.known), before)
+
+
 class ScoringRegressionTests(unittest.TestCase):
+    def test_public_payments_match_all_scored_wins(self):
+        checked = 0
+        for fixture in SCORING["fixtures"]:
+            expected = fixture["expected"]
+            if expected["result_type"] != "hora":
+                continue
+            data = fixture["input"]
+            kyoku = {key: fixture["state"][key] for key in ("oya", "honba", "kyotaku")}
+            kyoku["melds"] = [[] for _ in range(4)]
+            for entry in [data, *data.get("other_winners", [])]:
+                actor = entry["actor"]
+                for meld in entry["hand"]["melds"]:
+                    public = {"type": meld["kind"], "actor": actor, "consumed": meld["tiles"].copy()}
+                    if meld["open"]:
+                        public.update(pai=public["consumed"].pop(), target=meld["source"])
+                    kyoku["melds"][actor].append(public)
+            wins = [{**win, "pai": win["winning_tile"]} for win in expected["wins"]]
+            rules = {**SCORING["rules"], **fixture["rule_overrides"]}
+            with self.subTest(fixture=fixture["id"]):
+                check_hora_payments(wins, kyoku, rules)
+                changed = copy.deepcopy(wins)
+                changed[0]["deltas"][changed[0]["actor"]] += 100
+                changed[0]["deltas"][(changed[0]["actor"] + 1) % 4] -= 100
+                with self.assertRaises(GameError):
+                    check_hora_payments(changed, kyoku, rules)
+            checked += 1
+        self.assertGreaterEqual(checked, 60)
+
     def score(self, identifier, mutate=None):
         fixture = copy.deepcopy(FIXTURES[identifier])
         if mutate: mutate(fixture)

@@ -344,7 +344,7 @@ hostは同一 `seq` の再送、resume replayおよびrange replayに、ledger e
         "1.0-draft.7"
       ],
       "hashes": {
-        "1.0-draft.7": "sha256:7314cafde606d58ff635f141c061889cb51117ff9713c03abde2a7512d51d86b"
+        "1.0-draft.7": "sha256:4725579ef92f6aaff87413a57b092632a826f90e2895002f3566ffb16ed123c8"
       },
       "protocol_versions": {
         "1.0-draft.7": [
@@ -379,7 +379,7 @@ hostは同一 `seq` の再送、resume replayおよびrange replayに、ledger e
   "seat": 0,
   "profile": "riichi-4p",
   "profile_revision": "1.0-draft.7",
-  "profile_hash": "sha256:7314cafde606d58ff635f141c061889cb51117ff9713c03abde2a7512d51d86b",
+  "profile_hash": "sha256:4725579ef92f6aaff87413a57b092632a826f90e2895002f3566ffb16ed123c8",
   "client": {
     "name": "ExampleAI",
     "version": "2.3.0"
@@ -404,7 +404,7 @@ hostは同一 `seq` の再送、resume replayおよびrange replayに、ledger e
 
 hello.profilesは同じprofile名を重複させず、対応revision、hashes、protocol_versionsを提示する。revisionsの集合と両objectのキー集合は一致し、protocol_versions[revision]は空でないhello.versionsの部分集合とする（MUST）。joinはこの行列に存在するversion/profile/revision/hashの組だけを選ぶ。単に各値が別々の一覧に存在することでは足りない。revision、hashまたは組み合わせが異なればprofile_mismatchとする。
 
-profile_hashは、vector manifestのprofile_hash_inputsに列挙したJSONをprofile_schema、rules_schema、scoring_vectors_schema、yrc0003_registry、yrc0005_registry、official_vectors、scoring_vectorsの7 memberへ投影して計算する。YRC 0003 registryのprofiles[].hashを除外する。投影に含まれるhello.profiles[].hashesの値、およびjoin/welcomeのprofile_hashについて、正規のsha256:付き64桁小文字hex文字列をゼロhashへ正規化する。wire memberに保存した正しいJSONのhello/join/welcomeでも、対応するidentity hashの文字列tokenをゼロhashへ置き換える。その他の空白・member順は維持する。Schemaのpropertiesや、否定試験の型不正な値はこの置換の対象にしない。
+profile_hashは、vector manifestのprofile_hash_inputsに列挙したJSONをprofile_schema、rules_schema、scoring_vectors_schema、yrc0003_registry、yrc0005_registry、official_vectors、scoring_vectorsの7 memberへ投影して計算する。YRC 0003 registryのprofiles[].hashを除外する。投影に含まれるhello.profiles[].hashesの値、およびjoin/welcomeのprofile_hashについて、正規のsha256:付き64桁小文字hex文字列をゼロhashへ正規化する。wire memberに保存した正しいJSONのhello/join/welcomeでも、対応するidentity hashの文字列tokenをゼロhashへ置き換える。置換対象は復号したmember名とobject/array内の位置で特定し、同じ文字列を持つ他のmember名・注釈・配列要素は置換しない（MUST NOT）。その他の空白・member順・escape表記は維持する。Schemaのpropertiesや、否定試験の型不正な値はこの置換の対象にしない。
 
 投影objectを[RFC 8785] JCSで直列化し、UTF-8 byte列へSHA-256を適用する（MUST）。member順・空白・Unicode escape・数値をJCS以外の方法で扱わない。現行のhash入力文書はsafe整数だけを数値値として用いる。小数等の構文試験はraw JSON文字列で保持し、公開artifactで数値範囲を拡張する場合はvalidatorも完全なJCS直列化へ対応させる。welcomeは選択済みのrevision/hashをそのまま返す。
 
@@ -423,7 +423,7 @@ profile_hashは、vector manifestのprofile_hash_inputsに列挙したJSONをpro
   "view": "seat",
   "profile": "riichi-4p",
   "profile_revision": "1.0-draft.7",
-  "profile_hash": "sha256:7314cafde606d58ff635f141c061889cb51117ff9713c03abde2a7512d51d86b",
+  "profile_hash": "sha256:4725579ef92f6aaff87413a57b092632a826f90e2895002f3566ffb16ed123c8",
   "client": {
     "name": "ExampleAI",
     "version": "2.3.0"
@@ -469,7 +469,7 @@ profile_hashは、vector manifestのprofile_hash_inputsに列挙したJSONをpro
   "view": "seat",
   "profile": "riichi-4p",
   "profile_revision": "1.0-draft.7",
-  "profile_hash": "sha256:7314cafde606d58ff635f141c061889cb51117ff9713c03abde2a7512d51d86b",
+  "profile_hash": "sha256:4725579ef92f6aaff87413a57b092632a826f90e2895002f3566ffb16ed123c8",
   "players": [
     {
       "seat": 0,
@@ -1246,6 +1246,8 @@ wireへ出力する通常役IDは重複してはならず、各IDの `value` は
 
 `hand_points` は本場・供託を除いた、個別丸め後の全支払額の合計である。本場、供託、複数ロンおよび責任払いは 本書 第7.2節のruleに従う。本場加算は基本支払いを丸めた後に適用する。
 
+受信者は、公開された各winの符・飜・役満倍数から基本点と `hand_points` を再計算し、本場・供託・公開済み責任履歴を用いて各winの `deltas` を検査する（MUST）。点数の全体保存だけでは、支払額や支払seatの正しさを保証しない。非公開手牌のため役・符の成立自体を再判定できないviewでも、この公開値間の算術検査を省略してはならない（MUST NOT）。
+
 ##### 7.6.7.3 責任払い
 
 `rules.pao.yakus` に含まれる役だけが責任払いの対象となる。既に公知である成立済み副露・暗槓だけを数え、非公開手牌中の暗刻を根拠に責任seatを公開してはならない（MUST NOT）。責任seatは次で決定し、その局の間保持する。
@@ -1750,6 +1752,8 @@ playのseatは整数、spectateとreplayのseatはnullとする。spectateのvie
 
 暗槓の宣言牌は公開情報であり、通常の非公開手牌とは区別する。槍槓されても公開を取り消さない。`end_kyoku` の精算値とura_dora_markersは全viewで同値とし、勝者の隠れた残り手牌をこの版で追加公開しない。受信者は観測できる情報から整合性を検査し、非公開手牌を知らなければ導出できない役の完全な再計算を要求されない。ホストは完全情報で検証する（MUST）。snapshotのhands、last_event、melds、pending_kanにも同じ投影を適用し、余分な秘密情報を拡張memberへ入れてはならない（MUST NOT）。
 
+観測可能な物理牌の枚数検査には、非公開手牌を持つseatの `ankan_declared.consumed` または `kakan_declared.pai` も含める（MUST）。これらはまだ手牌に所属するため、手牌が可視なら二重に数えず、加槓の元のponも副露と重複して数えない。和了時に公開された自摸和了牌と裏表示牌も、それぞれ既知の同じ実体を除いて1回だけ数え、赤五の内訳を含めて第7.3節の在庫を検査する。複数ロンで公開する裏表示牌列は全該当winで一致し、卓全体では同じ表示位置を1回だけ数える（MUST）。
+
 spectate/replayへrequestやACKを送信してはならず、これらのsessionからactionを送信してはならない（MUST NOT）。replayは記録済みeventの順序を保ち、新sessionの**全enveloped host message**に1から連続したseqを割り当てる。errorやsnapshotも同じ列の番号を消費する。各eventの `original_seq` は選定した単一の元記録streamの番号を保持し、正で狭義増加する。同じreplayで複数の元sessionのseqを混ぜてはならない（MUST NOT）。非eventにoriginal_seqを付けない。replayではrequestのlive timeoutを再実行しない。
 
 新規replayは記録のstart_gameから開始し、welcomeにはその時点のrules・players・scoresを返す。進行中gameをtargetにしてもreplayはjoin時点に固定した記録prefixだけを再生し、その後live観戦へ切り替えない。prefixがend_gameに達していなければ、そのprefixを送信後にtransportを正常終了する。記録が取得できないtargetは交渉用 `resume_unavailable` で拒否する（MUST）。
@@ -2228,6 +2232,8 @@ handsは現在の手牌または正確な非公開枚数である。riversは捨
 
 meldsはseat別の成立済みchi、pon、daiminkan、ankan、kakanだけを持ち、宣言eventを入れてはならない（MUST NOT）。各要素は最初の成立順に保持し、kakan以外は対応するeventのmemberを持つ。kakanは元のponの配列位置、捨て牌を供給したtarget、その打牌のpaiを保持し、consumedを「元のponで手牌から消費した2枚と今回加えた1枚」の3枚へ更新する（MUST）。加えた牌をpai、元のpon全3枚をconsumedとするkakan eventとは、このsnapshot表現を区別する。例えば通常五のponへ赤五を加えた場合、snapshotのpaiは通常五のまま、consumedに赤五が入る。actorは外側のseatと一致する。鳴きで成立した副露の `pai`/`target` は取り込んだ打牌を指し、その牌は `target` の河に `called_by == actor` のまま残る。逆に `called_by` を持つ河牌は、鳴き手のmelds内に同じ `pai` と `target` を持つ副露を必ず持つ（MUST）。pending_kanはnullまたは未成立のankan_declared/kakan_declaredであり、その物理牌はまだ元の手牌・ponに所属する。
 
+この対応は出現回数も含む一対一対応である。`(捨てたseat, called_by, pai)` の河要素の多重集合と、暗槓を除く全副露の `(target, actor, pai)` の多重集合が一致しなければならない（MUST）。赤五と通常五を区別し、1個の河要素を複数の副露へ対応付けたり、1個の副露へ複数の河要素を対応付けたりしてはならない（MUST NOT）。同じ表記の別々の捨て牌が複数回チーされる合法な場合は、同じ組がその回数だけ両側へ現れる。
+
 dora_markersは公開済み表示牌1～5枚、pending_doraはnullまたは `{kan_type,timing:"after_rinshan_discard"}` とする。後者は成立済み槓の表示牌を嶺上手番の選択後まで延期していることを表し、未公開牌そのものは含めない。paoは必須の配列で、各要素が `{actor,yaku_id,liable_seat}` を持ち、同じ(actor,yaku_id)を重複させない。公開済み副露履歴から導かれる全ての責任対応を、重複も欠落もなく保持する（MUST）。
 
 加槓は元のpon位置を保持するため、melds末尾を常に最新の槓と解釈してはならない（MUST NOT）。snapshot単体では、末尾のankan/daiminkanまたは列内のkakanが最新の成立槓になり得る。rinshanとpending_doraはこの候補およびrules.kan_dora_timingと矛盾してはならず、pending_doraがある場合はrinshan=trueかつ対応kan_typeの候補が必要である（MUST）。rinshanの自摸判断中にpending_doraがなければ、before_rinshanの候補を少なくとも1個持つ。履歴を持つホストは実際の直前の成立槓を用いて検証する。rinshanとhaiteiは同時にtrueにしてはならない（MUST NOT）。
@@ -2239,6 +2245,8 @@ phaseは卓全体のawaiting_draw、awaiting_action、awaiting_responses、resol
 resolvingは、単独decisionまたは反応groupの全選択が固定されlinearization pointを記録してから（第8.1.1節）、終端ACKと結果event列のtransactionが確定するまで（第8.4節）の卓の状態である。この期間にrequestが未終端のplay seat向けには、終端ACKが対応するrequestを欠くため、transactionの確定までsnapshotを生成してはならない（MUST NOT）。一方pending_requestsは**当該play seat宛てだけ**であり、最大1個である（MUST）。awaiting_actionではturn.actorが自分のときだけ、awaiting_responsesでは原因のactor以外のseatにだけ対応requestを保持する。他家の自摸番に自分のpending requestを要求してはならない（MUST NOT）。awaiting_draw/resolvingおよび観戦・replayにはpending requestを含めない。
 
 reach_statusはseatごとのstate（none/declared/accepted）、double、ippatsuを持つ。doubleはリーチ宣言時に第一巡の条件を満たしていたか、ippatsuは現在の一発資格を表す。declaredは宣言打牌への反応が未解決の間だけ存在し、受理または宣言の破棄で遷移する。したがってdeclaredを持つ局stateは、宣言seatをturn.actor、その宣言打牌をlast_eventとするawaiting_responsesまたはresolvingに限る。noneではdouble・ippatsuともfalse、declaredではippatsuはfalseとし、宣言中または受理済みのリーチは宣言牌がrivers内にreach:trueとして残る（MUST）。first_turn_eligibleは自分の最初の打牌前かつ全卓で鳴き・槓がない場合だけtrueとする。kan_counts、rinshan、haiteiは第7.3.1節・第10節のevent適用後の値である。dora eventだけで槓数を増やしてはならない。
+
+局内snapshotの各seatの `reach:true` は、reach stateがnoneなら0個、declaredまたはacceptedなら正確に1個でなければならない（MUST）。declared/acceptedのseatは門前を維持し、副露列に含められるのは暗槓だけである。暗槓以外の副露とリーチ成立を同時に復元したり、複数の宣言牌から都合のよい第一巡・一発資格を選んだりしてはならない（MUST NOT）。
 
 局内playにはself_stateを必須とし、temporary_furiten、riichi_furiten、kuikae_forbidden、time_bank_msを保持する。time_bank_msはstate.time_bank_msと同値である。複合打牌の途中ではsnapshotを取らないため、現行profileのkuikae_forbiddenは空配列になる。これらの自己情報を他seatやspectate/replayへ送信してはならない（MUST NOT）。
 
@@ -2463,7 +2471,7 @@ chinroutou, ryuuiisou, chuuren_poutou, suukantsu, tenhou, chiihou
   https://www.rfc-editor.org/rfc/rfc8126
 - [RFC 6838] Freed, N., Klensin, J., and T. Hansen, “Media Type Specifications and Registration Procedures”, BCP 13, RFC 6838, January 2013.  
   https://www.rfc-editor.org/rfc/rfc6838
-- [RFC 8785] Rundgren, A. and M. Jordan, “JSON Canonicalization Scheme (JCS)”, RFC 8785, June 2020.  
+- [RFC 8785] Rundgren, A., Jordan, B., and S. Erdtman, “JSON Canonicalization Scheme (JCS)”, RFC 8785, June 2020.
   https://www.rfc-editor.org/rfc/rfc8785
 
 ## 21. Informative References
