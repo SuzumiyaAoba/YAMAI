@@ -16,7 +16,7 @@
       "name": "riichi-4p",
       "revision": "1.0-draft.1",
       "document": "docs/yamai-protocol.md",
-      "profile_hash": "sha256:d70fc4979c719ed8c733c8043eacb34466354ed8749b0d8336164f1ba58a7b02"
+      "profile_hash": "sha256:ba95685e745ba61cd839b90327878bc0a99c451f3a9c5c1893f2495e9738aa07"
     }
   ],
   "normative_documents": [
@@ -25,8 +25,6 @@
   "informational_documents": [
     "docs/README.md",
     "docs/artifacts.md",
-    "docs/auth-implementation-plan.mdx",
-    "docs/spec-review.mdx",
     "verification/README.md",
     "verification/quint/README.md"
   ],

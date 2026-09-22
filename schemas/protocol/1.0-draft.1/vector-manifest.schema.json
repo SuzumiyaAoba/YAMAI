@@ -62,8 +62,8 @@
     },
     "cases": {
       "type": "array",
-      "minItems": 394,
-      "maxItems": 394,
+      "minItems": 408,
+      "maxItems": 408,
       "items": {
         "type": "object",
         "required": [

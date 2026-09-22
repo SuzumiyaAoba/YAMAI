@@ -56,6 +56,25 @@ YAKU_MIN_TRIPLETS = {
     "daisangen": 3, "shousuushii": 3, "daisuushii": 4,
     "suuankou": 4, "suukantsu": 4, "chinroutou": 4,
 }
+YAKUMAN_IDS = frozenset((
+    "kokushi_musou", "suuankou", "daisangen", "shousuushii", "daisuushii",
+    "tsuuiisou", "chinroutou", "ryuuiisou", "chuuren_poutou", "suukantsu",
+    "tenhou", "chiihou",
+))
+YAKU_ALLOWED_TILES = {
+    "tanyao": frozenset(range(34)) - ORPHANS,
+    "honroutou": ORPHANS, "kokushi_musou": ORPHANS,
+    "junchan": frozenset(range(27)), "chinitsu": frozenset(range(27)),
+    "chuuren_poutou": frozenset(range(27)),
+    "tsuuiisou": WINDS | DRAGONS, "chinroutou": TERMINALS, "ryuuiisou": GREENS,
+}
+
+
+def allowed_yaku_tiles(ids: set[str]) -> set[int]:
+    allowed = set(range(34))
+    for name in ids:
+        allowed.intersection_update(YAKU_ALLOWED_TILES.get(name, range(34)))
+    return allowed
 
 
 class ScoringError(ValueError):
@@ -84,6 +103,19 @@ def validate_win_declarations(win: dict, rules: dict | None = None, *, closed: b
                         ("honitsu", "chinitsu"), ("chanta", "junchan"),
                         ("shousuushii", "daisuushii"), ("tenhou", "chiihou")):
         require(not {left, right} <= ids, "invalid_message", "mutually exclusive yaku declarations")
+    for special in ("kokushi_musou", "chuuren_poutou"):
+        require(special not in ids or not ids & (YAKUMAN_IDS - {special, "tenhou", "chiihou"}),
+                "invalid_message", "special yakuman cannot combine with another hand shape")
+    require(not (ids & {"tenhou", "chiihou"} and "suukantsu" in ids),
+            "invalid_message", "first-draw yakuman cannot follow four kans")
+    require(not ("daisangen" in ids and ids & {"shousuushii", "daisuushii"}),
+            "invalid_message", "dragon and wind yakuman require more than four melds")
+    allowed = allowed_yaku_tiles(ids)
+    require(len(allowed) * 4 >= 14, "invalid_message", "yaku tile restrictions cannot form a hand")
+    require("daisangen" not in ids or DRAGONS <= allowed, "invalid_message",
+            "big three dragons conflicts with the allowed tiles")
+    require(not ids & {"shousuushii", "daisuushii"} or WINDS <= allowed, "invalid_message",
+            "four winds conflicts with the allowed tiles")
     if not any(yaku["unit"] == "yakuman" for yaku in win["yakus"]):
         sequences = max((YAKU_MIN_SEQUENCES.get(name, 0) for name in ids), default=0)
         triplets = max((YAKU_MIN_TRIPLETS.get(name, 0) for name in ids), default=0)

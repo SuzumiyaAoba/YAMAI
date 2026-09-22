@@ -131,6 +131,29 @@ class SessionInvariants(unittest.TestCase):
                 self.assertEqual(error.exception.code, 'invalid_message')
                 self.assertEqual((vars(receiver.game), receiver.known, receiver.applied), before)
 
+    def test_disclosed_scoring_contradictions_reject_atomically(self):
+        for number in range(395, 409):
+            name = next(k for k in self.vectors if k.startswith(f'V{number}_'))
+            with self.subTest(case=name):
+                case = self.vectors[name]
+                for side in ('positive', 'negative'):
+                    trace = deepcopy(case[side]['trace'])
+                    receiver = self.receiver(trace['welcome'])
+                    for step in trace['steps'][:-1]:
+                        self.assertEqual(receiver.receive(self.raw(step['message'])), 'applied')
+                    before = deepcopy((vars(receiver.game), receiver.known, receiver.requests,
+                                       receiver.applied, receiver.time_bank_ms))
+                    final = self.raw(trace['steps'][-1]['message'])
+                    if side == 'positive':
+                        self.assertEqual(receiver.receive(final), 'applied')
+                        self.assertEqual(receiver.game.game_phase, 'between_kyoku')
+                    else:
+                        with self.assertRaises(SessionError) as error:
+                            receiver.receive(final)
+                        self.assertEqual(error.exception.code, 'invalid_message')
+                        self.assertEqual((vars(receiver.game), receiver.known, receiver.requests,
+                                          receiver.applied, receiver.time_bank_ms), before)
+
     def test_public_yaku_cannot_require_incompatible_shapes(self):
         combinations = (
             ('pinfu', 'toitoi'), ('chiitoitsu', 'toitoi'), ('iipeikou', 'sanankou'),

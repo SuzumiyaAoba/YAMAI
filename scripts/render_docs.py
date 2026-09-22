@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Render the current Markdown and MDX documentation as HTML through mdxr."""
+"""Render tracked Markdown and optional local MDX documentation through mdxr."""
 
 from __future__ import annotations
 
@@ -87,6 +87,8 @@ def main() -> None:
     release = json.loads((ROOT / "release-manifest.json").read_text(encoding="utf-8"))
     for name, destination in DOCUMENTS.items():
         source, output = ROOT / name, ROOT / destination
+        if source.suffix == ".mdx" and not source.is_file():
+            continue
         intermediate = ROOT / ".mdxr" / "render" / Path(name).with_suffix(".mdx")
         intermediate.parent.mkdir(parents=True, exist_ok=True)
         intermediate.write_text(to_mdx(source, output, release["protocol"]["version"]), encoding="utf-8")

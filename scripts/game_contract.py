@@ -17,7 +17,7 @@ from scoring_reference import (
     Meld, ORPHANS, TILES, ScoringError, hand_parts, inventory,
     score_hand, shapes, tile_index, waits, pao_assignments,
     basic_points, normal_payments, settle_win, validate_win_declarations,
-    YAKU_MIN_SEQUENCES, YAKU_MIN_TRIPLETS,
+    YAKU_MIN_SEQUENCES, YAKU_MIN_TRIPLETS, DRAGONS, WINDS, TERMINALS, allowed_yaku_tiles,
 )
 
 
@@ -270,6 +270,62 @@ def check_hora_yaku_context(win: dict, kyoku: dict, cause: dict, rules: dict) ->
                 "situational yaku differ from public history")
     require(accepted or all(b["id"] != "uradora" for b in win["bonuses"]),
             "ura bonus without accepted reach")
+    check_hora_visible_tiles(win, kyoku)
+
+
+def check_hora_visible_tiles(win: dict, kyoku: dict) -> None:
+    """Use disclosed tiles and fixed melds; never fill in a hidden hand."""
+    actor = win["actor"]
+    ids = {y["id"] for y in win["yakus"]}
+    yakuman = any(y["unit"] == "yakuman" for y in win["yakus"])
+    melds = scoring_melds(kyoku["melds"][actor])
+    known = {tile_index(win["pai"])}
+    for meld in melds:
+        known.update(tile_index(tile) for tile in meld["tiles"])
+    hand = kyoku.get("hands", [{}] * 4)[actor]
+    known.update(tile_index(tile) for tile in hand.get("tiles", []))
+    require(known <= allowed_yaku_tiles(ids), "yaku conflicts with a disclosed tile")
+    if ids & {"honitsu", "chinitsu", "chuuren_poutou"}:
+        require(len({tile // 9 for tile in known if tile < 27}) <= 1,
+                "one-suit yaku contains disclosed tiles of different suits")
+    for name, terminals in (("chanta", ORPHANS), ("junchan", TERMINALS)):
+        if name in ids:
+            require(all(any(tile_index(t) in terminals for t in meld["tiles"]) for meld in melds),
+                    "outside-hand yaku contains a meld without a terminal or honor")
+            require(len(melds) < 4 or tile_index(win["pai"]) in terminals,
+                    "outside-hand yaku has a disclosed non-terminal pair")
+
+    triplets = {tile_index(m["tiles"][0]) for m in melds if m["kind"] != "chi"}
+    free = 4 - len(melds)
+    for name, needed in (("daisangen", DRAGONS), ("daisuushii", WINDS)):
+        require(name not in ids or len(needed - triplets) <= free,
+                "yakuman lacks room for its required dragon or wind melds")
+        require(not needed <= triplets or name in ids,
+                "yakuman established by public melds is missing")
+    for name, needed, count in (("shousangen", DRAGONS, 2), ("shousuushii", WINDS, 3)):
+        require(name not in ids or count - free <= len(needed & triplets) <= count,
+                "small dragon or wind hand lacks its required melds and pair")
+        require(name not in ids or free > 0 or tile_index(win["pai"]) in needed - triplets,
+                "small dragon or wind hand has the wrong disclosed pair")
+
+    if not yakuman:
+        honor_roles = {"yakuhai_haku": 31, "yakuhai_hatsu": 32, "yakuhai_chun": 33,
+                       "seat_wind": 27 + (actor - kyoku["oya"]) % 4,
+                       "round_wind": 27 + "ESWN".index(kyoku["bakaze"])}
+        required = {tile for name, tile in honor_roles.items() if name in ids}
+        require(len(required - triplets) <= free,
+                "honor yaku lack room for their required melds")
+        require(all(name in ids for name, tile in honor_roles.items() if tile in triplets),
+                "honor yaku established by public melds is missing")
+        closed = all(not m["open"] for m in melds)
+        if "chiitoitsu" not in ids:
+            tsumo = actor == win["target"]
+            minimum = 20 + 10 * (closed and not tsumo) + 2 * (tsumo and "pinfu" not in ids)
+            for meld in melds:
+                if meld["kind"] != "chi":
+                    minimum += (2 if meld["kind"] == "pon" else 8) * (1 if meld["open"] else 2) * (2 if tile_index(meld["tiles"][0]) in ORPHANS else 1)
+            require(win["fu"] >= (minimum + 9) // 10 * 10,
+                    "fu is below the amount required by public melds and win method")
 
 
 def riichi_ankan(hand: dict, drawn: str, rules: dict) -> bool:

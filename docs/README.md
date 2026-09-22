@@ -28,8 +28,6 @@ YAMAI は、4人リーチ麻雀のホスト、AI プレイヤー、観戦・牌�
 | エラーと再接続 | [§12 エラー](yamai-protocol.md#12-エラー)、[§13 再接続](yamai-protocol.md#13-再接続と-snapshot)、[§15 資源上限](yamai-protocol.md#15-資源安全要件) |
 | 拡張機能 | [§14 拡張](yamai-protocol.md#14-拡張)、[§19 識別子](yamai-protocol.md#19-識別子と-registry) |
 | 適合性の確認 | [§17 適合性](yamai-protocol.md#17-適合性)、[成果物の仕様](artifacts.md)、[検証ガイド](../verification/README.md) |
-| 今回の仕様点検 | [仕様レビュー](spec-review.mdx)：発見事項、修正、再検査と残る検証範囲 |
-| 認証サービスの実装計画 | [認証・認可の実装計画](auth-implementation-plan.mdx)：§18.6に従うサービス層の設計と受入条件 |
 
 ## 通信の流れ
 
@@ -77,10 +75,10 @@ game の状態、session の配送位置、要求の選択・計時は独立し�
 
 [release manifest](../release-manifest.json) の成果物を同じ組として使用する。Schema はメッセージ構造を、状態検査は順序と前後条件を、採点検査は手牌・ルールから求めた役・符・支払いを検査する。Quint は有限境界内の制御フローを検査する。
 
-Markdown・MDXの原本からHTMLを生成するには、リポジトリのルートで実行する。
+Gitで管理するMarkdownと、ローカルにある任意のMDXからHTMLを生成するには、リポジトリのルートで実行する。
 
 ```sh
 python3 scripts/render_docs.py
 ```
 
-`docs/index.html`、`docs/yamai-protocol.html`、`docs/artifacts.html`、`docs/auth-implementation-plan.html`、`docs/spec-review.html`、`verification/index.html`、`verification/quint/index.html` を生成する。MarkdownとMDXを原本とし、生成にはmdxr `0.2.0`を使用する。相互リンクもHTMLの配置に合わせる。検査の実行方法と適合性の範囲は[検証ガイド](../verification/README.md)に従う。
+`docs/index.html`、`docs/yamai-protocol.html`、`docs/artifacts.html`、`verification/index.html`、`verification/quint/index.html` を生成する。`docs/auth-implementation-plan.mdx` と `docs/spec-review.mdx` は、ローカルにある場合だけ同名のHTMLへ変換する。MDXとHTMLはGit管理対象外であり、release manifestにも含めない。生成にはmdxr `0.2.0`を使用し、相互リンクもHTMLの配置に合わせる。検査の実行方法と適合性の範囲は[検証ガイド](../verification/README.md)に従う。

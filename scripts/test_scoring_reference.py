@@ -52,29 +52,128 @@ class ScoringInvariants(unittest.TestCase):
                     if win['actor'] != data['actor']:
                         peer = next(w for w in data['other_winners'] if w['actor'] == win['actor'])
                         data, state = peer, peer['state']
+                    win['pai'] = win['winning_tile']
                     kyoku, cause = self.public_context(data, state)
+                    check_hora_yaku_context(win, kyoku, cause, rules)
+                    # The same check must remain valid when this view reveals
+                    # the complete concealed part as well as the public melds.
+                    kyoku['hands'] = [{'count': 13} for _ in range(4)]
+                    kyoku['hands'][win['actor']] = {'tiles': data['hand']['concealed_tiles']}
                     check_hora_yaku_context(win, kyoku, cause, rules)
 
     @staticmethod
     def public_context(data, state):
         actor = data['actor']
         melds = [[] for _ in range(4)]
-        melds[actor] = [dict(type=m['kind']) for m in data['hand']['melds']]
+        for m in data['hand']['melds']:
+            event = dict(type=m['kind'], actor=actor)
+            if m['kind'] == 'ankan':
+                event['consumed'] = m['tiles'].copy()
+            else:
+                event.update(pai=m['tiles'][0], consumed=m['tiles'][1:], target=m['source'])
+            melds[actor].append(event)
         reach = [dict(state='none', double=False, ippatsu=False) for _ in range(4)]
         reach[actor] = dict(state='accepted' if state['reach_accepted'] else 'none',
                             double=state['double_riichi'], ippatsu=state['ippatsu'])
         first = [False] * 4
         first[actor] = state['first_turn']
         kyoku = dict(melds=melds, reach_status=reach, first_turn_eligible=first,
-                     oya=state['oya'], rinshan=state['rinshan'], haitei=state['last_tile'])
+                     oya=state['oya'], bakaze=state['bakaze'], rinshan=state['rinshan'], haitei=state['last_tile'])
         cause = dict(type=state['pending_kan']['kind'] + '_declared' if state['pending_kan']
                      else 'tsumo' if data['win_method'] == 'tsumo' else 'dahai')
         return kyoku, cause
+
+    def test_impossible_yakuman_combinations_are_rejected(self):
+        pairs = (
+            ('kokushi_musou', 'daisangen'), ('chuuren_poutou', 'suuankou'),
+            ('daisangen', 'daisuushii'), ('daisangen', 'shousuushii'),
+            ('daisangen', 'ryuuiisou'), ('daisangen', 'chinroutou'),
+            ('daisuushii', 'chinroutou'), ('shousuushii', 'ryuuiisou'),
+            ('tsuuiisou', 'chinroutou'), ('tsuuiisou', 'ryuuiisou'),
+            ('tenhou', 'suukantsu'), ('chiihou', 'suukantsu'),
+        )
+        for roles in pairs:
+            with self.subTest(roles=roles):
+                win = deepcopy(self.fixtures['yakuman_daisangen']['expected']['wins'][0])
+                win['yakus'] = [dict(id=name, value=1, unit='yakuman') for name in sorted(roles)]
+                with self.assertRaises(ScoringError):
+                    validate_win_declarations(win)
+
+    def test_valid_yakuman_combinations_remain_possible(self):
+        for roles in (('kokushi_musou', 'chiihou'), ('chuuren_poutou', 'tenhou'),
+                      ('daisangen', 'suuankou', 'tsuuiisou'),
+                      ('daisuushii', 'suukantsu', 'tsuuiisou'), ('suuankou', 'ryuuiisou')):
+            with self.subTest(roles=roles):
+                win = deepcopy(self.fixtures['yakuman_daisangen']['expected']['wins'][0])
+                win['yakus'] = [dict(id=name, value=1, unit='yakuman') for name in sorted(roles)]
+                validate_win_declarations(win)
+
+    def test_public_tiles_constrain_roles_without_revealing_the_hand(self):
+        cases = (('yaku_tanyao', '1m'), ('yakuman_tsuuiisou', '9s'),
+                 ('yakuman_ryuuiisou', 'S'), ('yakuman_chinroutou', 'E'),
+                 ('yakuman_kokushi', '5mr'))
+        for name, tile in cases:
+            fixture = self.fixtures[name]
+            with self.subTest(fixture=fixture['id'], tile=tile):
+                rules = {**self.rules, **fixture.get('rule_overrides', {})}
+                win = calculate_fixture(fixture, self.rules)['wins'][0]
+                win['pai'] = win['winning_tile']
+                kyoku, cause = self.public_context(fixture['input'], fixture['state'])
+                check_hora_yaku_context(win, kyoku, cause, rules)
+                win['pai'] = tile
+                with self.assertRaises(GameError):
+                    check_hora_yaku_context(win, kyoku, cause, rules)
+
+    def test_public_honor_meld_cannot_lose_its_yaku(self):
+        fixture = self.fixtures['yakuman_daisangen']
+        win = calculate_fixture(fixture, self.rules)['wins'][0]
+        win['pai'] = win['winning_tile']
+        kyoku, cause = self.public_context(fixture['input'], fixture['state'])
+        # Complete public sets establish daisangen irrespective of what is
+        # concealed; a different yakuman cannot replace that declaration.
+        actor = win['actor']
+        kyoku['melds'][actor] = [dict(type='pon', actor=actor, target=(actor+1)%4,
+                                    pai=tile, consumed=[tile, tile]) for tile in ('P', 'F', 'C')]
+        win['yakus'] = [dict(id='tsuuiisou', value=1, unit='yakuman')]
+        win['pai'] = 'E'
+        with self.assertRaisesRegex(GameError, 'public melds is missing'):
+            check_hora_yaku_context(win, kyoku, cause, self.rules)
+
+    def test_four_fixed_melds_determine_the_small_dragon_or_wind_pair(self):
+        for name, tiles, pair in (('yaku_shousangen', ('P', 'F', '1m', '2p'), 'C'),
+                                  ('yakuman_shousuushii', ('E', 'S', 'W', '2p'), 'N')):
+            with self.subTest(fixture=name):
+                fixture = deepcopy(self.fixtures[name])
+                data = fixture['input']
+                source = (data['actor'] + 1) % 4
+                data.update(winning_tile=pair, win_method='ron', target=source)
+                data['hand'] = dict(concealed_tiles=[pair], melds=[
+                    dict(kind='pon', open=True, source=source, tiles=[tile] * 3)
+                    for tile in tiles])
+                win = calculate_fixture(fixture, self.rules)['wins'][0]
+                win['pai'] = pair
+                kyoku, cause = self.public_context(data, fixture['state'])
+                check_hora_yaku_context(win, kyoku, cause, self.rules)
+                win['pai'] = '9s'
+                with self.assertRaisesRegex(GameError, 'wrong disclosed pair'):
+                    check_hora_yaku_context(win, kyoku, cause, self.rules)
+
+    def test_public_meld_fu_is_a_lower_bound(self):
+        fixture = self.fixtures['yaku_sankantsu']
+        rules = {**self.rules, **fixture.get('rule_overrides', {})}
+        win = calculate_fixture(fixture, self.rules)['wins'][0]
+        win['pai'] = win['winning_tile']
+        kyoku, cause = self.public_context(fixture['input'], fixture['state'])
+        check_hora_yaku_context(win, kyoku, cause, rules)
+        win['fu'] = 30
+        with self.assertRaisesRegex(GameError, 'fu is below'):
+            check_hora_yaku_context(win, kyoku, cause, rules)
 
     def test_public_kan_yaku_requires_exact_count_and_cannot_be_omitted(self):
         for name, role in (('yaku_sankantsu', 'sankantsu'), ('yakuman_suukantsu', 'suukantsu')):
             fixture = self.fixtures[name]
             win = calculate_fixture(fixture, self.rules)['wins'][0]
+            win['pai'] = win['winning_tile']
             kyoku, cause = self.public_context(fixture['input'], fixture['state'])
             check_hora_yaku_context(win, kyoku, cause, self.rules)
             for variant in ('absent_kan', 'omitted_role'):

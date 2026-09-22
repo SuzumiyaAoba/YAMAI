@@ -3,7 +3,7 @@
   "protocol_version": "1.0-draft.1",
   "profile": "riichi-4p",
   "profile_revision": "1.0-draft.1",
-  "profile_hash": "sha256:d70fc4979c719ed8c733c8043eacb34466354ed8749b0d8336164f1ba58a7b02",
+  "profile_hash": "sha256:ba95685e745ba61cd839b90327878bc0a99c451f3a9c5c1893f2495e9738aa07",
   "registry": [
     "registry/protocol/1.0-draft.1/registry.json",
     "registry/riichi-4p/1.0-draft.1/registry.json"
@@ -2384,6 +2384,90 @@
     {
       "id": "V394_public_suuankou_ron_uses_tanki_double",
       "area": "scoring-public-multiplier",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V395_kokushi_cannot_combine_with_daisangen",
+      "area": "scoring-yakuman-compatibility",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V396_chuuren_cannot_combine_with_suuankou",
+      "area": "scoring-yakuman-compatibility",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V397_dragon_and_wind_yakuman_need_separate_melds",
+      "area": "scoring-yakuman-compatibility",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V398_all_honors_and_all_green_cannot_combine",
+      "area": "scoring-yakuman-compatibility",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V399_tanyao_excludes_terminal_winning_tile",
+      "area": "scoring-public-tiles",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V400_all_honors_excludes_numbered_winning_tile",
+      "area": "scoring-public-tiles",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V401_all_green_excludes_nine_sou",
+      "area": "scoring-public-tiles",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V402_outside_hand_requires_terminal_in_public_sequence",
+      "area": "scoring-public-tiles",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V403_flush_cannot_mix_public_suits",
+      "area": "scoring-public-tiles",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V404_public_dragon_meld_requires_its_yaku",
+      "area": "scoring-public-required-yaku",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V405_public_ankan_sets_minimum_fu",
+      "area": "scoring-public-fu",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V406_daisangen_needs_three_dragon_meld_slots",
+      "area": "scoring-public-tiles",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V407_public_three_dragons_cannot_be_omitted",
+      "area": "scoring-public-required-yaku",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V408_small_dragons_requires_the_remaining_dragon_pair",
+      "area": "scoring-public-tiles",
       "expect_positive": "valid",
       "expect_negative": "invalid_message"
     }
