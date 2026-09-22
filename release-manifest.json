@@ -73,6 +73,8 @@
       "scripts/test_validator.py",
       "scripts/check_jsonschema.py",
       "scripts/score_oracle.py",
+      "scripts/render_docs.py",
+      "scripts/test_tooling.py",
       "tests/test_regressions.py"
     ],
     "command": "python3 scripts/validate_artifacts.py",

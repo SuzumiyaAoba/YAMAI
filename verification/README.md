@@ -12,6 +12,7 @@ python3 scripts/test_validator.py
 python3 scripts/test_scoring_reference.py
 python3 scripts/test_session_contract.py
 python3 scripts/test_game_contract.py
+python3 scripts/test_tooling.py
 python3 tests/test_regressions.py
 python3 scripts/score_oracle.py
 ```
@@ -42,6 +43,7 @@ nix build path:.#checks.aarch64-darwin.artifact-validator --no-link --print-out-
 | [scoring_reference.py](../scripts/scoring_reference.py) | 手牌の全分解からの役・符・bonus・点数・支払い・供託・確定点数の再計算 |
 | [score_oracle.py](../scripts/score_oracle.py) | scoring_reference を使用して採点 fixture を検査する CLI |
 | [test_regressions.py](../tests/test_regressions.py) | 初局、sessionごとのseq、再開時の状態保持、観戦snapshot、採点ID非依存性と入力変更 |
+| [test_tooling.py](../scripts/test_tooling.py) | 採点CLIの外部ファイル入力・JSON出力・ID重複・エラー通知、文書生成でのコード例とリンクの保持 |
 | [Quint モデル](quint/README.md) | 有限状態内の要求処理、時計、配送、再接続、snapshot、点数保存 |
 
 stateful trace は1つの peer session の時刻付き message と不変の wire ledger を照合する。transaction 境界、request/ACK の終端、timeout、snapshot 置換、情報公開範囲を検査し、他 seat の選択は全3 member の request lifecycle trace と組み合わせて確認する。

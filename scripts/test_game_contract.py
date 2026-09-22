@@ -4,7 +4,7 @@ import unittest
 from copy import deepcopy
 
 import validate_artifacts as v
-from game_contract import EventState, canonical_action, legal_actions, next_kyoku
+from game_contract import EventState, GameError, canonical_action, check_hora_payments, legal_actions, next_kyoku
 from session_contract import Receiver, SessionError
 
 
@@ -38,6 +38,93 @@ class GameContractTests(unittest.TestCase):
         p["scores"] = p["scores"][2:] + p["scores"][:2]
         p["kan_counts"] = p["kan_counts"][2:] + p["kan_counts"][:2]
         self.assertEqual({canonical_action(rotate(a)) for a in actions}, {canonical_action(a) for a in legal_actions(p, self.rules)})
+
+    def test_riichi_ankan_must_consume_the_drawn_tile_kind(self):
+        state = self._dealt(seat=0)
+        state.round['hands'][0] = {'tiles': ['E'] * 3 + ['1m'] * 4 + ['2m', '3p', '4p', '5p', '9s', '9s']}
+        state.apply({'type': 'tsumo', 'actor': 0, 'pai': 'N'})
+        state.apply({'type': 'reach', 'actor': 0})
+        state.apply({'type': 'dahai', 'actor': 0, 'pai': 'N', 'tsumogiri': True})
+        state.apply({'type': 'reach_accepted', 'actor': 0, 'deltas': [-1000, 0, 0, 0],
+                     'scores': [24000, 25000, 25000, 25000], 'kyotaku': 1})
+        for actor, tile in enumerate(('6s', '7s', '8s'), 1):
+            state.apply({'type': 'tsumo', 'actor': actor, 'pai': None})
+            state.apply({'type': 'dahai', 'actor': actor, 'pai': tile, 'tsumogiri': True})
+        state.apply({'type': 'tsumo', 'actor': 0, 'pai': 'E'})
+        # East forms the unchanged triplet; the four 1m belong to both a
+        # triplet and a sequence, so declaring that quad changes the hand.
+        for tile in ('1m', 'E'):
+            candidate = deepcopy(state)
+            event = {'type': 'ankan_declared', 'actor': 0, 'consumed': [tile] * 4}
+            with self.subTest(tile=tile):
+                if tile == '1m':
+                    with self.assertRaises(GameError):
+                        candidate.apply(event)
+                else:
+                    candidate.apply(event)
+                    self.assertEqual(candidate.round['pending_kan'], event)
+
+    def test_pao_event_allows_namespaced_annotations(self):
+        trace = self.vectors['V250_pao_between_third_pon_and_discard']['positive']['trace']
+        rules = {**self.rules, **trace['rule_overrides']}
+        ordinary, annotated = EventState(rules), EventState(rules)
+        for event in trace['input']['events']:
+            ordinary.apply(event)
+            annotated.apply({**event, 'x_review_note': 'public annotation'} if event['type'] == 'pao' else event)
+        self.assertEqual(vars(ordinary), vars(annotated))
+
+    def test_snapshot_game_facts_allow_namespaced_annotations(self):
+        for field, vector in (
+            ('pao', 'V292_snapshot_pao_must_be_complete'),
+            ('pending_kan', 'V293_snapshot_kan_declaration_cause'),
+        ):
+            with self.subTest(field=field):
+                snapshot = deepcopy(self.vectors[vector]['positive']['state'])
+                ordinary, annotated = EventState(self.rules), EventState(self.rules)
+                ordinary.restore(snapshot)
+                target = snapshot['kyoku'][field]
+                if field == 'pao':
+                    target = target[0]
+                target['x_review_note'] = 'public annotation'
+                annotated.restore(snapshot)
+                self.assertEqual(canonical_action(ordinary.round), canonical_action(annotated.round))
+                key = 'liable_seat' if field == 'pao' else 'actor'
+                target[key] = (target[key] + 1) % 4
+                with self.assertRaises(GameError):
+                    annotated.restore(snapshot)
+
+    def test_round_progression_allows_namespaced_annotations(self):
+        for vector in ('V242_robbed_second_kan_clears_pending', 'V246_mixed_four_kans_abort_after_discard'):
+            with self.subTest(vector=vector):
+                trace = self.vectors[vector]['positive']['trace']
+                rules = {**self.rules, **trace['rule_overrides']}
+                ordinary, annotated = EventState(rules), EventState(rules)
+                for event in trace['input']['events']:
+                    ordinary.apply(event)
+                    changed = deepcopy(event)
+                    if changed['type'] == 'end_kyoku':
+                        changed['next']['x_review_note'] = 'public annotation'
+                    annotated.apply(changed)
+                self.assertEqual(vars(ordinary), vars(annotated))
+
+    def test_public_pao_payments_allow_namespaced_annotations(self):
+        scoring = v.strict_load(v.ROOT / f'test-vectors/riichi-4p/{v.PROFILE_REVISION}/scoring.json')
+        fixture = next(f for f in scoring['fixtures'] if f['id'] == 'settlement_pao_split')
+        rules = {**self.rules, **fixture['rule_overrides']}
+        win = deepcopy(fixture['expected']['wins'][0])
+        win['pai'] = win['winning_tile']
+        kyoku = deepcopy(fixture['state'])
+        kyoku['melds'] = [[] for _ in range(4)]
+        for meld in fixture['input']['hand']['melds']:
+            kyoku['melds'][win['actor']].append({'type': meld['kind'], 'actor': win['actor'],
+                                               'target': meld['source'], 'pai': meld['tiles'][0],
+                                               'consumed': meld['tiles'][1:]})
+        check_hora_payments([win], kyoku, rules)
+        win['pao'][0]['x_review_note'] = 'public annotation'
+        check_hora_payments([win], kyoku, rules)
+        win['pao'][0]['liable_seat'] = (win['pao'][0]['liable_seat'] + 1) % 4
+        with self.assertRaises(GameError):
+            check_hora_payments([win], kyoku, rules)
 
     def test_tonpu_and_tonnan_have_different_scheduled_final_rounds(self):
         current = {"bakaze":"E","kyoku":4,"oya":3,"honba":0,"extension_round":0}

@@ -22,12 +22,13 @@ DOCUMENTS = {
     "verification/quint/README.md": "verification/quint/index.html",
 }
 MDXR_VERSION = "0.2.0"
+INLINE_CODE = re.compile(r"(?<!`)(`+)(?!`)(.*?)(?<!`)\1(?!`)")
 
 
 def to_mdx(source: Path, output: Path, version: str) -> str:
     text = source.read_text(encoding="utf-8")
     native_mdx = source.suffix == ".mdx"
-    title, body = ("", text) if native_mdx else text.split("\n", 1)
+    title, _, body = ("", "", text) if native_mdx else text.partition("\n")
     body = re.sub(r"\n## 目次\n.*?(?=\n## 1\.)", "\n", body, flags=re.S)
     rendered_paths = {(ROOT / name).resolve(): ROOT / target for name, target in DOCUMENTS.items()}
 
@@ -43,12 +44,12 @@ def to_mdx(source: Path, output: Path, version: str) -> str:
     lines = []
     fence = None
     for line in body.splitlines():
-        marker = re.match(r"\s*(`{3,}|~{3,})", line)
+        marker = re.match(r"\s*(`{3,}|~{3,})(.*)$", line)
         if marker:
             delimiter = marker[1]
-            if fence is None:
+            if fence is None and (delimiter[0] != "`" or "`" not in marker[2]):
                 fence = delimiter
-            elif delimiter[0] == fence[0] and len(delimiter) >= len(fence):
+            elif fence is not None and delimiter[0] == fence[0] and len(delimiter) >= len(fence) and not marker[2].strip():
                 fence = None
             lines.append(line)
             continue
@@ -56,14 +57,19 @@ def to_mdx(source: Path, output: Path, version: str) -> str:
             lines.append(line)
             continue
 
-        line = re.sub(r"(\[[^\]]+\]\()([^\s)#]+)(#[^)]*)?(\))", link, line)
+        spans = list(INLINE_CODE.finditer(line))
+        line = re.sub(r"(\[[^\]]+\]\()([^\s)#]+)(#[^)]*)?(\))",
+                      lambda match: match[0] if any(span.start() <= match.start() < span.end() for span in spans) else link(match), line)
         if native_mdx:
             lines.append(line)
             continue
         # Keep inline code literal; escape prose that MDX would parse as JSX/JS.
-        parts = re.split(r"(`+[^`]*`+)", line)
-        for index in range(0, len(parts), 2):
-            parts[index] = re.sub(r"(?<!\\)([{}])", r"\\\1", parts[index]).replace("<", "&lt;")
+        parts, cursor = [], 0
+        for span in INLINE_CODE.finditer(line):
+            prose = line[cursor:span.start()]
+            parts.extend([re.sub(r"(?<!\\)([{}])", r"\\\1", prose).replace("<", "&lt;"), span[0]])
+            cursor = span.end()
+        parts.append(re.sub(r"(?<!\\)([{}])", r"\\\1", line[cursor:]).replace("<", "&lt;"))
         lines.append("".join(parts))
 
     header = "\n".join((

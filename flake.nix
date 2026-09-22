@@ -100,6 +100,7 @@
             python3 scripts/test_scoring_reference.py > "$out/scoring-regression.log" 2>&1
             python3 scripts/test_session_contract.py > "$out/session-regression.log" 2>&1
             python3 scripts/test_game_contract.py > "$out/game-regression.log" 2>&1
+            python3 scripts/test_tooling.py > "$out/tooling-regression.log" 2>&1
             python3 tests/test_regressions.py > "$out/specification-regression.log" 2>&1
             python3 scripts/check_jsonschema.py > "$out/jsonschema.log" 2>&1
             oracle="$src/scripts/score_oracle.py"

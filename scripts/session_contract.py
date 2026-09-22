@@ -5,11 +5,10 @@ contracts do not implement a mahjong game or an authorization service.
 """
 from __future__ import annotations
 
-from collections import Counter
 from copy import deepcopy
 from typing import Any, Callable
-from game_contract import EventState, GameError, canonical_action, round_coordinates_reachable, check_snapshot_rinshan
-from scoring_reference import ScoringError, tile_index
+from game_contract import EventState, GameError, canonical_action
+from scoring_reference import ScoringError
 
 
 class SessionError(ValueError):
@@ -447,168 +446,15 @@ class Receiver:
                     self.event_seq_floor = last_event_seq
                 self.validate("visible-event", {"event": turn["last_event"], "mode": state["mode"],
                                                 "view": self.welcome["view"], "seat": self.welcome["seat"]})
-                require(kyoku["kyotaku"] == state["kyotaku"], "invalid_message", "snapshot kyotaku differs")
-                rules = self.welcome["rules"]
-                require(round_coordinates_reachable(kyoku, rules),
-                        "invalid_message", "snapshot round coordinates are unreachable")
                 self_state = kyoku.get("self_state")
                 if self_state is not None:
-                    require(self_state["time_bank_ms"] == state["time_bank_ms"], "invalid_message", "snapshot time bank differs")
-                    require(not self_state["kuikae_forbidden"], "invalid_message", "snapshot pauses a compound discard")
-                reach_declared = [a for a, s in enumerate(kyoku["reach_status"]) if s["state"] == "declared"]
-                require(not reach_declared or (reach_declared == [turn["actor"]] and turn["last_event"]["type"] == "dahai"
-                                               and turn["phase"] in {"awaiting_responses", "resolving"}),
-                        "invalid_message", "unaccepted reach declaration survives outside its discard window")
-                for a, s in enumerate(kyoku["reach_status"]):
-                    river = kyoku["rivers"][a]
-                    if s["state"] == "none":
-                        require(not s["double"] and not s["ippatsu"] and not any(t["reach"] for t in river),
-                                "invalid_message", "reach flags or river mark precede any declaration")
-                    elif s["state"] == "declared":
-                        require(river and river[-1]["reach"] and not s["ippatsu"], "invalid_message",
-                                "declaration discard is unmarked or carries ippatsu")
-                        require(s["double"] == (len(river) == 1 and not any(kyoku["melds"])), "invalid_message",
-                                "double flag differs from declaration-time eligibility")
-                    else:
-                        require(any(t["reach"] for t in river), "invalid_message", "accepted reach has no marked discard")
-                        require(not s["double"] or river[0]["reach"], "invalid_message",
-                                "double flag differs from declaration-time eligibility")
-                        require(s["double"] or not (river[0]["reach"] and not any(kyoku["melds"])), "invalid_message",
-                                "double flag differs from declaration-time eligibility")
-                        require(not s["ippatsu"] or river[-1]["reach"], "invalid_message", "ippatsu survives a post-reach discard")
-                        require(s["ippatsu"] or not (river[-1]["reach"] and not any(kyoku["melds"])), "invalid_message",
-                                "ippatsu flag differs from the open reach window")
-                cause = turn["last_event"]
-                # The turn actor and projected state follow the committed
-                # cause: a round start fixes the dealer and a fresh board,
-                # while a decision cause belongs to the acting seat and its
-                # physical effects are already visible in rivers, hands and
-                # the pending declaration.
-                if cause["type"] == "start_kyoku":
-                    require(turn["actor"] == cause["oya"]
-                            and all(kyoku[k] == cause[k] for k in ("bakaze", "kyoku", "oya", "honba", "kyotaku", "extension_round"))
-                            and all(("tiles" in hand) == ("tiles" in dealt)
-                                    and (Counter(hand["tiles"]) == Counter(dealt["tiles"]) if "tiles" in hand
-                                         else hand["count"] == dealt["count"])
-                                    for hand, dealt in zip(kyoku["hands"], cause["hands"]))
-                            and kyoku["dora_markers"] == [cause["dora_marker"]]
-                            and state["scores"] == cause["scores"],
-                            "invalid_message", "snapshot round start differs from its start event")
-                    require(not any(kyoku["rivers"]) and not any(kyoku["melds"]) and not kyoku["pao"]
-                            and kyoku["kan_counts"] == [0] * 4 and not kyoku["rinshan"] and not kyoku["haitei"]
-                            and all(s["state"] == "none" for s in kyoku["reach_status"])
-                            and kyoku["wall_remaining"] == 70
-                            and (kyoku.get("self_state") is None
-                                 or not kyoku["self_state"]["temporary_furiten"] and not kyoku["self_state"]["riichi_furiten"]),
-                            "invalid_message", "snapshot round start is not a fresh deal")
-                else:
-                    actor = turn["actor"]
-                    require(actor == cause["actor"], "invalid_message", "snapshot turn actor differs from its cause")
-                    if cause["type"] == "dahai":
-                        tail = kyoku["rivers"][actor][-1] if kyoku["rivers"][actor] else None
-                        require(tail is not None and tail["pai"] == cause["pai"]
-                                and tail["tsumogiri"] == cause["tsumogiri"] and tail["called_by"] is None
-                                and tail["reach"] == (kyoku["reach_status"][actor]["state"] == "declared"),
-                                "invalid_message", "snapshot river tail differs from its cause discard")
-                    elif cause["type"] == "tsumo":
-                        hand = kyoku["hands"][actor]
-                        require(cause["pai"] is None or "tiles" not in hand or cause["pai"] in hand["tiles"],
-                                "invalid_message", "snapshot draw is absent from the visible hand")
-                    else:
-                        require(len({tile_index(t) for t in cause["consumed"]}) == 1,
-                                "invalid_message", "kan declaration mixes tile kinds")
-                        require(kyoku["wall_remaining"] > 0 and sum(kyoku["kan_counts"]) < 4,
-                                "invalid_message", "kan declaration lacks commit capacity")
-                        if cause["type"] == "kakan_declared":
-                            require(kyoku["reach_status"][actor]["state"] == "none"
-                                    and tile_index(cause["pai"]) == tile_index(cause["consumed"][0])
-                                    and any(m["type"] == "pon" and Counter([m["pai"], *m["consumed"]]) == Counter(cause["consumed"])
-                                            for m in kyoku["melds"][actor]),
-                                    "invalid_message", "kakan declaration has no matching pon")
-                        hand = kyoku["hands"][actor]
-                        if "tiles" in hand:
-                            needed = Counter(cause["consumed"] if cause["type"] == "ankan_declared" else [cause["pai"]])
-                            require(not needed - Counter(hand["tiles"]), "invalid_message", "kan declaration uses absent visible tiles")
-                # Self furiten flags follow public state: riichi furiten
-                # exists only under an accepted declaration, and a seat's own
-                # draw clears its temporary furiten (§10.4, §13.3).
-                if self_state is not None:
-                    seat = state.get("seat")
-                    require(isinstance(seat, int) and 0 <= seat <= 3, "invalid_message", "self state without a play seat")
-                    require(not self_state["riichi_furiten"]
-                            or kyoku["reach_status"][seat]["state"] == "accepted",
-                            "invalid_message", "riichi furiten without an accepted declaration")
-                    require(not self_state["temporary_furiten"]
-                            or cause["type"] != "tsumo" or cause["actor"] != seat,
-                            "invalid_message", "temporary furiten survives its own draw")
-                try:
-                    check_snapshot_rinshan(kyoku, rules)
-                except GameError as error:
-                    raise SessionError("invalid_message", str(error)) from error
-                require(sum(s["state"] == "accepted" for s in kyoku["reach_status"]) <= kyoku["kyotaku"],
-                        "invalid_message", "accepted riichi deposits exceed the round's deposit count")
-                for a in range(4):
-                    require(kyoku["first_turn_eligible"][a] == (not kyoku["rivers"][a] and not any(kyoku["melds"])),
-                            "invalid_message", "first-turn eligibility differs from public discard/call history")
+                    require(self_state["time_bank_ms"] == state["time_bank_ms"],
+                            "invalid_message", "snapshot time bank differs")
                 view = self.welcome["view"]
                 visible_seat = state["seat"] if state["mode"] == "play" else view.get("seat") if isinstance(view, dict) else None
-                holds_draw = (turn["phase"] == "awaiting_action"
-                              or turn["phase"] == "resolving" and turn["last_event"]["type"] == "tsumo"
-                              or kyoku["pending_kan"] is not None and turn["phase"] in {"awaiting_responses", "resolving"})
                 for actor, hand in enumerate(kyoku["hands"]):
-                    require(("tiles" in hand) == (view == "full" or actor == visible_seat), "invalid_message", "snapshot hand visibility differs")
-                    physical = len(hand["tiles"]) if "tiles" in hand else hand["count"]
-                    require(physical == 13 - 3 * len(kyoku["melds"][actor]) + int(actor == turn["actor"] and holds_draw),
-                            "invalid_message", "snapshot concealed tile count differs")
-                    for meld in kyoku["melds"][actor]:
-                        require(meld["actor"] == actor, "invalid_message", "snapshot meld seat differs")
-                        require(len(meld["consumed"]) == {"chi":2,"pon":2,"daiminkan":3,"ankan":4,"kakan":3}[meld["type"]],
-                                "invalid_message", "snapshot meld consumed count differs")
-                        target = meld.get("target")
-                        if meld["type"] == "ankan":
-                            require(target is None and len({tile_index(t) for t in meld["consumed"]}) == 1,
-                                    "invalid_message", "invalid ankan meld")
-                            continue
-                        require(isinstance(target, int) and 0 <= target <= 3 and target != actor,
-                                "invalid_message", "snapshot meld target seat differs")
-                        indices = sorted(tile_index(t) for t in [meld.get("pai"), *meld["consumed"]])
-                        if meld["type"] == "chi":
-                            require(target == (actor + 3) % 4 and indices[0] < 27
-                                    and indices[0] // 9 == indices[-1] // 9
-                                    and indices == list(range(indices[0], indices[0] + 3)),
-                                    "invalid_message", "invalid chi meld geometry")
-                        else:
-                            require(len(set(indices)) == 1, "invalid_message", "invalid meld geometry")
-                        require(any(t["pai"] == meld.get("pai") and t["called_by"] == actor
-                                    for t in kyoku["rivers"][target]),
-                                "invalid_message", "called meld lacks its river discard")
-                    for tile in kyoku["rivers"][actor]:
-                        caller = tile["called_by"]
-                        require(caller is None
-                                or (isinstance(caller, int) and 0 <= caller <= 3 and caller != actor
-                                    and any(m["type"] != "ankan" and m["target"] == actor and m.get("pai") == tile["pai"]
-                                            for m in kyoku["melds"][caller])),
-                                "invalid_message", "called river tile has no matching meld")
-                require(sum(kyoku["kan_counts"]) <= 4, "invalid_message", "too many kans")
-                for actor in range(4):
-                    require(kyoku["kan_counts"][actor] == sum(m["type"] in {"ankan", "daiminkan", "kakan"} for m in kyoku["melds"][actor]),
-                            "invalid_message", "kan count differs from committed melds")
-                concealed = sum(len(h["tiles"]) if "tiles" in h else h["count"] for h in kyoku["hands"])
-                meld_tiles = sum(len(m["consumed"]) + int(m["type"] != "ankan") for row in kyoku["melds"] for m in row)
-                river_tiles = sum(t["called_by"] is None for river in kyoku["rivers"] for t in river)
-                dead = 14 + int(kyoku["rinshan"] and turn["phase"] == "awaiting_draw")
-                require(concealed + meld_tiles + river_tiles + kyoku["wall_remaining"] + dead == 136,
-                        "invalid_message", "snapshot loses or creates physical tiles")
-                require(len(kyoku["dora_markers"]) == 1 + sum(kyoku["kan_counts"]) - int(kyoku["pending_dora"] is not None),
-                        "invalid_message", "dora count differs from kan state")
-            if state.get("next_kyoku") is not None:
-                nxt = state["next_kyoku"]
-                rules = self.welcome["rules"]
-                require(nxt["kyotaku"] == state["kyotaku"] and round_coordinates_reachable(nxt, rules),
-                        "invalid_message", "snapshot next kyotaku differs")
-            if state.get("game_phase") == "ended":
-                order = sorted(range(4), key=lambda i: (-state["scores"][i], i))
-                require(state["final_rankings"] == [order.index(i) + 1 for i in range(4)], "invalid_message", "snapshot rankings differ")
+                    require(("tiles" in hand) == (view == "full" or actor == visible_seat),
+                            "invalid_message", "snapshot hand visibility differs")
             if state["mode"] == "play":
                 needs_request = turn is not None and ((turn["phase"] == "awaiting_action" and turn["actor"] == state["seat"])
                                                       or (turn["phase"] == "awaiting_responses" and turn["actor"] != state["seat"]))

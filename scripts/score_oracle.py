@@ -21,6 +21,9 @@ def run(path: Path, print_json: bool = False) -> int:
     data = v.strict_load(path)
     schemas = v.SchemaSet()
     schemas.validate(data, {"$ref": f"urn:yamai:schema:riichi-4p:{v.PROFILE_REVISION}:scoring-vectors"})
+    ids = [fixture["id"] for fixture in [*data["fixtures"], *data["negative_fixtures"]]]
+    if len(ids) != len(set(ids)):
+        raise ValueError("duplicate fixture id")
     computed = {}
     for fixture in data["fixtures"]:
         actual = compute_fixture(fixture, data["rules"])
@@ -37,7 +40,8 @@ def run(path: Path, print_json: bool = False) -> int:
             raise ValueError(f"{fixture['id']}: invalid scoring input was accepted")
     if print_json:
         print(json.dumps(computed, ensure_ascii=False, indent=2, sort_keys=True))
-    print(f"score oracle: {len(computed)} positive and {len(data['negative_fixtures'])} negative fixtures verified")
+    print(f"score oracle: {len(computed)} positive and {len(data['negative_fixtures'])} negative fixtures verified",
+          file=sys.stderr if print_json else sys.stdout)
     return 0
 
 
@@ -48,7 +52,7 @@ def main() -> int:
     args = parser.parse_args()
     try:
         return run(args.path, args.print_json)
-    except (v.ArtifactError, ScoringError, ValueError, KeyError) as error:
+    except (v.ArtifactError, ScoringError, ValueError, KeyError, OSError) as error:
         print(f"score oracle: {error}", file=sys.stderr)
         return 1
 

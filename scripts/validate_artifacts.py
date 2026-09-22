@@ -26,7 +26,7 @@ from request_contract import evaluate as evaluate_request_contract
 from scoring_reference import ScoringError, basic_points, normal_payments, validate_score_bounds, MAX_GAME_EVENTS, MAX_HAND_POINTS, calculate_fixture as calculate_scoring_fixture, tile_index
 from scoring_reference import NORMAL_YAKU_HAN, validate_win_declarations
 from session_contract import SessionError, Receiver, negotiate, check_token_trace, replay_plan, resource_trace, classify_player_input, check_clock, check_snapshot_clock
-from game_contract import GameError, EventState, next_kyoku, legal_actions, canonical_action, furiten, furiten_step, abortive_reason, kan_sequence, public_pao, round_coordinates_reachable, check_snapshot_rinshan, check_snapshot_public_history, known_round_tiles
+from game_contract import GameError, EventState, next_kyoku, legal_actions, canonical_action, furiten, furiten_step, abortive_reason, kan_sequence, validate_snapshot_state
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -172,7 +172,12 @@ def strict_load_bytes(data: bytes, *, source: str = "<bytes>", max_bytes: int | 
 
 
 def strict_load(path: Path) -> Any:
-    return strict_load_bytes(path.read_bytes(), source=str(path.relative_to(ROOT)))
+    resolved = path.resolve()
+    try:
+        source = str(resolved.relative_to(ROOT))
+    except ValueError:
+        source = str(resolved)
+    return strict_load_bytes(path.read_bytes(), source=source)
 
 
 def _json_type(value: Any, name: str) -> bool:
@@ -239,8 +244,8 @@ class SchemaSet:
                 if not isinstance(target, dict) or part not in target:
                     raise ArtifactError("schema_error", f"missing schema fragment: {ref}")
                 target = target[part]
-        if not isinstance(target, dict):
-            raise ArtifactError("schema_error", f"schema ref is not an object: {ref}")
+        if not isinstance(target, (dict, bool)):
+            raise ArtifactError("schema_error", f"schema ref is not an object or boolean: {ref}")
         return target, root
 
     def check_refs(self) -> None:
@@ -309,6 +314,16 @@ class SchemaSet:
     def validate(self, value: Any, schema: Any, path: str = "$") -> None:
         self._validate(value, schema, path, schema)
 
+    def _matches(self, value: Any, schema: Any, path: str, base: Mapping[str, Any]) -> bool:
+        """Only an instance mismatch may select another schema branch."""
+        try:
+            self._validate(value, schema, path, base)
+        except ArtifactError as error:
+            if error.code != "invalid_message":
+                raise
+            return False
+        return True
+
     def _validate(self, value: Any, schema: Any, path: str, base: Mapping[str, Any]) -> None:
         if schema is True:
             return
@@ -323,40 +338,16 @@ class SchemaSet:
             for sub in schema["allOf"]:
                 self._validate(value, sub, path, base)
         if "anyOf" in schema:
-            matched = False
-            for sub in schema["anyOf"]:
-                try:
-                    self._validate(value, sub, path, base)
-                    matched = True
-                    break
-                except ArtifactError as exc:
-                    if exc.code != "invalid_message":
-                        raise
-            if not matched:
+            if not any(self._matches(value, sub, path, base) for sub in schema["anyOf"]):
                 raise ArtifactError("invalid_message", f"no anyOf branch matched at {path}")
         if "oneOf" in schema:
-            matches = 0
-            for sub in schema["oneOf"]:
-                try:
-                    self._validate(value, sub, path, base)
-                    matches += 1
-                except ArtifactError:
-                    pass
+            matches = sum(self._matches(value, sub, path, base) for sub in schema["oneOf"])
             if matches != 1:
                 raise ArtifactError("invalid_message", f"oneOf matched {matches} branches at {path}")
-        if "not" in schema:
-            try:
-                self._validate(value, schema["not"], path, base)
-            except ArtifactError:
-                pass
-            else:
-                raise ArtifactError("invalid_message", f"not constraint matched at {path}")
+        if "not" in schema and self._matches(value, schema["not"], path, base):
+            raise ArtifactError("invalid_message", f"not constraint matched at {path}")
         if "if" in schema:
-            condition = True
-            try:
-                self._validate(value, schema["if"], path, base)
-            except ArtifactError:
-                condition = False
+            condition = self._matches(value, schema["if"], path, base)
             branch = schema.get("then") if condition else schema.get("else")
             if branch is not None:
                 self._validate(value, branch, path, base)
@@ -392,13 +383,8 @@ class SchemaSet:
                 if any(_json_equal(item, earlier) for i, item in enumerate(value) for earlier in value[:i]):
                     raise ArtifactError("invalid_message", f"uniqueItems mismatch at {path}")
             if "contains" in schema:
-                matches = 0
-                for index, item in enumerate(value):
-                    try:
-                        self._validate(item, schema["contains"], f"{path}[{index}]", base)
-                    except ArtifactError:
-                        continue
-                    matches += 1
+                matches = sum(self._matches(item, schema["contains"], f"{path}[{index}]", base)
+                              for index, item in enumerate(value))
                 minimum = schema.get("minContains", 1)
                 maximum = schema.get("maxContains", len(value))
                 if matches < minimum or matches > maximum:
@@ -867,7 +853,7 @@ def check_release_manifest(manifest: Dict[str, Any], p: Dict[str, Any], r: Dict[
     if not isinstance(validator, Mapping) or validator.get("path") != "scripts/validate_artifacts.py" or validator.get("command") != "python3 scripts/validate_artifacts.py":
         raise ArtifactError("release_error", "release validator metadata mismatch")
     _repo_file(validator.get("path"), "validator.path")
-    if validator.get("support_files") != ["scripts/request_contract.py", "scripts/scoring_reference.py", "scripts/session_contract.py", "scripts/game_contract.py", "scripts/test_scoring_reference.py", "scripts/test_session_contract.py", "scripts/test_game_contract.py", "scripts/test_validator.py", "scripts/check_jsonschema.py", "scripts/score_oracle.py", "tests/test_regressions.py"]:
+    if validator.get("support_files") != ["scripts/request_contract.py", "scripts/scoring_reference.py", "scripts/session_contract.py", "scripts/game_contract.py", "scripts/test_scoring_reference.py", "scripts/test_session_contract.py", "scripts/test_game_contract.py", "scripts/test_validator.py", "scripts/check_jsonschema.py", "scripts/score_oracle.py", "scripts/render_docs.py", "scripts/test_tooling.py", "tests/test_regressions.py"]:
         raise ArtifactError("release_error", "release validator support files mismatch")
     _repo_file_list(validator.get("support_files"), "validator.support_files")
 
@@ -1101,10 +1087,15 @@ def _check_snapshot(message: Mapping[str, Any], extension_contexts: Mapping[str,
     _require(len(pending) <= 1, "invalid_message", "snapshot contains another seat's request")
     _require(isinstance(state.get("kyoku"), dict) == (state.get("game_phase") == "in_kyoku"),
              "invalid_message", "snapshot kyoku presence differs from phase")
+    if state["kyoku"] is not None:
+        _check_event_visibility(state["kyoku"]["turn"]["last_event"], mode, view, seat)
+    try:
+        validate_snapshot_state(state, rules)
+    except (GameError, ScoringError) as error:
+        raise ArtifactError("invalid_message", str(error)) from error
     if isinstance(state.get("kyoku"), dict):
         kyoku = state["kyoku"]
         turn = kyoku["turn"]
-        _check_event_visibility(turn["last_event"], mode, view, seat)
         phase = turn["phase"]
         initial_observer = mode == "spectate" and message["seq"] == 1 and message["replaces_through_seq"] == 0
         if initial_observer:
@@ -1113,196 +1104,16 @@ def _check_snapshot(message: Mapping[str, Any], extension_contexts: Mapping[str,
             _require(mode == "spectate" and turn["last_event_seq"] is None
                      or type(turn["last_event_seq"]) is int and 0 < turn["last_event_seq"] <= message["replaces_through_seq"],
                      "invalid_message", "snapshot cause event lies outside replacement range")
-        # A snapshot is fixed only at a transaction boundary: its last
-        # committed event is a decision cause or the round start, never a
-        # transaction-interior event (call, acceptance, marker, pao).
-        reactions = {"dahai", "ankan_declared", "kakan_declared"}
-        _require(phase == "awaiting_draw" and turn["last_event"]["type"] == "start_kyoku"
-                 or phase == "awaiting_action" and turn["last_event"]["type"] == "tsumo"
-                 or phase == "awaiting_responses" and turn["last_event"]["type"] in reactions
-                 or phase == "resolving" and turn["last_event"]["type"] in reactions | {"tsumo"},
-                 "invalid_message", "snapshot phase does not follow its last committed event")
-        needs_request = mode == "play" and ((phase == "awaiting_action" and turn["actor"] == seat) or (phase == "awaiting_responses" and turn["actor"] != seat))
+        needs_request = mode == "play" and ((phase == "awaiting_action" and turn["actor"] == seat)
+                                             or (phase == "awaiting_responses" and turn["actor"] != seat))
         _require(len(pending) == int(needs_request), "invalid_message", "pending requests do not match this seat's turn")
-        declared = turn["last_event"]["type"] in {"ankan_declared", "kakan_declared"}
-        _require(kyoku["pending_kan"] == (turn["last_event"] if declared else None),
-                 "invalid_message", "snapshot pending kan differs from its cause")
-        # A declared-but-unaccepted riichi exists only inside the reach
-        # discard's reaction window, and a deferred dora marker survives a
-        # boundary only while the rinshan decision is open (§10.1–§10.3).
-        reach_declared = [a for a, s in enumerate(kyoku["reach_status"]) if s["state"] == "declared"]
-        _require(not reach_declared or (reach_declared == [turn["actor"]] and turn["last_event"]["type"] == "dahai"
-                                        and phase in {"awaiting_responses", "resolving"}),
-                 "invalid_message", "unaccepted reach declaration survives outside its discard window")
-        for a, s in enumerate(kyoku["reach_status"]):
-            river = kyoku["rivers"][a]
-            if s["state"] == "none":
-                _require(not s["double"] and not s["ippatsu"] and not any(t["reach"] for t in river),
-                         "invalid_message", "reach flags or river mark precede any declaration")
-            elif s["state"] == "declared":
-                _require(river and river[-1]["reach"] and not s["ippatsu"], "invalid_message",
-                         "declaration discard is unmarked or carries ippatsu")
-                _require(s["double"] == (len(river) == 1 and not any(kyoku["melds"])), "invalid_message",
-                         "double flag differs from declaration-time eligibility")
-            else:
-                _require(any(t["reach"] for t in river), "invalid_message", "accepted reach has no marked discard")
-                _require(not s["double"] or river[0]["reach"], "invalid_message",
-                         "double flag differs from declaration-time eligibility")
-                _require(s["double"] or not (river[0]["reach"] and not any(kyoku["melds"])), "invalid_message",
-                         "double flag differs from declaration-time eligibility")
-                _require(not s["ippatsu"] or river[-1]["reach"], "invalid_message", "ippatsu survives a post-reach discard")
-                _require(s["ippatsu"] or not (river[-1]["reach"] and not any(kyoku["melds"])), "invalid_message",
-                         "ippatsu flag differs from the open reach window")
-        cause = turn["last_event"]
-        # The turn actor and projected state follow the committed cause: a
-        # round start fixes the dealer and a fresh board, while a decision
-        # cause belongs to the acting seat and its physical effects are
-        # already visible in rivers, hands and the pending declaration.
-        if cause["type"] == "start_kyoku":
-            _require(turn["actor"] == cause["oya"]
-                     and all(kyoku[k] == cause[k] for k in ("bakaze", "kyoku", "oya", "honba", "kyotaku", "extension_round"))
-                     and all(("tiles" in hand) == ("tiles" in dealt)
-                             and (Counter(hand["tiles"]) == Counter(dealt["tiles"]) if "tiles" in hand
-                                  else hand["count"] == dealt["count"])
-                             for hand, dealt in zip(kyoku["hands"], cause["hands"]))
-                     and kyoku["dora_markers"] == [cause["dora_marker"]]
-                     and state["scores"] == cause["scores"],
-                     "invalid_message", "snapshot round start differs from its start event")
-            _require(not any(kyoku["rivers"]) and not any(kyoku["melds"]) and not kyoku["pao"]
-                     and kyoku["kan_counts"] == [0] * 4 and not kyoku["rinshan"] and not kyoku["haitei"]
-                     and all(s["state"] == "none" for s in kyoku["reach_status"])
-                     and kyoku["wall_remaining"] == 70
-                     and (kyoku.get("self_state") is None
-                          or not kyoku["self_state"]["temporary_furiten"] and not kyoku["self_state"]["riichi_furiten"]),
-                     "invalid_message", "snapshot round start is not a fresh deal")
-        else:
-            _require(turn["actor"] == cause["actor"], "invalid_message", "snapshot turn actor differs from its cause")
-            actor = turn["actor"]
-            if cause["type"] == "dahai":
-                tail = kyoku["rivers"][actor][-1] if kyoku["rivers"][actor] else None
-                _require(tail is not None and tail["pai"] == cause["pai"]
-                         and tail["tsumogiri"] == cause["tsumogiri"] and tail["called_by"] is None
-                         and tail["reach"] == (kyoku["reach_status"][actor]["state"] == "declared"),
-                         "invalid_message", "snapshot river tail differs from its cause discard")
-            elif cause["type"] == "tsumo":
-                hand = kyoku["hands"][actor]
-                _require(cause["pai"] is None or "tiles" not in hand or cause["pai"] in hand["tiles"],
-                         "invalid_message", "snapshot draw is absent from the visible hand")
-            else:
-                _require(len({tile_index(t) for t in cause["consumed"]}) == 1,
-                         "invalid_message", "kan declaration mixes tile kinds")
-                _require(kyoku["wall_remaining"] > 0 and sum(kyoku["kan_counts"]) < 4,
-                         "invalid_message", "kan declaration lacks commit capacity")
-                if cause["type"] == "kakan_declared":
-                    _require(kyoku["reach_status"][actor]["state"] == "none"
-                             and tile_index(cause["pai"]) == tile_index(cause["consumed"][0])
-                             and any(m["type"] == "pon" and Counter([m["pai"], *m["consumed"]]) == Counter(cause["consumed"])
-                                     for m in kyoku["melds"][actor]),
-                             "invalid_message", "kakan declaration has no matching pon")
-                hand = kyoku["hands"][actor]
-                if "tiles" in hand:
-                    needed = Counter(cause["consumed"] if cause["type"] == "ankan_declared" else [cause["pai"]])
-                    _require(not needed - Counter(hand["tiles"]), "invalid_message", "kan declaration uses absent visible tiles")
-        # Self furiten flags follow public state: riichi furiten exists only
-        # under an accepted declaration, and a seat's own draw clears its
-        # temporary furiten (§10.4, §13.3).
-        self_state = kyoku.get("self_state")
-        if self_state is not None:
-            _require(isinstance(seat, int) and 0 <= seat <= 3, "invalid_message", "self state without a play seat")
-            _require(not self_state["riichi_furiten"]
-                     or kyoku["reach_status"][seat]["state"] == "accepted",
-                     "invalid_message", "riichi furiten without an accepted declaration")
-            _require(not self_state["temporary_furiten"]
-                     or cause["type"] != "tsumo" or cause["actor"] != seat,
-                     "invalid_message", "temporary furiten survives its own draw")
-        try:
-            check_snapshot_rinshan(kyoku, rules)
-        except GameError as error:
-            raise ArtifactError("invalid_message", str(error)) from error
-        _require(sum(s["state"] == "accepted" for s in kyoku["reach_status"]) <= kyoku["kyotaku"],
-                 "invalid_message", "accepted riichi deposits exceed the round's deposit count")
-        for a in range(4):
-            _require(kyoku["first_turn_eligible"][a] == (not kyoku["rivers"][a] and not any(kyoku["melds"])),
-                     "invalid_message", "first-turn eligibility differs from public discard/call history")
-        _require(kyoku["kyotaku"] == state["kyotaku"], "invalid_message", "snapshot kyotaku differs")
-        _require(kyoku["oya"] == kyoku["kyoku"] - 1, "invalid_message", "snapshot round coordinates are unreachable")
-        if rules is not None:
-            _require(round_coordinates_reachable(kyoku, rules),
-                     "invalid_message", "snapshot round coordinates are unreachable")
         if mode == "play":
-            _require(kyoku["self_state"]["time_bank_ms"] == state["time_bank_ms"], "invalid_message", "snapshot time bank differs")
-            _require(not kyoku["self_state"]["kuikae_forbidden"], "invalid_message", "snapshot pauses a compound discard")
+            _require(kyoku["self_state"]["time_bank_ms"] == state["time_bank_ms"],
+                     "invalid_message", "snapshot time bank differs")
         visible_seat = seat if mode == "play" else view.get("seat") if isinstance(view, dict) else None
         for actor, hand in enumerate(kyoku["hands"]):
-            visible = view == "full" or actor == visible_seat
-            _require(("tiles" in hand) == visible, "invalid_message", "snapshot hand visibility differs")
-            physical_count = len(hand["tiles"]) if visible else hand["count"]
-            holds_draw = (phase == "awaiting_action"
-                          or phase == "resolving" and turn["last_event"]["type"] == "tsumo"
-                          or kyoku["pending_kan"] is not None and phase in {"awaiting_responses", "resolving"})
-            extra = int(actor == turn["actor"] and holds_draw)
-            _require(physical_count == 13 - 3 * len(kyoku["melds"][actor]) + extra, "invalid_message", "snapshot concealed tile count differs")
-            for meld in kyoku["melds"][actor]:
-                _require(meld["actor"] == actor, "invalid_message", "snapshot meld seat differs")
-                _require(len(meld["consumed"]) == {"chi":2,"pon":2,"daiminkan":3,"ankan":4,"kakan":3}[meld["type"]],
-                         "invalid_message", "snapshot meld consumed count differs")
-                target = meld.get("target")
-                if meld["type"] == "ankan":
-                    _require(target is None and len({tile_index(t) for t in meld["consumed"]}) == 1,
-                             "invalid_message", "invalid ankan meld")
-                    continue
-                _require(isinstance(target, int) and 0 <= target <= 3 and target != actor,
-                         "invalid_message", "snapshot meld target seat differs")
-                indices = sorted(tile_index(t) for t in [meld.get("pai"), *meld["consumed"]])
-                if meld["type"] == "chi":
-                    _require(target == (actor + 3) % 4 and indices[0] < 27
-                             and indices[0] // 9 == indices[-1] // 9
-                             and indices == list(range(indices[0], indices[0] + 3)),
-                             "invalid_message", "invalid chi meld geometry")
-                else:
-                    _require(len(set(indices)) == 1, "invalid_message", "invalid meld geometry")
-                _require(any(t["pai"] == meld.get("pai") and t["called_by"] == actor
-                             for t in kyoku["rivers"][target]),
-                         "invalid_message", "called meld lacks its river discard")
-            for tile in kyoku["rivers"][actor]:
-                caller = tile["called_by"]
-                _require(caller is None
-                         or (isinstance(caller, int) and 0 <= caller <= 3 and caller != actor
-                             and any(m["type"] != "ankan" and m["target"] == actor and m.get("pai") == tile["pai"]
-                                     for m in kyoku["melds"][caller])),
-                         "invalid_message", "called river tile has no matching meld")
-        try:
-            check_snapshot_public_history(kyoku)
-        except GameError as error:
-            raise ArtifactError("invalid_message", str(error)) from error
-        _require(sum(kyoku["kan_counts"]) <= 4, "invalid_message", "too many kans")
-        for actor in range(4):
-            count = sum(m["type"] in {"ankan", "daiminkan", "kakan"} for m in kyoku["melds"][actor])
-            _require(kyoku["kan_counts"][actor] == count, "invalid_message", "kan count differs from committed melds")
-        concealed_count = sum(len(h["tiles"]) if "tiles" in h else h["count"] for h in kyoku["hands"])
-        meld_count = sum(len(m["consumed"]) + int(m["type"] != "ankan") for row in kyoku["melds"] for m in row)
-        river_count = sum(t["called_by"] is None for river in kyoku["rivers"] for t in river)
-        dead_count = 14 + int(kyoku["rinshan"] and phase == "awaiting_draw")
-        _require(concealed_count + meld_count + river_count + kyoku["wall_remaining"] + dead_count == 136, "invalid_message", "snapshot loses or creates physical tiles")
-        # Every publicly visible tile — own hand, uncalled river discards,
-        # committed melds, declared kan tiles and dora markers — is bounded by the
-        # physical wall: at most four copies of a tile kind, and the red/ordinary
-        # five split negotiated in the rules when they are known.
-        known = known_round_tiles(kyoku)
-        _require(all(n <= 4 for n in Counter(tile_index(t) for t in known).values()),
-                 "invalid_message", "more than four copies of a tile")
-        if rules is not None:
-            physical = Counter(known)
-            for suit in "mps":
-                red = rules["red_fives"][suit]
-                _require(physical[f"5{suit}r"] <= red and physical[f"5{suit}"] <= 4 - red,
-                         "invalid_message", "red/ordinary five inventory exceeded")
-        _require(len(kyoku["dora_markers"]) == 1 + sum(kyoku["kan_counts"]) - int(kyoku["pending_dora"] is not None), "invalid_message", "dora count differs from kan state")
-        pao_keys = [(item["actor"], item["yaku_id"]) for item in kyoku["pao"]]
-        _require(len(pao_keys) == len(set(pao_keys)) and all(item["actor"] != item["liable_seat"] for item in kyoku["pao"]), "invalid_message", "pao assignments are invalid")
-        pao_yakus = rules["pao"]["yakus"] if rules is not None else ["daisangen", "daisuushii"]
-        known_pao = public_pao(kyoku["melds"], {"pao":{"yakus":pao_yakus}})
-        _require(sorted(kyoku["pao"], key=lambda p:(p["actor"],p["yaku_id"])) == known_pao, "invalid_message", "snapshot pao differs from public meld history")
+            _require(("tiles" in hand) == (view == "full" or actor == visible_seat),
+                     "invalid_message", "snapshot hand visibility differs")
         for request in pending:
             _check_request(request, extension_contexts=extension_contexts)
             _check_decision_cause(request, turn["last_event"])
@@ -1329,22 +1140,6 @@ def _check_snapshot(message: Mapping[str, Any], extension_contexts: Mapping[str,
                 _require(request["time_bank_ms"] == state["time_bank_ms"], "invalid_message", "open request changed the shared balance")
     else:
         _require(not pending, "invalid_message", "out-of-round snapshot contains pending requests")
-    _require((state.get("next_kyoku") is not None) == (state.get("game_phase") == "between_kyoku"),
-             "invalid_message", "snapshot next kyoku differs from phase")
-    if state.get("next_kyoku") is not None:
-        nxt = state["next_kyoku"]
-        _require(nxt["kyotaku"] == state["kyotaku"] and nxt["oya"] == nxt["kyoku"] - 1,
-                 "invalid_message", "snapshot next kyotaku differs")
-        if rules is not None:
-            _require(round_coordinates_reachable(nxt, rules),
-                     "invalid_message", "snapshot next kyotaku differs")
-    if state.get("game_phase") == "ended":
-        order = sorted(range(4), key=lambda i: (-state["scores"][i], i))
-        _require(state["final_rankings"] == [order.index(i) + 1 for i in range(4)], "invalid_message", "snapshot rankings differ")
-    if rules is not None:
-        _require(sum(state["scores"]) + state["kyotaku"] * rules["riichi_stick_value"]
-                 == 4 * rules["starting_points"],
-                 "invalid_message", "snapshot does not conserve scores and deposits")
     _require(("original_seq" in state) == (mode == "replay"), "invalid_message", "snapshot recording cursor differs from mode")
     _require(message.get("seq") == message.get("replaces_through_seq", -1) + 1, "invalid_message", "snapshot seq does not follow replacement range")
 

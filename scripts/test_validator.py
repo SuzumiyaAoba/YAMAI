@@ -3,6 +3,8 @@
 import unittest
 from copy import deepcopy
 from decimal import Decimal
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
 import validate_artifacts as v
 
@@ -162,6 +164,40 @@ class ValidatorBoundaries(unittest.TestCase):
     def test_boolean_schemas(self):
         v.SchemaSet().validate({'arbitrary':1}, True)
         self.assert_error('invalid_message', v.SchemaSet().validate, {'arbitrary':1}, False)
+
+    def test_boolean_schema_references(self):
+        schemas = v.SchemaSet()
+        for allowed in (True, False):
+            schema = {'$defs': {'gate': allowed}, '$ref': '#/$defs/gate'}
+            schemas.schemas = {'urn:test': schema}
+            schemas.check_refs()
+            if allowed:
+                schemas.validate(1, schema)
+            else:
+                self.assert_error('invalid_message', schemas.validate, 1, schema)
+
+    def test_schema_errors_are_not_branch_mismatches(self):
+        schemas = v.SchemaSet()
+        for broken in ({'$ref': 'urn:missing'}, {'type': 'unknown'}):
+            for schema, value in (
+                ({'anyOf': [broken, True]}, 1),
+                ({'oneOf': [True, broken]}, 1),
+                ({'not': broken}, 1),
+                ({'if': broken, 'else': True}, 1),
+                ({'contains': broken, 'minContains': 0}, [1]),
+            ):
+                with self.subTest(schema=schema):
+                    self.assert_error('schema_error', schemas.validate, value, schema)
+
+    def test_strict_load_accepts_relative_and_external_paths(self):
+        self.assertEqual(v.strict_load(Path('release-manifest.json')),
+                         v.strict_load(v.ROOT / 'release-manifest.json'))
+        with TemporaryDirectory() as directory:
+            source = Path(directory) / 'input.json'
+            source.write_text('{"value": 1}', encoding='utf-8')
+            self.assertEqual(v.strict_load(source), {'value': 1})
+            source.write_text('{"value": NaN}', encoding='utf-8')
+            self.assert_error('invalid_json', v.strict_load, source)
 
     def test_schema_literal_members_are_not_schema_keywords(self):
         schemas = v.SchemaSet()
