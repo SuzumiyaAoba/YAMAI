@@ -24,7 +24,8 @@ from typing import Any, Dict, Iterable, List, Mapping, Sequence, Tuple
 
 from request_contract import evaluate as evaluate_request_contract
 from scoring_reference import ScoringError, basic_points, normal_payments, validate_score_bounds, MAX_GAME_EVENTS, MAX_HAND_POINTS, calculate_fixture as calculate_scoring_fixture, tile_index
-from session_contract import SessionError, Receiver, negotiate, check_token_trace, replay_plan, resource_trace, classify_player_input, check_clock
+from scoring_reference import NORMAL_YAKU_HAN, validate_win_declarations
+from session_contract import SessionError, Receiver, negotiate, check_token_trace, replay_plan, resource_trace, classify_player_input, check_clock, check_snapshot_clock
 from game_contract import GameError, EventState, next_kyoku, legal_actions, canonical_action, furiten, furiten_step, abortive_reason, kan_sequence, public_pao, round_coordinates_reachable, check_snapshot_rinshan, check_snapshot_public_history, known_round_tiles
 
 
@@ -601,6 +602,8 @@ def check_registry(schemas: SchemaSet) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     yaku_ids = [x["id"] for x in r["yaku_ids"]]
     if len(yaku_ids) != len(set(yaku_ids)):
         raise ArtifactError("registry_error", "duplicate yaku id")
+    if {y["id"]: (y["closed_han"], y["open_han"]) for y in r["yaku_ids"] if y["unit"] == "han"} != NORMAL_YAKU_HAN:
+        raise ArtifactError("registry_error", "public yaku value table differs from registry")
     if set(r["bonus_ids"]) != {"dora", "uradora", "akadora"}:
         raise ArtifactError("registry_error", "bonus registry mismatch")
     if "scoring_vectors_schema" in r:
@@ -1107,7 +1110,9 @@ def _check_snapshot(message: Mapping[str, Any], extension_contexts: Mapping[str,
         if initial_observer:
             _require(turn["last_event_seq"] is None, "invalid_message", "initial observer has no earlier session event")
         else:
-            _require(type(turn["last_event_seq"]) is int and 0 < turn["last_event_seq"] <= message["replaces_through_seq"], "invalid_message", "snapshot cause event lies outside replacement range")
+            _require(mode == "spectate" and turn["last_event_seq"] is None
+                     or type(turn["last_event_seq"]) is int and 0 < turn["last_event_seq"] <= message["replaces_through_seq"],
+                     "invalid_message", "snapshot cause event lies outside replacement range")
         # A snapshot is fixed only at a transaction boundary: its last
         # committed event is a decision cause or the round start, never a
         # transaction-interior event (call, acceptance, marker, pao).
@@ -1302,6 +1307,11 @@ def _check_snapshot(message: Mapping[str, Any], extension_contexts: Mapping[str,
             _check_request(request, extension_contexts=extension_contexts)
             _check_decision_cause(request, turn["last_event"])
             _require(request["seat"] == seat and request["caused_by_seq"] == turn["last_event_seq"] < message["replaces_through_seq"], "invalid_message", "snapshot request owner/cause differs")
+            if rules is not None:
+                try:
+                    check_snapshot_clock(request, rules["time_control"]["grace_ms"])
+                except SessionError as error:
+                    raise ArtifactError(error.code, str(error)) from error
             selection = request["selection"]
             if selection is not None:
                 _require(selection["action_id"] in {c["action_id"] for c in request["legal_actions"]}, "invalid_message", "snapshot selection is not legal")
@@ -1388,6 +1398,10 @@ def semantic_message(message: Mapping[str, Any], case_id: str, expected_profile_
                 actors = []
                 for win in wins:
                     actors.append(win.get("actor"))
+                    try:
+                        validate_win_declarations(win)
+                    except ScoringError as error:
+                        raise ArtifactError("invalid_message", str(error)) from error
                     yaku_ids = [item.get("id") for item in win.get("yakus", [])]
                     _require(yaku_ids == sorted(yaku_ids), "invalid_message", "win yaku ids are not in ASCII order")
                     bonus_ids = [item.get("id") for item in win.get("bonuses", [])]

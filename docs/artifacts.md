@@ -29,7 +29,7 @@ release manifest の `published` は `false` であり、本成果物は draft 1
 | 採点 fixture | 完全な手牌・ルール・局面と、役・符・支払い・点数の期待結果 |
 | Python 検査実装 | 構文、Schema、交渉、状態、候補、採点と成果物間の整合検査 |
 | Quint モデル | 有限境界と環境仮定の下での安全性・到達性・時間的性質 |
-| HTML | Markdown から生成する閲覧用文書 |
+| HTML | Markdown・MDXから生成する閲覧用文書。認証の実装計画・レビューは参考文書であり、規範本文を追加しない |
 
 Schema は JSON の重複キー、frame 境界、全状態遷移、実時間、点数保存などを単独では保証しない。採点 CLI と artifact validator は同じ `scoring_reference.py` を使い、二つの独立した採点実装として数えない。
 

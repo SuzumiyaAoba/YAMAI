@@ -5,6 +5,7 @@ import unittest
 
 import validate_artifacts as v
 from session_contract import Receiver, SessionError, classify_player_input, negotiate
+from scoring_reference import basic_points, normal_payments, NORMAL_YAKU_HAN
 
 
 class SessionInvariants(unittest.TestCase):
@@ -44,6 +45,106 @@ class SessionInvariants(unittest.TestCase):
         with self.assertRaises(SessionError) as error:
             check()
         self.assertEqual(error.exception.code, 'invalid_message')
+
+    def test_request_cause_distinguishes_identical_events(self):
+        for stale in (False, True):
+            with self.subTest(stale=stale):
+                trace = self.trace('wire_complete_game')
+                receiver = self.receiver(trace['welcome'])
+                for step in trace['steps'][:6]:
+                    receiver.receive(self.raw(step['message']))
+
+                def send(kind, **fields):
+                    identity = {k: trace['welcome'][k] for k in ('yamai', 'session_id', 'game_id')}
+                    receiver.receive(self.raw(dict(identity, kind=kind, seq=receiver.applied + 1, **fields)))
+
+                for actor, pai in ((1, '8s'), (2, '7s'), (3, '6s')):
+                    send('event', event={'type': 'tsumo', 'actor': actor, 'pai': None})
+                    send('event', event={'type': 'dahai', 'actor': actor, 'pai': pai, 'tsumogiri': True})
+                    rid = 'reaction' + str(actor)
+                    send('request', request_id=rid, seat=0, caused_by_seq=receiver.applied,
+                         timeout_ms=3000, time_bank_ms=15000,
+                         legal_actions=[{'action_id': 'n', 'action': {'type': 'none'}}], default_action_id='n',
+                         decision_group_id='g' + rid, decision_group_close='all_selected_or_deadline',
+                         decision_group_deadline_ms=21000,
+                         decision_group_members=[{'seat': s, 'request_id': rid if s == 0 else rid + str(s)}
+                                                 for s in range(4) if s != actor])
+                    send('ack', request_id=rid, action_id='n', status='passed', elapsed_ms=1, time_bank_ms=15000)
+                send('event', event={'type': 'tsumo', 'actor': 0, 'pai': '9s'})
+                request = deepcopy(trace['steps'][3]['message'])
+                request.update(seq=receiver.applied + 1, request_id='r2',
+                               caused_by_seq=3 if stale else receiver.applied)
+                if stale:
+                    before = deepcopy((vars(receiver.game), receiver.known, receiver.requests, receiver.applied))
+                    with self.assertRaises(SessionError) as error:
+                        receiver.receive(self.raw(request))
+                    self.assertEqual(error.exception.code, 'invalid_message')
+                    self.assertEqual((vars(receiver.game), receiver.known, receiver.requests, receiver.applied), before)
+                else:
+                    self.assertEqual(receiver.receive(self.raw(request)), 'applied')
+
+    def test_public_yaku_claims_cannot_inflate_settlement(self):
+        for variant in ('duplicate', 'disabled_double', 'unregistered', 'unaccepted_riichi', 'exclusive'):
+            with self.subTest(variant=variant):
+                trace = self.trace('public_hora_hand_points')
+                event = trace['steps'][-1]['message']['event']
+                win = event['result']['wins'][0]
+                amount = 64000
+                if variant == 'duplicate':
+                    win['yakus'].append({**win['yakus'][0], 'x_review_note': 'second'})
+                elif variant == 'disabled_double':
+                    trace['welcome']['rules']['double_yakuman'] = []
+                    trace['steps'][0]['message']['event']['rules']['double_yakuman'] = []
+                    win['yakus'][0]['value'] = 2
+                elif variant == 'unregistered':
+                    win['yakus'][0]['id'] = 'x_review_unregistered'
+                    amount = 32000
+                elif variant == 'exclusive':
+                    win.update(fu=30, han=9, yakus=[{'id': 'chinitsu', 'value': 6, 'unit': 'han'},
+                                                  {'id': 'honitsu', 'value': 3, 'unit': 'han'}])
+                    amount = 16000
+                else:
+                    win.update(fu=30, han=1, yakus=[{'id': 'riichi', 'value': 1, 'unit': 'han'}])
+                    amount = 1000
+                win.update(hand_points=amount, deltas=[-amount, amount, 0, 0])
+                event.update(deltas=win['deltas'], scores=[25000 - amount, 25000 + amount, 25000, 25000])
+                if amount < 25000:
+                    event['next'] = dict(type='rotate', bakaze='E', kyoku=2, oya=1, honba=0, kyotaku=0, extension_round=0)
+                receiver = self.receiver(trace['welcome'])
+                for step in trace['steps'][:-1]:
+                    receiver.receive(self.raw(step['message']))
+                before = deepcopy((vars(receiver.game), receiver.known, receiver.applied))
+                with self.assertRaises(SessionError) as error:
+                    receiver.receive(self.raw(trace['steps'][-1]['message']))
+                self.assertEqual(error.exception.code, 'invalid_message')
+                self.assertEqual((vars(receiver.game), receiver.known, receiver.applied), before)
+
+    def test_public_yaku_cannot_require_incompatible_shapes(self):
+        combinations = (
+            ('pinfu', 'toitoi'), ('chiitoitsu', 'toitoi'), ('iipeikou', 'sanankou'),
+            ('honroutou', 'iipeikou'), ('honroutou', 'tanyao'), ('chinitsu', 'round_wind'),
+            ('honitsu', 'sanshoku_doujun'), ('ikkitsuukan', 'ryanpeikou'),
+            ('ikkitsuukan', 'sanshoku_doujun'), ('chanta', 'ikkitsuukan'),
+            ('sanshoku_doujun', 'yakuhai_haku', 'yakuhai_hatsu'),
+            ('sanshoku_doukou', 'shousangen'),
+        )
+        for names in combinations:
+            with self.subTest(yakus=names):
+                trace = self.trace('public_hora_hand_points')
+                receiver = self.receiver(trace['welcome'])
+                for step in trace['steps'][:-1]:
+                    receiver.receive(self.raw(step['message']))
+                message = trace['steps'][-1]['message']
+                event = message['event']
+                win = event['result']['wins'][0]
+                yakus = [dict(id=name, unit='han', value=NORMAL_YAKU_HAN[name][0]) for name in sorted(names)]
+                fu = 25 if 'chiitoitsu' in names else 30 if 'pinfu' in names else 40
+                han = sum(y['value'] for y in yakus)
+                amount = sum(normal_payments(basic_points(fu, han, 0, trace['welcome']['rules']), 1, 0, 0).values())
+                win.update(fu=fu, han=han, yakus=yakus, hand_points=amount, deltas=[-amount, amount, 0, 0])
+                event.update(deltas=win['deltas'], scores=[25000 - amount, 25000 + amount, 25000, 25000],
+                             next=dict(type='rotate', bakaze='E', kyoku=2, oya=1, honba=0, kyotaku=0, extension_round=0))
+                self.assert_rejected_atomically(receiver, message)
 
     def test_unadopted_reaction_cannot_generate_own_call(self):
         for status, aid in (('passed', 'n'), ('superseded', 'p1'), ('defaulted', 'n')):
@@ -200,6 +301,9 @@ class SessionInvariants(unittest.TestCase):
         for step in trace['steps'][4:]:
             message = step['message']
             message['seq'] += 1
+            if message['kind'] == 'ack':
+                # The OPEN checkpoint has already elapsed 3000 ms.
+                message['elapsed_ms'] = 3000
             messages.append(message)
         return trace['welcome'], messages
 
@@ -486,14 +590,283 @@ class SessionInvariants(unittest.TestCase):
     def assert_rejected_atomically(self, receiver, message):
         def state():
             return (receiver.applied, receiver.time_bank_ms, receiver.requests,
+                    receiver.request_clock_floor,
                     receiver.terminal_acks, receiver.expected_effects,
-                    receiver.active_requests, receiver.known, vars(receiver.game))
+                    receiver.active_requests, receiver.known, receiver.event_seq_floor,
+                    vars(receiver.game))
         before = deepcopy(state())
         with self.assertRaises(SessionError) as caught:
             receiver.receive(self.raw(message))
         self.assertEqual(caught.exception.code, 'invalid_message')
         self.assertEqual(state(), before)
         self.assertTrue(receiver.closed)
+
+    def test_observer_checkpoint_keeps_null_until_the_first_session_event(self):
+        trace = self.trace('observer_bootstrap_authorization')
+        receiver = self.receiver(trace['welcome'], initial_snapshot=True)
+        snapshot = trace['steps'][0]['message']
+        for seq in (1, 2, 3):
+            snapshot.update(seq=seq, replaces_through_seq=seq - 1)
+            self.assertEqual(receiver.receive(self.raw(snapshot)), 'applied')
+            self.assertIsNone(receiver.last_event_seq)
+            self.assertEqual(receiver.event_seq_floor, 0)
+
+    def observer_after_discard_gap(self):
+        trace = self.trace('observer_bootstrap_authorization')
+        receiver = self.receiver(trace['welcome'], initial_snapshot=True)
+        snapshot = trace['steps'][0]['message']
+        receiver.receive(self.raw(snapshot))
+        identity = {key: snapshot[key] for key in ('yamai', 'session_id', 'game_id')}
+        discard = dict(type='dahai', actor=0, pai='9s', tsumogiri=True)
+        receiver.receive(self.raw(dict(identity, kind='event', seq=2, event=discard)))
+        future = dict(identity, kind='event', seq=4, event=dict(type='tsumo', actor=1, pai=None))
+        self.assertEqual(receiver.receive(self.raw(future)), 'sequence_gap')
+        state = snapshot['state']
+        state['kyoku'] = deepcopy(receiver.game.round)
+        state['kyoku']['turn'].update(last_event_seq=2, last_event=discard)
+        snapshot.update(seq=5, replaces_through_seq=4)
+        return receiver, snapshot
+
+    def test_gap_snapshot_cannot_erase_or_rewind_the_last_event(self):
+        for cause_seq in (None, 1, 2):
+            with self.subTest(cause_seq=cause_seq):
+                receiver, snapshot = self.observer_after_discard_gap()
+                snapshot['state']['kyoku']['turn']['last_event_seq'] = cause_seq
+                if cause_seq == 2:
+                    self.assertEqual(receiver.receive(self.raw(snapshot)), 'applied')
+                else:
+                    self.assert_rejected_atomically(receiver, snapshot)
+
+    def test_gap_snapshot_cause_must_match_its_retained_payload(self):
+        receiver, snapshot = self.observer_after_discard_gap()
+        snapshot['state']['kyoku']['turn']['last_event']['pai'] = '8s'
+        snapshot['state']['kyoku']['rivers'][0][-1]['pai'] = '8s'
+        self.assert_rejected_atomically(receiver, snapshot)
+
+    def test_gap_snapshot_cause_cannot_name_a_snapshot_entry(self):
+        trace = self.trace('observer_bootstrap_authorization')
+        receiver = self.receiver(trace['welcome'], initial_snapshot=True)
+        snapshot = trace['steps'][0]['message']
+        receiver.receive(self.raw(snapshot))
+        identity = {key: snapshot[key] for key in ('yamai', 'session_id', 'game_id')}
+        future = dict(identity, kind='event', seq=3, event=dict(type='dahai', actor=0, pai='9s', tsumogiri=True))
+        self.assertEqual(receiver.receive(self.raw(future)), 'sequence_gap')
+        snapshot.update(seq=4, replaces_through_seq=3)
+        snapshot['state']['kyoku']['turn']['last_event_seq'] = 1
+        self.assert_rejected_atomically(receiver, snapshot)
+
+    def test_snapshot_group_clocks_share_one_instant(self):
+        for extra_group_time in (0, 2000):
+            for clock_error in (-1, 0, 1):
+                with self.subTest(extra=extra_group_time, error=clock_error):
+                    trace = self.trace('snapshot_group_remaining_cannot_increase')
+                    receiver = self.receiver(trace['welcome'])
+                    snapshot = trace['steps'][0]['message']
+                    request = snapshot['state']['pending_requests'][0]
+                    request['decision_group_deadline_ms'] += extra_group_time
+                    request['decision_group_remaining_ms'] += extra_group_time + clock_error
+                    if clock_error == 0:
+                        self.assertEqual(receiver.receive(self.raw(snapshot)), 'applied')
+                    else:
+                        self.assert_rejected_atomically(receiver, snapshot)
+                        with self.assertRaises(v.ArtifactError) as caught:
+                            v._check_snapshot(snapshot, rules=trace['welcome']['rules'])
+                        self.assertEqual(caught.exception.code, 'invalid_message')
+
+    def test_snapshot_selection_cannot_occur_after_its_group_clock(self):
+        for remaining, elapsed in ((4500, 499), (4500, 500), (4500, 501), (0, 1000)):
+            with self.subTest(remaining=remaining, elapsed=elapsed):
+                trace = self.trace('snapshot_group_remaining_cannot_increase')
+                receiver = self.receiver(trace['welcome'])
+                snapshot = trace['steps'][0]['message']
+                request = snapshot['state']['pending_requests'][0]
+                request.update(remaining_ms=0, decision_group_remaining_ms=remaining,
+                               selection=dict(action_id='n', source='user', elapsed_ms=elapsed, time_bank_ms=1000))
+                if remaining == 0 or elapsed <= 500:
+                    self.assertEqual(receiver.receive(self.raw(snapshot)), 'applied')
+                else:
+                    self.assert_rejected_atomically(receiver, snapshot)
+                    with self.assertRaises(v.ArtifactError):
+                        v._check_snapshot(snapshot, rules=trace['welcome']['rules'])
+
+    def test_contiguous_snapshot_preserves_committed_state_and_requests(self):
+        for variant in ('scores', 'tiles', 'request_id', 'phase'):
+            with self.subTest(variant=variant):
+                trace = self.trace('historical_snapshot_replay')
+                receiver = self.receiver(trace['welcome'])
+                for step in trace['steps'][:4]:
+                    receiver.receive(self.raw(step['message']))
+                snapshot = trace['steps'][4]['message']
+                state = snapshot['state']
+                if variant == 'scores':
+                    state['scores'] = [26000, 24000, 25000, 25000]
+                elif variant == 'tiles':
+                    state['kyoku']['hands'][0]['tiles'][0] = 'E'
+                elif variant == 'request_id':
+                    state['pending_requests'][0]['request_id'] = 'new-request'
+                else:
+                    state.update(game_phase='between_kyoku', kyoku=None, pending_requests=[],
+                                 next_kyoku=dict(bakaze='E', kyoku=2, oya=1, honba=0,
+                                                 kyotaku=0, extension_round=0))
+                self.assert_rejected_atomically(receiver, snapshot)
+
+    def test_contiguous_snapshot_allows_reordered_hand_and_new_selection(self):
+        trace = self.trace('historical_snapshot_replay')
+        receiver = self.receiver(trace['welcome'])
+        for step in trace['steps'][:4]:
+            receiver.receive(self.raw(step['message']))
+        snapshot = trace['steps'][4]['message']
+        state = snapshot['state']
+        state['kyoku']['hands'][0]['tiles'].reverse()
+        request = state['pending_requests'][0]
+        request.update(remaining_ms=0, selection=dict(action_id=request['default_action_id'],
+                       source='user', elapsed_ms=6500, time_bank_ms=14500))
+        state['time_bank_ms'] = state['kyoku']['self_state']['time_bank_ms'] = 14500
+        self.assertEqual(receiver.receive(self.raw(snapshot)), 'applied')
+        self.assertEqual(receiver.time_bank_ms, 14500)
+
+    def test_snapshot_clocks_cannot_rewind(self):
+        for variant in ('remaining', 'selection', 'ack'):
+            for valid in (False, True):
+                with self.subTest(variant=variant, valid=valid):
+                    trace = self.trace('historical_snapshot_replay')
+                    receiver = self.receiver(trace['welcome'])
+                    for step in trace['steps'][:4]:
+                        receiver.receive(self.raw(step['message']))
+                    snapshot = trace['steps'][4]['message']
+                    snapshot['state']['pending_requests'][0]['remaining_ms'] = 1000
+                    receiver.receive(self.raw(snapshot))
+                    snapshot.update(seq=6, replaces_through_seq=5)
+                    elapsed = 20000 if valid else 19999
+                    bank = 21000 - elapsed
+                    request = snapshot['state']['pending_requests'][0]
+                    if variant == 'remaining':
+                        request['remaining_ms'] = 1000 if valid else 1001
+                    elif variant == 'selection':
+                        request.update(remaining_ms=0, selection=dict(action_id=request['default_action_id'],
+                                       source='user', elapsed_ms=elapsed, time_bank_ms=bank))
+                        snapshot['state']['time_bank_ms'] = snapshot['state']['kyoku']['self_state']['time_bank_ms'] = bank
+                    else:
+                        snapshot = deepcopy(trace['steps'][5]['message'])
+                        snapshot.update(seq=6, elapsed_ms=elapsed, time_bank_ms=bank)
+                    if valid:
+                        self.assertEqual(receiver.receive(self.raw(snapshot)), 'applied')
+                    else:
+                        self.assert_rejected_atomically(receiver, snapshot)
+
+    def test_contiguous_snapshot_preserves_next_round_and_bank(self):
+        for variant in ('next_round', 'time_bank'):
+            with self.subTest(variant=variant):
+                trace = self.trace('snapshot_between_kyoku_score_conservation')
+                receiver = self.receiver(trace['welcome'])
+                snapshot = trace['steps'][0]['message']
+                receiver.receive(self.raw(snapshot))
+                snapshot.update(seq=receiver.applied + 1, replaces_through_seq=receiver.applied)
+                if variant == 'next_round':
+                    snapshot['state']['next_kyoku']['honba'] += 1
+                else:
+                    snapshot['state']['time_bank_ms'] -= 1
+                self.assert_rejected_atomically(receiver, snapshot)
+
+    def _receiver_after_rejected_ack(self):
+        trace = self.trace('wire_complete_game')
+        receiver = self.receiver(trace['welcome'])
+        for step in trace['steps'][:4]:
+            receiver.receive(self.raw(step['message']))
+        rejected = deepcopy(trace['steps'][4]['message'])
+        rejected.update(status='rejected', action_id='bad', elapsed_ms=7000, time_bank_ms=14000)
+        receiver.receive(self.raw(rejected))
+        error = {key: rejected[key] for key in ('yamai', 'session_id', 'game_id')}
+        error.update(kind='error', seq=6, code='invalid_action', severity='recoverable',
+                     request_id='r1', message='not a legal candidate')
+        receiver.receive(self.raw(error))
+        self.assertEqual(receiver.time_bank_ms, 15000)
+        return receiver, trace
+
+    def test_rejected_ack_clock_is_a_lower_bound_for_retry(self):
+        for valid in (False, True):
+            with self.subTest(valid=valid):
+                receiver, trace = self._receiver_after_rejected_ack()
+                ack = trace['steps'][4]['message']
+                elapsed = 7000 if valid else 6999
+                ack.update(seq=7, elapsed_ms=elapsed, time_bank_ms=21000 - elapsed)
+                if valid:
+                    self.assertEqual(receiver.receive(self.raw(ack)), 'applied')
+                    self.assertEqual(receiver.time_bank_ms, 14000)
+                else:
+                    self.assert_rejected_atomically(receiver, ack)
+
+    def test_rejected_ack_clock_is_a_lower_bound_for_snapshot(self):
+        for valid in (False, True):
+            with self.subTest(valid=valid):
+                receiver, trace = self._receiver_after_rejected_ack()
+                snapshot = self.trace('historical_snapshot_replay')['steps'][4]['message']
+                snapshot.update(seq=7, replaces_through_seq=6)
+                snapshot['state']['pending_requests'][0]['remaining_ms'] = 14000 if valid else 14001
+                if valid:
+                    self.assertEqual(receiver.receive(self.raw(snapshot)), 'applied')
+                else:
+                    self.assert_rejected_atomically(receiver, snapshot)
+
+    def test_snapshot_group_time_cannot_increase_across_recovery(self):
+        for jump in (False, True):
+            with self.subTest(jump=jump):
+                snapshot = deepcopy(self.vectors['V60_snapshot_group_clock']['positive'])
+                welcome = self.trace('wire_complete_game')['welcome']
+                welcome.update(seat=1, resumed=True, replay_from_seq=1, replay_through_seq=5)
+                receiver = self.receiver(welcome)
+                receiver.receive(self.raw(snapshot))
+                through = receiver.applied
+                if jump:
+                    through += 2
+                    receiver.begin_resume(dict(welcome, replay_from_seq=receiver.applied + 1,
+                                               replay_through_seq=through))
+                snapshot.update(seq=through + 1, replaces_through_seq=through)
+                snapshot['state']['pending_requests'][0]['decision_group_remaining_ms'] += 1
+                self.assert_rejected_atomically(receiver, snapshot)
+
+    def test_contiguous_replay_snapshot_cannot_skip_recorded_events(self):
+        trace = self.trace('snapshot_restores_recording_cursor')
+        receiver = self.receiver(trace['welcome'])
+        for step in trace['steps'][:3]:
+            receiver.receive(self.raw(step['message']))
+        snapshot = deepcopy(trace['steps'][2]['message'])
+        snapshot.update(seq=receiver.applied + 1, replaces_through_seq=receiver.applied)
+        snapshot['state']['original_seq'] += 1
+        self.assert_rejected_atomically(receiver, snapshot)
+
+    def test_ended_snapshot_preserves_scores_even_when_covering_a_gap(self):
+        for jump in (False, True):
+            with self.subTest(jump=jump):
+                trace = self.trace('snapshot_ended_score_conservation')
+                receiver = self.receiver(trace['welcome'])
+                snapshot = trace['steps'][0]['message']
+                receiver.receive(self.raw(snapshot))
+                if jump:
+                    receiver.begin_resume(dict(trace['welcome'], replay_from_seq=receiver.applied + 1,
+                                               replay_through_seq=receiver.applied + 2))
+                through = receiver.applied + (2 if jump else 0)
+                snapshot.update(seq=through + 1, replaces_through_seq=through)
+                snapshot['state']['scores'] = [26000, 24000, 25000, 25000]
+                snapshot['state']['final_rankings'] = [1, 4, 2, 3]
+                self.assert_rejected_atomically(receiver, snapshot)
+
+    def test_public_fu_exceptions_are_bidirectional(self):
+        for fu in (20, 25):
+            with self.subTest(fu=fu):
+                trace = self.trace('public_hora_hand_points')
+                event = trace['steps'][-1]['message']['event']
+                win = event['result']['wins'][0]
+                amount = ((fu * 8 * 4 + 99) // 100) * 100
+                win.update(fu=fu, han=1, yakus=[dict(id='tanyao', value=1, unit='han')],
+                           hand_points=amount, deltas=[-amount, amount, 0, 0])
+                event.update(deltas=win['deltas'], scores=[25000 - amount, 25000 + amount, 25000, 25000],
+                             next=dict(type='rotate', bakaze='E', kyoku=2, oya=1, honba=0,
+                                       kyotaku=0, extension_round=0))
+                receiver = self.receiver(trace['welcome'])
+                for step in trace['steps'][:-1]:
+                    receiver.receive(self.raw(step['message']))
+                self.assert_rejected_atomically(receiver, trace['steps'][-1]['message'])
 
     def test_ack_rejects_another_legal_discard_without_applying_it(self):
         for status in ('accepted', 'defaulted'):

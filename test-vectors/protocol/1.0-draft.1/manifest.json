@@ -3,7 +3,7 @@
   "protocol_version": "1.0-draft.1",
   "profile": "riichi-4p",
   "profile_revision": "1.0-draft.1",
-  "profile_hash": "sha256:18cbd822784b928f2d4d615f4ca2a6e3c488d0b5a5bf757a42ba34682ac16bdb",
+  "profile_hash": "sha256:39b8a439ea83530ce782be760dcee169b9ad46ade327e35bd19961cea5533213",
   "registry": [
     "registry/protocol/1.0-draft.1/registry.json",
     "registry/riichi-4p/1.0-draft.1/registry.json"
@@ -2066,6 +2066,258 @@
     {
       "id": "V341_superseded_hora_requires_priority_winner",
       "area": "ack-superseded-hora-result",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V342_request_cause_uses_current_event_sequence",
+      "area": "request-cause-identity",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V343_yaku_ids_ignore_annotations",
+      "area": "public-yaku-declaration",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V344_exclusive_yaku_ids",
+      "area": "public-yaku-declaration",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V345_double_yakuman_requires_rule",
+      "area": "public-yaku-declaration",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V346_local_yaku_requires_rule",
+      "area": "public-yaku-declaration",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V347_riichi_yaku_requires_public_acceptance",
+      "area": "public-yaku-declaration",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V348_closed_yaku_value",
+      "area": "public-yaku-declaration",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V349_menzen_tsumo_requires_tsumo",
+      "area": "public-yaku-declaration",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V350_uradora_bonus_requires_riichi",
+      "area": "public-yaku-declaration",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V351_contiguous_snapshot_preserves_scores",
+      "area": "snapshot-prefix-scores",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V352_contiguous_snapshot_preserves_tiles",
+      "area": "snapshot-prefix-tiles",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V353_contiguous_snapshot_preserves_request_ids",
+      "area": "snapshot-prefix-requests",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V354_contiguous_snapshot_preserves_game_phase",
+      "area": "snapshot-prefix-phase",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V355_contiguous_snapshot_preserves_next_round",
+      "area": "snapshot-prefix-next-round",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V356_contiguous_snapshot_preserves_recording_cursor",
+      "area": "snapshot-prefix-recording-cursor",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V357_ended_snapshot_preserves_final_scores",
+      "area": "snapshot-ended-state-frozen",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V358_contiguous_snapshot_preserves_time_bank",
+      "area": "snapshot-prefix-time-bank",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V359_ron_cannot_have_twenty_fu",
+      "area": "scoring-twenty-fu-tsumo-only",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V360_twenty_five_fu_requires_seven_pairs",
+      "area": "scoring-twenty-five-fu-seven-pairs",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V361_snapshot_request_remaining_cannot_increase",
+      "area": "snapshot-monotonic-request-clock",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V362_snapshot_selection_respects_observed_clock",
+      "area": "snapshot-monotonic-selection-clock",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V363_ack_respects_observed_snapshot_clock",
+      "area": "snapshot-monotonic-ack-clock",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V364_snapshot_group_remaining_cannot_increase",
+      "area": "snapshot-monotonic-group-clock",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V365_retry_ack_cannot_precede_rejected_clock",
+      "area": "request-monotonic-retry-clock",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V366_snapshot_cannot_precede_rejected_clock",
+      "area": "snapshot-monotonic-rejected-clock",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V367_observer_checkpoint_without_session_event",
+      "area": "snapshot-observer-cause",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V368_gap_snapshot_cause_cannot_rewind",
+      "area": "snapshot-cause-monotonicity",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V369_gap_snapshot_preserves_restored_cause",
+      "area": "snapshot-cause-payload",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V370_snapshot_cause_cannot_name_checkpoint",
+      "area": "snapshot-cause-message-kind",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V371_snapshot_group_clock_same_instant_equal",
+      "area": "snapshot-group-clock-instant",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V372_snapshot_group_clock_same_instant_unequal",
+      "area": "snapshot-group-clock-instant",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V373_snapshot_selection_precedes_group_clock",
+      "area": "snapshot-group-selection-order",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V374_public_yaku_four_meld_limit",
+      "area": "scoring-public-yaku-compatibility",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V375_public_yaku_seven_pairs_is_separate",
+      "area": "scoring-public-yaku-compatibility",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V376_public_yaku_overlapping_yaku_meld_requirements",
+      "area": "scoring-public-yaku-compatibility",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V377_public_yaku_terminals_and_honors_have_no_sequences",
+      "area": "scoring-public-yaku-compatibility",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V378_public_yaku_terminals_and_simples_disjoint",
+      "area": "scoring-public-yaku-compatibility",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V379_public_yaku_honor_exclusion",
+      "area": "scoring-public-yaku-compatibility",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V380_public_yaku_suit_count",
+      "area": "scoring-public-yaku-compatibility",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V381_public_yaku_distinct_sequences",
+      "area": "scoring-public-yaku-compatibility",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V382_public_yaku_five_required_sequences",
+      "area": "scoring-public-yaku-compatibility",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V383_public_yaku_straight_middle_sequence",
+      "area": "scoring-public-yaku-compatibility",
       "expect_positive": "valid",
       "expect_negative": "invalid_message"
     }

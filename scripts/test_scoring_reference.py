@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 import unittest
 
-from scoring_reference import TILES, ScoringError, calculate_fixture, score_hand, waits, validate_score_bounds
+from scoring_reference import TILES, ScoringError, calculate_fixture, score_hand, waits, validate_score_bounds, validate_win_declarations
 
 
 class ScoringInvariants(unittest.TestCase):
@@ -37,6 +37,15 @@ class ScoringInvariants(unittest.TestCase):
         tsumo = score_hand(f['input'], f['state'], self.rules)
         self.assertEqual(tsumo['yakus'], [{'id':'suuankou','value':1,'unit':'yakuman'}])
         self.assertEqual((tsumo['fu'], tsumo['hand_points']), (0,32000))
+
+    def test_computed_hands_pass_public_yaku_compatibility(self):
+        for name, fixture in self.fixtures.items():
+            if fixture['input']['type'] != 'hora':
+                continue
+            with self.subTest(fixture=name):
+                rules = {**self.rules, **fixture.get('rule_overrides', {})}
+                for win in calculate_fixture(fixture, self.rules).get('wins', []):
+                    validate_win_declarations(win, rules)
 
     def test_concealed_order_does_not_select_a_different_decomposition(self):
         original = self.fixtures['decomposition_max_points']

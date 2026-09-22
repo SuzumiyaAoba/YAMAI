@@ -311,7 +311,7 @@ hostは同一 `seq` の再送、resume replayおよびrange replayに、ledger e
 
 ### 6.1 `hello`
 
-接続を確立した Host が最初の YAMAI application message として `hello` を送信する。Player は `hello` を送信してはならず（MUST NOT）、`hello` 受信前の `join`、`error` 以外の message も送信してはならない。Host は同一 transport/session へ `hello` を二度送ってはならず、再交渉は新しい session で行う。
+接続を確立した Host が最初の YAMAI application message として `hello` を送信する。Player は `hello` を送信してはならず（MUST NOT）、`hello` 受信前には交渉用のfatal `error` 以外を送信してはならない（MUST NOT）。`join` は有効な `hello` を受信した後にだけ送信する（MUST）。Host は同一sessionへ `hello` を二度送ってはならず、再交渉は新しいsessionで行う。同じtransportの再利用は第6.4節・Appendix Aに従う。
 
 ```json
 {
@@ -327,7 +327,7 @@ hostは同一 `seq` の再送、resume replayおよびrange replayに、ledger e
         "1.0-draft.1"
       ],
       "hashes": {
-        "1.0-draft.1": "sha256:18cbd822784b928f2d4d615f4ca2a6e3c488d0b5a5bf757a42ba34682ac16bdb"
+        "1.0-draft.1": "sha256:39b8a439ea83530ce782be760dcee169b9ad46ade327e35bd19961cea5533213"
       },
       "protocol_versions": {
         "1.0-draft.1": [
@@ -362,7 +362,7 @@ hostは同一 `seq` の再送、resume replayおよびrange replayに、ledger e
   "seat": 0,
   "profile": "riichi-4p",
   "profile_revision": "1.0-draft.1",
-  "profile_hash": "sha256:18cbd822784b928f2d4d615f4ca2a6e3c488d0b5a5bf757a42ba34682ac16bdb",
+  "profile_hash": "sha256:39b8a439ea83530ce782be760dcee169b9ad46ade327e35bd19961cea5533213",
   "client": {
     "name": "ExampleAI",
     "version": "2.3.0"
@@ -406,7 +406,7 @@ profile_hashは、vector manifestのprofile_hash_inputsに列挙したJSONをpro
   "view": "seat",
   "profile": "riichi-4p",
   "profile_revision": "1.0-draft.1",
-  "profile_hash": "sha256:18cbd822784b928f2d4d615f4ca2a6e3c488d0b5a5bf757a42ba34682ac16bdb",
+  "profile_hash": "sha256:39b8a439ea83530ce782be760dcee169b9ad46ade327e35bd19961cea5533213",
   "client": {
     "name": "ExampleAI",
     "version": "2.3.0"
@@ -452,7 +452,7 @@ profile_hashは、vector manifestのprofile_hash_inputsに列挙したJSONをpro
   "view": "seat",
   "profile": "riichi-4p",
   "profile_revision": "1.0-draft.1",
-  "profile_hash": "sha256:18cbd822784b928f2d4d615f4ca2a6e3c488d0b5a5bf757a42ba34682ac16bdb",
+  "profile_hash": "sha256:39b8a439ea83530ce782be760dcee169b9ad46ade327e35bd19961cea5533213",
   "players": [
     {
       "seat": 0,
@@ -1002,6 +1002,8 @@ chi/ponの複合打牌では `tsumogiri:false` とする。喰い替えは、鳴
 
 各 `wins[].pao` elementは `{ "yaku_id": <登録済みyaku ID>, "liable_seat": <seat> }` でなければならず（MUST）、同一 `yaku_id` を重複させてはならない。`wins[].ura_dora_markers` は当該winの和了時点で公開する裏ドラ表示牌を正確に列挙し、`reach_accepted` が成立していないwinでは空arrayでなければならない（MUST）。
 
+`yakus` と `bonuses` の一意性はそれぞれ `id`、`pao` は `yaku_id` で判定する（MUST）。飜数、倍数または拡張注釈が異なっても同じIDを二重に記録してはならない（MUST NOT）。JSON Schemaの `uniqueItems` はobject全体の比較であるため、IDの重複と第7.6節の排他関係を別途意味検査する。拡張役は `rules.local_yaku` に列挙され、所有するcapabilityの定義を理解して有効化している場合だけ使用する（MUST）。
+
 役満でないwinでは、`han` は `yakus` の `unit == "han"` の `value` と全 `bonuses[].han` の合計に一致しなければならない（MUST）。役満winでは `han` を0、`bonuses` を空arrayとし、`unit == "yakuman"` の `value` 合計を役満倍数とする。ドラ、裏ドラおよび赤ドラは役ではなくbonusとして記録する。
 
 `result.type == "ryukyoku"` の場合、`result.reason` は `fanpai`、`kyushukyuhai`、`suufon_renda`、`suucha_riichi`、`suukan_sanra`、`sanchaho` のいずれかとする（MUST）。`fanpai` の `result.tenpai` は4要素の boolean arrayでなければならず、途中流局の残る5 reasonでは常に `null` とする（MUST）。`illegal_action` は `penalty` のreasonであり、流局へ流用してはならない。通常流局で `0 < t < 4` の場合、`deltas` は `rules.noten_payment.total_points` のseat単位の純差額規則に従い、各seatの受取または支払の純差額と一致しなければならない（MUST）。個別seat間の支払明細を要求してはならない。
@@ -1127,6 +1129,8 @@ chi/ponの複合打牌では `tsumogiri:false` とする。喰い替えは、鳴
 
 wireへ出力する通常役IDは重複してはならず、各IDの `value` は本表の門前・副露欄に固定された値でなければならない（MUST）。`tanyao` の副露時だけは `rules.kuitan` により役ID自体を出力しない場合がある。
 
+各役の成立条件を同じ評価候補で同時に満たす必要がある。別々の分解で成立する役を合算してはならない（MUST NOT）。七対子に順子・刻子・槓子を要する役を併記せず、通常形では各役が要求する最小順子数と最小刻子・槓子数の和が4を超えてはならない。平和と対々和、一盃口と三暗刻などはこの条件に違反する。混老頭には順子がなく、断么九には么九牌がなく、純全帯・清一色には字牌がない。混一色は数牌と字牌の両方を含む。これらの牌種条件と、三色役の3色条件、一気通貫の123・456・789、二盃口の2組の同一順子対も同時に満たす（MUST）。受信者は役IDだけで確定するこれらの不両立を、非公開手牌の有無にかかわらず拒否する。各役に必要な面子が重なる場合は共有してよく、例えば三暗刻と三槓子を単に3+3面子として拒否しない。
+
 #### 7.6.4. 役満
 
 | Yaku ID | 成立条件 |
@@ -1234,6 +1238,8 @@ wireへ出力する通常役IDは重複してはならず、各IDの `value` は
 `hand_points` は本場・供託を除いた、個別丸め後の全支払額の合計である。本場、供託、複数ロンおよび責任払いは 本書 第7.2節のruleに従う。本場加算は基本支払いを丸めた後に適用する。
 
 受信者は、公開された各winの符・飜・役満倍数から基本点と `hand_points` を再計算し、本場・供託・公開済み責任履歴を用いて各winの `deltas` を検査する（MUST）。点数の全体保存だけでは、支払額や支払seatの正しさを保証しない。非公開手牌のため役・符の成立自体を再判定できないviewでも、この公開値間の算術検査を省略してはならない（MUST NOT）。
+
+この再計算へ不正な役宣言を入力してはならない（MUST NOT）。全viewの受信者は、IDの一意性・排他関係に加え、公開された副露から決まる門前限定と食い下がり、`kuitan`、倍役満の有効条件、リーチ成立・ダブルリーチ・一発、ロン／ツモ・嶺上・槍槓・海底／河底・第一自摸役との整合を検査する（MUST）。通常役を加算する和了では、公開履歴から成立が確定する状況役を欠落させてもならない。七対子の25符、平和のツモ20符／ロン30符、未成立リーチへの裏ドラbonus禁止も同様である。逆方向の制約も検査し、25符は七対子、20符は平和ツモの場合だけ許可する（MUST）。ロンの20符や、七対子役を持たない25符は、点数の算術が一致していても `invalid_message` とする。真の役満では通常役・bonusを出力しない。待ち形など非公開情報を要する倍化条件の完全判定はホストが行うが、無効なconditionに対応するvalue 2は受信者も拒否する。
 
 ##### 7.6.7.3 責任払い
 
@@ -1400,7 +1406,7 @@ fixture集合はregistryの全通常役・全役満、通常形・七対子・�
 
 - `request_id` は `game_id` 内で一意である（MUST）。
 - `seat` は受信 session の `welcome.seat` と一致する（MUST）。
-- `caused_by_seq` は判断の原因となった、同じ session の適用済み event を参照する（MUST）。
+- `caused_by_seq` は現在の判断の原因となった、同じsessionの適用済みeventの正確な `seq` を参照する（MUST）。同じactor・牌・payloadを持つ過去eventの番号で代用してはならない（MUST NOT）。
 - `legal_actions` は、その view で選択できる完全な集合であり、1個以上512個以下の要素を持つ（MUST）。
 - 各 `legal_actions[].action.actor` は `seat` と一致する（MUST）。`none` だけは `actor` を省略できる（MAY）。
 - `action_id` は request 内で一意な64文字以下のIDである（MUST）。
@@ -1605,6 +1611,8 @@ time_bank_ms = B - consumed_ms
 `elapsed_ms` は0～1,800,000、`time_bank_ms` は0～600,000である。seatの共有time bankは選択を固定する時点で一度だけ更新する（MUST）。OPEN中のsnapshotでは元のB、SELECTED中はselection.time_bank_ms、終端化後は最後の終端ACKの残量を共有残量として保持する。次のrequestはその共有残量をtime_bank_msへ記録する。`SELECTED` 以後のgroup待ち・ACK送信・切断・再送の時間を追加課金してはならない（MUST NOT）。取消し時も既に選択済みなら固定した値を維持する。`rejected` ACKではその時点の経過と仮の残量を通知するが、requestの起点・元のB・deadlineは維持し、最終精算で同じ時間を二重に引いてはならない（MUST NOT）。`bank_scope` ごとのresetは第7.2節に従う。
 
 期限前の自動選択は `invalid_action_policy == "default"` による場合だけ許可する。`reject`/`chombo` policyの `defaulted` ACK、およびsnapshotの `selection.source == "default"` は、timeoutによる `elapsed_ms == D` を満たさなければならない（MUST）。取消しの `stale` はこのtimeout条件の対象ではない。
+
+同じOPEN requestについて、既に通知したrejected ACKのelapsed_msを、後続のACKまたは新しく固定するselectionで下回ってはならない（MUST NOT）。その後のOPEN snapshotも `D - remaining_ms` が既知の経過時間以上であることを検査する。rejectedでは共有bankをまだ控除しないが、観測済みの時計は保持する（MUST）。これにより、再試行やsnapshotを理由に時間を戻したり、最終精算時に既に経過した時間を無視したりしない。
 
 ### 9.2 再送・後着actionの判定順
 
@@ -2197,6 +2205,10 @@ snapshotは、一つの原子的なhost状態とそのsessionへの投影を表�
 - game開始済みで `snapshot.seq == applied_seq + 1` なら通常の連続したledger entryとして適用する。replaces_through_seqはapplied_seqと等しく、今回のreplay_through_seqやreceived_seqを覆う必要はない。連続再送だけで既に回復待ちを終えた場合も、同じ再送範囲の後続snapshotを受理する。game開始前のsnapshotにはresume/gap回復または観戦初期化の許可が必要である。履歴中のentryと新規生成の理由はwireだけでは区別できないため、生成理由の制限はホストのledger監査で検査する。
 - `snapshot.seq > applied_seq + 1` ならresume/gap回復の許可がある場合だけ欠落範囲を置換する。replaces_through_seqはapplied_seq以上、resumeではwelcome.replay_through_seq以上、gap回復ではreceived_seq以上でなければならない。未要求のseq飛越しは禁止する。
 
+連続したsnapshotは受信済みprefixのcheckpointであり、対局状態を変更するeventの代用ではない。受信者は、game_phase、scores、供託、次局座標、手牌・河・副露・表示牌などの確定済み局状態、原因eventとその正確なseq、発行済みの未終端request ID集合を、保持しているprefixと照合する（MUST）。replayのoriginal_seqも同じ値を保持する。手牌の表示順、consumedの多重集合の順序および状態に影響しない拡張注釈だけの違いは許可する。局間から局内への移動、終局への移動、別requestへの再発行、点数総和を保存したseat間の移動も、対応するevent/requestを欠く連続snapshotでは不正である（MUST NOT）。end_kyokuから必須end_gameまでの間にもsnapshotを挿入しない。
+
+ACK前に固定されたselection、残期間、および他家の判断のresolvingへの進行は、eventを増やさずにsnapshotへ反映できる。自己の見逃しフリテンは固定された選択を適用した値、共有time bankはそのselectionの計時値と照合し、選択固定がなければ従前の値を保持する（MUST）。requestの元のID・候補・予算や、既に固定したselectionを変更する許可ではない。既にend_gameまたはended snapshotを適用済みの場合は、seqを飛び越える回復snapshotでも最終点数・供託・順位・持ち時間を変更してはならない（MUST NOT）。終局後に許可される診断と回復messageには、これらを変更する権限がない。
+
 snapshotが現在の回復終端より前なら回復待ちを維持し、throughまで適用する前にOPEN requestへ回答してはならない（MUST NOT）。resumeの再送中にgapも検出した場合、回復終端はreplay_through_seqとreceived_seqの大きい方とし、片方の解消だけで回答を解禁しない。重複snapshotは通常のseq/byte比較に従い、再適用しない。新規観戦の初期snapshotは第11節に従う。
 
 受信者はgame stateと未解決requestを一括置換し、最後に適用したseqをsnapshot.seqとする。次messageはその値+1になる。置換範囲の古いmessageを後着で再適用してはならない（MUST NOT）。以前のpayloadを保持していれば同一seqの衝突を検査し、未保持の置換範囲は内容を推測せず無視する。置換範囲より新しい同一seqには通常のbyte比較規則を適用する。
@@ -2233,7 +2245,11 @@ dora_markersは公開済み表示牌1～5枚、pending_doraはnullまたは `{ka
 
 加槓は元のpon位置を保持するため、melds末尾を常に最新の槓と解釈してはならない（MUST NOT）。snapshot単体では、末尾のankan/daiminkanまたは列内のkakanが最新の成立槓になり得る。rinshanとpending_doraはこの候補およびrules.kan_dora_timingと矛盾してはならず、pending_doraがある場合はrinshan=trueかつ対応kan_typeの候補が必要である（MUST）。rinshanの自摸判断中にpending_doraがなければ、before_rinshanの候補を少なくとも1個持つ。履歴を持つホストは実際の直前の成立槓を用いて検証する。rinshanとhaiteiは同時にtrueにしてはならない（MUST NOT）。
 
-turnはactor、phase、last_event_seq、last_eventを持つ。last_eventは最後に確定したevent payloadの全体であり、viewの秘匿を適用する。last_event_seqは置換範囲内の正のseqである。ただし新規観戦のseq=1/replaces_through_seq=0では、当該sessionに過去eventが存在しないためlast_event_seqをnullとし、last_eventには現在gameの最新eventを投影して入れる（MUST）。それ以外でnullを使わない。復元したeventはpending requestのcaused_by_seqの権威として使用できるが、新しいeventとして二重適用しない。
+turnはactor、phase、last_event_seq、last_eventを持つ。last_eventは最後に確定したevent payloadの全体であり、viewの秘匿を適用する。last_event_seqは置換範囲内の正のseqである。ただし途中観戦で初期snapshotから開始し、当該sessionのledgerにまだeventが存在しない間はnullとし、last_eventには参加時点の最新game eventを投影して入れる（MUST）。初期snapshotのseq=1/replaces_through_seq=0だけでなく、最初のeventまでに診断・回復snapshotを記録した場合もnullを保持する。snapshot自身や他sessionの番号をeventの番号として代用しない（MUST NOT）。play/replayではnullを使わない。
+
+欠落範囲を置換するsnapshotでも、last_event_seqを既に観測したsession内eventの番号より小さくしたりnullへ戻したりしてはならない（MUST NOT）。参照先のwireを保持している場合はkindがeventであり、そのpayloadがlast_eventと同値であることを検査する。同じ番号の原因eventを以前のsnapshotから復元済みの場合もpayloadを変更しない。途中観戦でnullを維持する後続snapshotは、新しいeventを含まないため、欠落があっても既知の公開局面を変更してはならない。選択固定に伴うphaseの進行だけは本節の連続prefixと同じ規則で許可する。復元したeventはpending requestのcaused_by_seqの権威として使用できるが、新しいeventとして二重適用しない。
+
+原因eventの番号はpayloadとともに復元し、次の原因eventを適用するまで保持する（MUST）。同じ内容の自摸・打牌が繰り返されても番号を混同しない。診断errorやACKは原因eventを更新しない。
 
 phaseは卓全体のawaiting_draw、awaiting_action、awaiting_responses、resolvingを表す。snapshotは取引境界でしか固定されないため、phaseとlast_eventは原因関係で一致する（MUST）。awaiting_drawはstart_kyoku、awaiting_actionはtsumo、awaiting_responsesはdahai・ankan_declared・kakan_declaredのいずれか、resolvingはそれらの反応原因またはtsumoが最後の確定eventとなる。call・受理・表示牌・paoなどtransaction内部のeventをlast_eventに持つsnapshotは存在しない。
 
@@ -2259,11 +2275,17 @@ selectionのaction_idは元の候補内にあり、計時値は選択時に固�
 
 受信者は置換前に、保持済みの同一requestの不変memberと照合する。既にselectionがある場合はaction_id、source、elapsed_ms、time_bank_msの全てを保持し、OPENへ戻してはならない。終端ACKを保持するrequestをpendingへ復活させてはならない（MUST NOT）。初めて復元するselectionにも第9.1節の `D = G + T + B` とbank消費式を適用し、`0 <= elapsed_ms <= D`、userならさらに `elapsed_ms < D` とする。remaining_msはD以下、groupでは `remaining_ms <= decision_group_remaining_ms <= decision_group_deadline_ms` および `D <= decision_group_deadline_ms` を満たさなければならない（MUST）。違反はfatal `invalid_message` とし、seq、game state、request、bankのいずれも部分適用してはならない。
 
+同じrequestのsnapshotを再び適用する場合、remaining_msとdecision_group_remaining_msを以前の値より増やしてはならない（MUST NOT）。seqに欠落があっても、同じrequestの開始時刻と期限は変更されない。OPENのsnapshotで残期間Rを観測済みなら、その後に固定したselectionおよびACKのelapsed_msは `D - R` 以上でなければならない（MUST）。Rは切り上げ、elapsed_msは切り捨てであるため、この下限ちょうどは許可する。既にSELECTEDのsnapshotと後着staleの計時値には、元の固定値を保持する規則を適用する。
+
+groupの残期間も同じsnapshot固定時点と共通のgroup_startから求める（MUST）。`D_G = decision_group_deadline_ms`、`R_G = decision_group_remaining_ms`、`R = remaining_ms` とすると、OPENでは `R_G - R == D_G - D` を満たす。両期限が整数msで両残期間を切り上げるため、差は丸めによって変わらない。SELECTEDで `R_G > 0` なら、選択はsnapshot以前なので `selection.elapsed_ms <= D_G - R_G` も満たさなければならない。閉鎖済みgroupの `R_G == 0` は実際の経過時間を表さないため、この式から選択時計を変更しない。例えばDとD_Gがともに5,000msなら、OPENのR=4,000msとR_G=4,500msの組は不正であり、R_G=4,500msのsnapshotに1,000ms時点のselectionを含めることも不正である。
+
 空のresume範囲では直ちに保持済みOPEN requestへ回答できるが、最初の新しいmessageが来るまではseqを飛び越える代替snapshotも受理できる。この例外の許可と、連続したledger entryであるsnapshotの受理は別である。snapshotが置換した範囲の未知requestに対する後着stale ACKは、過去の診断として無視できる。新しいrequestを生成したり、現在の持ち時間を上書きしたりしない（MUST NOT）。accepted/passed/superseded/defaultedは、保持または復元したpending requestに対応しなければならない。
 
 ## 14. 拡張
 
 標準memberの意味とcoreの不変条件を変更してはならない（MUST NOT）。拡張の識別子はASCIIの64文字以下とし、ownerを英数字1文字以上、nameを英数字から始まる文字列とする。fieldはx_<owner>_<name>（name内は英数字とunderscore）、capability/event/action typeはx-<owner>-<name>（name内は英数字・underscore・dot・hyphen）とする。ownerとnameの区切りを省略しない。
+
+拡張Yaku IDは `x_<owner>_<name>` とし、name内には英数字・underscore・dot・hyphenを許可する。field名とはこのname内の許可文字が異なる。owner、先頭文字、ASCII・64文字上限は上記と同じであり、`rules.local_yaku` と `wins[].yakus[].id` に同じIDを使用する。文字列の形式だけでは使用を許可せず、所有capabilityの有効化、ルールでの列挙、登録された飜数・役満倍数と状態の意味検査を必要とする（MUST）。
 
 状態に影響しないnamespaced memberは未交渉でも送信でき、受信者は無視できる。状態、合法手、点数へ影響するmember/type/ruleは対応capabilityの有効化を必須とし、未交渉のものを送信してはならない（MUST NOT）。未知の標準member・typeをこの仕組みで読み替えない。
 
@@ -2327,12 +2349,12 @@ Protocol Version は message Schema と参照先、および交渉入力を検�
 11. play/replay の情報秘匿
 12. message・depth・action 数上限、ゲーム全体の点数範囲を保証するrulesの受理境界
 13. 暗槓・大明槓・加槓ごとの槓ドラ公開時点
-14. `han`、`yakus`、`bonuses`、役満倍数の整合
+14. `han`、`yakus`、`bonuses`、役満倍数の整合、役IDの重複・排他・必要面子数と牌種条件・有効ルール・公開履歴との照合、20符・25符の適用条件の双方向検査
 15. `sequence_gap` 後の範囲再送とsnapshot置換
 16. resume tokenのrotate、期限切れ、replay、snapshot
 17. 同一transport上の複数sessionと `end_game.rankings`
-18. snapshotの未使用 `seq`、一時振聴、一発、第一巡、手番、time bank、局間復元から次局開始までの進行
-19. 未解決requestを含むresumeでのtimeout継続とsnapshot強制
+18. snapshotの未使用 `seq`、一時振聴、一発、第一巡、手番、time bank、局間復元から次局開始までの進行、連続prefixの確定状態・request ID・元記録位置の保持と終局状態の不変性、原因eventの番号・payloadの保持と途中観戦の未発行番号の扱い
+19. 未解決requestを含むresumeでのtimeout継続とsnapshot強制、個別・group残期間が同じ固定時点を表すこととselectionがその時点以前であること
 20. 複数ロンの本場・供託配分と責任払いの端数
 21. bankruptcy、連荘、アガリ止め、延長の評価順
 22. play、spectate、replayのseat・request禁止・visibility
@@ -2343,7 +2365,7 @@ Protocol Version は message Schema と参照先、および交渉入力を検�
 27. notenのtenpai人数別payments、kyotaku本数の積算・配分・繰越・終局
 28. 嶺上和了時の槓ドラ分岐、`ura_dora_markers` およびreplay `original_seq`
 29. grace、deadline境界、同一seatの重複request、送信backpressure
-30. Protocol Coreの全message Apply前後条件、失敗時の副作用なしおよび検証層ごとのerror優先順
+30. Protocol Coreの全message Apply前後条件、失敗時の副作用なし、検証層ごとのerror優先順、同内容の過去eventを原因に指定したrequestの拒否
 31. wire ledgerの連続seq、同一seqのbyte-for-byte再送、transaction境界および未送信entryの保持
 32. decision groupの同時action、個別timeout、同値timestampのtimeout優先、linearization後の一回限り解決
 33. 新規joinの明示seat・最小空席割当、resume seat固定、game/recording replay target
@@ -2380,7 +2402,7 @@ action replay は第9節の冪等規則で処理しなければならない（MU
 
 ### 18.5 公平性と計時
 
-`timeout_ms` と `time_bank_ms` は対局結果へ影響する。ホストは全 seat へ同じ rule で時間を計測し、transport latency を含むか否かを一貫させなければならない（MUST）。クライアントが送る elapsed time を権威として使用してはならない（MUST NOT）。
+`timeout_ms` と `time_bank_ms` は対局結果へ影響する。ホストは全seatへ第9.1節の同じ起点・入力登録時点を適用する（MUST）。requestの送信キュー記録完了からactionの入力登録までの配送・受信・構文検証の時間は経過時間に含み、推定したtransport latencyを差し引いて期限を延ばしてはならない（MUST NOT）。クライアントが送るelapsed timeを権威として使用してはならない（MUST NOT）。
 
 ### 18.6 サービスの認証・認可との境界
 

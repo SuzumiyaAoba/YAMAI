@@ -26,6 +26,35 @@ MAX_GAME_EVENTS = 100_000
 # they cannot all coexist: 16 * 8000 basic points * 6 for a dealer ron.
 MAX_HAND_POINTS = 768_000
 
+# Public role values from §7.6.3; checked against the release registry.
+NORMAL_YAKU_HAN = {
+    "riichi": (1, None), "double_riichi": (2, None), "ippatsu": (1, None),
+    "menzen_tsumo": (1, None), "tanyao": (1, 1), "pinfu": (1, None),
+    "iipeikou": (1, None), "yakuhai_haku": (1, 1), "yakuhai_hatsu": (1, 1),
+    "yakuhai_chun": (1, 1), "seat_wind": (1, 1), "round_wind": (1, 1),
+    "rinshan_kaihou": (1, 1), "chankan": (1, 1), "haitei": (1, 1), "houtei": (1, 1),
+    "sanshoku_doujun": (2, 1), "ikkitsuukan": (2, 1), "chanta": (2, 1),
+    "chiitoitsu": (2, None), "toitoi": (2, 2), "sanankou": (2, 2),
+    "honroutou": (2, 2), "sanshoku_doukou": (2, 2), "sankantsu": (2, 2),
+    "shousangen": (2, 2), "honitsu": (3, 2), "junchan": (3, 2),
+    "ryanpeikou": (3, None), "chinitsu": (6, 5),
+}
+DOUBLE_YAKUMAN_CONDITIONS = {
+    "kokushi_musou": "kokushi_13_wait", "suuankou": "suuankou_tanki",
+    "chuuren_poutou": "junsei_chuuren", "daisuushii": "daisuushii",
+}
+# Minimum logical meld requirements of the public standard-yaku claims.
+# Maxima are used because a single meld may establish several different yaku.
+YAKU_MIN_SEQUENCES = {
+    "pinfu": 4, "iipeikou": 2, "ryanpeikou": 4,
+    "sanshoku_doujun": 3, "ikkitsuukan": 3, "chanta": 1, "junchan": 1,
+}
+YAKU_MIN_TRIPLETS = {
+    "toitoi": 4, "sanankou": 3, "sanshoku_doukou": 3, "sankantsu": 3,
+    "shousangen": 2, "yakuhai_haku": 1, "yakuhai_hatsu": 1,
+    "yakuhai_chun": 1, "seat_wind": 1, "round_wind": 1,
+}
+
 
 class ScoringError(ValueError):
     def __init__(self, code: str, message: str):
@@ -36,6 +65,69 @@ class ScoringError(ValueError):
 def require(condition: bool, code: str, message: str) -> None:
     if not condition:
         raise ScoringError(code, message)
+
+
+def validate_win_declarations(win: dict, rules: dict | None = None, *, closed: bool | None = None) -> None:
+    """Check public declarations, without guessing a hidden hand's shape.
+
+    Schemas check individual role objects; uniqueness is by ID even when
+    annotations or the two allowed han values make those objects different.
+    Rules/closed status add constraints only when that context is available.
+    """
+    for field, key in (("yakus", "id"), ("bonuses", "id"), ("pao", "yaku_id")):
+        ids = [item[key] for item in win[field]]
+        require(ids == sorted(set(ids)), "invalid_message", f"{field} IDs must be sorted and unique")
+    ids = {item["id"] for item in win["yakus"]}
+    for left, right in (("riichi", "double_riichi"), ("iipeikou", "ryanpeikou"),
+                        ("honitsu", "chinitsu"), ("chanta", "junchan"),
+                        ("shousuushii", "daisuushii"), ("tenhou", "chiihou")):
+        require(not {left, right} <= ids, "invalid_message", "mutually exclusive yaku declarations")
+    if not any(yaku["unit"] == "yakuman" for yaku in win["yakus"]):
+        sequences = max((YAKU_MIN_SEQUENCES.get(name, 0) for name in ids), default=0)
+        triplets = max((YAKU_MIN_TRIPLETS.get(name, 0) for name in ids), default=0)
+        dragon_triplets = max(len(ids & {"yakuhai_haku", "yakuhai_hatsu", "yakuhai_chun"}),
+                              2 if "shousangen" in ids else 0)
+        wind_triplets = int(bool(ids & {"seat_wind", "round_wind"}))
+        triplets = max(triplets, dragon_triplets + wind_triplets
+                       + (3 if "sanshoku_doukou" in ids else 0))
+        require(sequences + triplets <= 4, "invalid_message", "yaku claims require more than four melds")
+        require("chiitoitsu" not in ids or sequences + triplets == 0, "invalid_message",
+                "seven pairs cannot combine with meld-based yaku")
+        require("honroutou" not in ids or sequences == 0, "invalid_message",
+                "all terminals and honors cannot contain a sequence")
+        honors = {"yakuhai_haku", "yakuhai_hatsu", "yakuhai_chun", "seat_wind",
+                  "round_wind", "shousangen", "chanta", "honitsu"}
+        require(not (ids & {"tanyao", "junchan", "chinitsu"} and ids & honors),
+                "invalid_message", "yaku claims both require and exclude honors")
+        require("tanyao" not in ids or not ids & {"junchan", "honroutou", "ikkitsuukan"},
+                "invalid_message", "all simples cannot contain required terminals")
+        require(not (ids & {"honitsu", "chinitsu"} and ids & {"sanshoku_doujun", "sanshoku_doukou"}),
+                "invalid_message", "one-suit and three-suit yaku cannot combine")
+        require("ryanpeikou" not in ids or not ids & {"sanshoku_doujun", "ikkitsuukan"},
+                "invalid_message", "two sequence pairs cannot contain three distinct required sequences")
+        require("ikkitsuukan" not in ids or not ids & {"sanshoku_doujun", "chanta", "junchan"},
+                "invalid_message", "full straight conflicts with the other required sequences")
+        tsumo = win["actor"] == win["target"]
+        require((win["fu"] == 25) == ("chiitoitsu" in ids), "invalid_message",
+                "25 fu is reserved for seven pairs")
+        require(win["fu"] != 20 or (tsumo and "pinfu" in ids), "invalid_message",
+                "20 fu is reserved for pinfu tsumo")
+        require("pinfu" not in ids or win["fu"] == (20 if tsumo else 30), "invalid_message",
+                "pinfu fu differs from win method")
+    for yaku in win["yakus"]:
+        name, value = yaku["id"], yaku["value"]
+        if name in NORMAL_YAKU_HAN:
+            choices = NORMAL_YAKU_HAN[name]
+            require(yaku["unit"] == "han" and value in (choices if closed is None else (choices[0 if closed else 1],)),
+                    "invalid_message", "yaku value differs from the public open/closed state")
+        if rules is not None:
+            require(not name.startswith("x_") or name in rules["local_yaku"],
+                    "invalid_message", "result uses an unconfigured local yaku")
+            if name in DOUBLE_YAKUMAN_CONDITIONS and value == 2:
+                require(DOUBLE_YAKUMAN_CONDITIONS[name] in rules["double_yakuman"],
+                        "invalid_message", "double yakuman condition is disabled")
+            require(name != "tanyao" or closed is not False or rules["kuitan"],
+                    "invalid_message", "open tanyao is disabled")
 
 
 def score_magnitude_bound(rules: dict[str, Any]) -> int:

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Render the current Markdown documentation as HTML through mdxr."""
+"""Render the current Markdown and MDX documentation as HTML through mdxr."""
 
 from __future__ import annotations
 
@@ -16,6 +16,8 @@ DOCUMENTS = {
     "docs/README.md": "docs/index.html",
     "docs/yamai-protocol.md": "docs/yamai-protocol.html",
     "docs/artifacts.md": "docs/artifacts.html",
+    "docs/auth-implementation-plan.mdx": "docs/auth-implementation-plan.html",
+    "docs/spec-review.mdx": "docs/spec-review.html",
     "verification/README.md": "verification/index.html",
     "verification/quint/README.md": "verification/quint/index.html",
 }
@@ -24,7 +26,8 @@ MDXR_VERSION = "0.2.0"
 
 def to_mdx(source: Path, output: Path, version: str) -> str:
     text = source.read_text(encoding="utf-8")
-    title, body = text.split("\n", 1)
+    native_mdx = source.suffix == ".mdx"
+    title, body = ("", text) if native_mdx else text.split("\n", 1)
     body = re.sub(r"\n## 目次\n.*?(?=\n## 1\.)", "\n", body, flags=re.S)
     rendered_paths = {(ROOT / name).resolve(): ROOT / target for name, target in DOCUMENTS.items()}
 
@@ -54,6 +57,9 @@ def to_mdx(source: Path, output: Path, version: str) -> str:
             continue
 
         line = re.sub(r"(\[[^\]]+\]\()([^\s)#]+)(#[^)]*)?(\))", link, line)
+        if native_mdx:
+            lines.append(line)
+            continue
         # Keep inline code literal; escape prose that MDX would parse as JSX/JS.
         parts = re.split(r"(`+[^`]*`+)", line)
         for index in range(0, len(parts), 2):
@@ -70,7 +76,7 @@ def to_mdx(source: Path, output: Path, version: str) -> str:
         '<Toc depth="3" min="2" title="目次" />',
         "",
     ))
-    return header + "\n".join(lines) + "\n"
+    return ("" if native_mdx else header) + "\n".join(lines) + "\n"
 
 
 def main() -> None:

@@ -23,6 +23,8 @@ YAMAI は、4人リーチ麻雀の対局ホストと AI プレイヤーが、対
 | [成果物の仕様](docs/artifacts.md) | ファイル構成、版の一致、profile hash、検査層の関係 |
 | [検証ガイド](verification/README.md) | 実行方法、適合35項目と検査の対応、検証範囲 |
 | [形式モデル](verification/quint/README.md) | 5つの Quint モデル、有限境界、性質と前提 |
+| [仕様レビュー](docs/spec-review.mdx) | 全体点検の発見事項、修正と再検査結果 |
+| [認証・認可の実装計画](docs/auth-implementation-plan.mdx) | サービス層の認証・認可、resumeとの接続、実装順と受入条件 |
 
 ## 通信と対局の原則
 
@@ -59,4 +61,4 @@ HTML の生成には Python 3、Node.js と npm を使用します。mdxr `0.2.0
 python3 scripts/render_docs.py
 ```
 
-生成後は `docs/index.html` から各文書を開けます。Markdown が原本であり、HTML は同じ内容から生成する閲覧用成果物です。回帰テスト、独立した JSON Schema 検査、形式検証の手順は [検証ガイド](verification/README.md) にあります。
+生成後は `docs/index.html` から各文書を開けます。Markdown・MDXが原本であり、HTMLは同じ内容から生成する閲覧用成果物です。回帰テスト、独立したJSON Schema検査、形式検証の手順は[検証ガイド](verification/README.md)にあります。

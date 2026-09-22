@@ -1,0 +1,86 @@
+---
+title: "YAMAI 仕様全体のレビューと修正記録"
+status: "done"
+date: "2026-09-22"
+version: "1.0-draft.1"
+editor: "none"
+---
+
+<Callout kind="note" title="対象と判定基準">
+
+[規範本文](yamai-protocol.md)の全20章・付録、21 Schema、registry、manifest、公式ベクトル、検査実装、5つの形式モデルの対応と検証範囲を確認した。本文内の矛盾、同じ入力に対する解釈の分岐、派生成果物の検査漏れを修正対象とした。現在のブランチ上で作業し、認証サービスの実装は[別の実装計画](auth-implementation-plan.mdx)へ記載した。
+
+</Callout>
+
+<Toc depth="3" title="目次" />
+
+## 発見事項と修正
+
+| ID | 問題と影響 | 修正と確認先 |
+|---|---|---|
+| R1 | §6.1はhello前のjoinを許可すると読め、§3.3・§6.4の交渉順と矛盾した | hello前は交渉用fatal errorだけを許可。joinは有効なhello後に限定し、同transportの次sessionとの関係も明記 |
+| R2 | Receiverは原因eventのpayloadだけを比べた。同じ牌を再び自摸すると、現在のseq=19に対して過去のseq=3を参照するrequestを受理した | 原因eventのseqを保持・復元して照合。V342で現在番号の正例と過去番号の負例、回帰テストで拒否時の状態保存を確認 |
+| R3 | 役IDを変えず注釈を追加すると、uniqueItemsを通過して役満を二重計上できた。排他役も同時に受理した | yaku・bonus・paoのID単位の一意性と排他関係を意味検査。V343–V344 |
+| R4 | 倍役満無効、未登録のローカル役、未成立リーチ、食い下がり不一致、ロンへの自摸役、リーチなしの裏ドラbonusを受理した | ルール・公開副露・リーチ履歴・和了原因を金額計算前に照合。V345–V350 |
+| R5 | §18.5がlatencyを除外する裁量を許す一方、§9.1は送信キュー記録から入力登録までと定めていた | §9.1の起点へ統一し、配送・受信・構文検証時間を含むことを明記 |
+| R6 | 拡張Yaku IDのnameに許可するdot/hyphenがSchemaにしかなく、fieldの文法との違いが不明だった | §14にYaku IDの文法とcapability・local_yakuとの対応を明記 |
+| R7 | 既存の回帰テストでリーチなしの和了をリーチ役としていた。裏ドラの正例も供託を設定していなかった | 正例を平和へ修正。リーチ和了の例は役・供託・支払いを揃えて再検査 |
+| R8 | 欠落のないsnapshotで点数をseat間移動し、手牌・request ID・局進行・牌譜cursor・持ち時間を書き換えられた。終了済み状態も差額なしの別結果へ置換できた | 完全に受信済みのprefixとsnapshotの確定状態を照合。終局後は欠落区間の回復でも最終状態を保持。V351–V358と原子的拒否の回帰テスト |
+| R9 | 七対子なら25符という片方向の検査だけで、ロンの20符、七対子以外の25符を金額が一致すれば受理した | 通常和了の25符は七対子、20符は平和ツモに限定。状態を必要としない条件は共通の役宣言検査へ集約。V359–V360 |
+| R10 | 同じrequestの後続snapshotで残時間を増やし、既に観測したOPEN時点やrejected ACKより過去の選択・ACKへ時計を戻せた | 個別・group残時間の非増加、経過時間の下限D−Rと既知ACKの経過時間を検査。rejectedではbankを課金せず時計の下限を保持。境界ちょうどの正例と1ms逆行する負例を用意。V361–V366 |
+| R11 | 既存の再接続テストが、未受信のACK・リーチ・打牌を連続snapshotで置換していた。また3,000ms経過済みのOPEN snapshotの後へ812msの選択ACKを置いていた | 前者はseq 5–7の欠落を回復するsnapshotへ、後者は3,000msのACKへ修正。テストの主目的を維持し、復旧位置と時計の前提を整合させた |
+| R12 | 観戦の初期snapshot後、まだsessionにeventがないcheckpointでも、正のlast_event_seqを必須としていた。snapshot自身の番号を代用すると原因が偽になる | 最初のsession eventまではnullを保持することを明記し、連続checkpointを受理。V367。生成理由の制限は従来どおりhost ledger監査の対象 |
+| R13 | gap回復snapshotでは原因eventの番号を過去へ戻し、snapshotの番号を参照したり、同じ番号のpayloadを変更したりできた | 観測済みevent番号の下限と保持済みwire・復元済み原因payloadを照合。V368–V370と原子的拒否の回帰テスト |
+| R14 | 同じ起点・期限の個別requestとgroupに異なる残期間を設定でき、snapshotの時計より未来のselectionも受理した | OPENでは両残期間の差と両期限の差を一致させ、未閉鎖groupの時計より後のselectionを拒否。等しい期限・異なる期限・丸め境界・閉鎖後を確認。V371–V373 |
+| R15 | 平和と対々和、七対子と面子役、一盃口と三暗刻などの不両立を、金額を合わせれば受理した | 最小順子数・刻子数、特殊形、字牌・么九牌・色数・必要順子の条件を公開役から検査。V374–V383。既存の完全手牌fixtureから再計算した全和了も通過 |
+| R16 | 既存の槓・責任払いsnapshot例を猶予3,000msのルールで検査すると、個別残18,000msに対して同期限のgroup残が21,000msだった | V292・V293・V324の共通前提を18,000msへ同期。負例は本来の牌・責任履歴の不備を維持し、回帰テストが意図した理由を検査できる状態にした |
+
+R3はJSON Schemaの不具合ではない。`uniqueItems` は配列要素全体の一意性を扱うため、object内のIDだけの一意性には別の制約が必要である。[JSON Schema Validation §6.4.3](https://json-schema.org/draft/2020-12/json-schema-validation#name-uniqueitems)を参照する。
+
+R1–R11は開始時点に存在した修正記録であり、既存の未コミット変更を保持して点検した。今回追加で再現・修正した事項はR12–R16である。認証計画にも、認証成功後に原因eventとgroup時計のcore検査を省略しない受入条件AUTH-09を追記した。
+
+## 全体を再確認した順序
+
+<Steps>
+  <Step status="done">初回：規範本文の全章・付録を読み、Schema・registry・検査実装・形式モデルの対応を確認。開始時点の366組の正負ベクトルと160件の回帰テストが成功した。</Step>
+  <Step status="done">第1回の修正と再確認：観戦checkpointとgroup時計の不備を再現。gap回復へ確認を広げ、原因eventの巻戻し・別payload・非event参照も修正し、V367–V373を追加した。</Step>
+  <Step status="done">第2回の修正と再確認：採点の面子数・牌種条件の不両立を追加で発見し、V374–V383を追加。全和了fixtureを公開役検査へ通して過剰拒否を確認し、既存snapshot例の時計も同期した。</Step>
+  <Step status="done">最終確認：383組の正負ベクトル、168件の回帰テスト、独立Schema・採点検査、固定環境の17検査が成功。7 HTMLと183リンク、最終差分を確認した。</Step>
+</Steps>
+
+## 仕様領域ごとの確認
+
+| 領域 | 確認内容 |
+|---|---|
+| §1–6：基本契約・通信・交渉 | JSONの厳密さ、frame、envelope、版/profile/capabilityの組、拒否順、seatとtarget |
+| §7：ルール・採点 | 136枚の保存、赤牌、全合法候補、見逃し、槓・リーチ、通常役・役満・符・金額・供託・責任払い、20符・25符の適用条件、役の必要面子数・牌種条件の不両立、次局 |
+| §8–10：判断とイベント | 全3seatの反応、原因seq、個別期限、原子的なACKと結果、既定選択、取消し・不採用・複合行動 |
+| §11–13：view・エラー・復旧 | 非漏洩、検証順、同一byte再送、token rotate、有限再送範囲、snapshotと未解決requestの保持、連続prefixの照合、原因eventの保持、時計の逆行・異なる固定時点の拒否 |
+| §14–20・付録 | 拡張の境界、資源上限、manifest/hash、適合35項目、認証・認可の対象外範囲、registryと状態機械 |
+| 派生成果物 | Schema参照、registryとの一致、本文JSON例、公式ベクトル、採点fixture、検査層と形式モデルの限界 |
+
+## 検査結果
+
+2026-09-22、次の検査を実施した。正例の受理だけでなく、負例が指定した理由で拒否されることも公式ベクトルで確認した。
+
+| 検査 | 結果 |
+|---|---|
+| `python3 scripts/validate_artifacts.py` | 成功。21 Schema、383組の正負ベクトル、14採点例、78正例・36負例の採点fixture、本文15 JSON例 |
+| `python3 -m unittest discover -s scripts -p 'test_*.py'` | 119件成功 |
+| `python3 tests/test_regressions.py` | 49件成功 |
+| Nix固定環境の `scripts/check_jsonschema.py` | 成功。Draft 2020-12の21 Schemaと634件の独立した入力検証 |
+| `scripts/score_oracle.py` | 78正例・36負例が成功。artifact validatorと同じ採点エンジンを使うため、独立した採点実装とは数えない |
+| `nix flake check path:. --no-update-lock-file --offline` | aarch64-darwinの17検査が成功。5形式モデルの型・安全性・到達例と、定義済みの時間的性質を検査。検査時の保存済みsourceと最終状態で5モデル・flake.nix・flake.lockが同一であることも確認。他のOS・CPU向けの検査は実行していない |
+| 最終状態のNix `artifact-validator` | 成功。追加の役の面子数検査も含む全168件の回帰・成果物・独立Schema・採点検査を実施。保存済み入力と現在の仕様・実装・Schema・registry・ベクトル等41ファイルの同一性を確認 |
+| `scripts/render_docs.py` によるmdxr生成 | 最終記録を含めmdxr 0.2.0で7 HTMLを生成。ローカルの183リンクについてファイルと見出しの存在を確認 |
+| `git diff --check` | 成功 |
+
+今回の再点検では公式ベクトルを366組から383組へ増やし、manifestの件数制約を同期した。profile hashを再計算して、交渉例・wire記録・registry・release manifestの同一性を揃えた。新しいwire memberは追加せず、規範の不整合・曖昧さと派生検査の不足を修正した。`published:false` のdraftのままとし、新しい公開tagは作成していない。
+
+## 検証の範囲
+
+他家の秘密手牌、暗号学的なtoken生成、実サービスの認証、異なる実装間の相互運用性は、このリポジトリのテストだけでは保証できない。形式モデルの結果にも有限境界と環境仮定がある。[検証ガイド](../verification/README.md)と[形式モデルの説明](../verification/quint/README.md)に従う。
+
+今回追加したsnapshotの原因・時計式・役の不両立はPythonの受信・採点検査で確認した。Quintは既存の抽象モデルの範囲を再検査しており、これらの具体的なpayload検査を新たに形式証明したとは扱わない。
+
+HTMLは参考文書を含む閲覧用成果物であり、規範本文の原本はMarkdownである。認証・認可計画と本レビューはMDXを原本とする。

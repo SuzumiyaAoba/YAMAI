@@ -29,10 +29,33 @@ def check_clock(request: dict, clock: dict, grace: int, *, user: bool = False, t
     elapsed = clock["elapsed_ms"]
     require(0 <= elapsed <= deadline and (not user or elapsed < deadline),
             "invalid_message", "selection clock exceeds its original deadline")
+    if "remaining_ms" in request and request.get("selection") is None:
+        require(elapsed >= deadline - request["remaining_ms"], "invalid_message",
+                "selection clock precedes an observed open snapshot")
     require(not timeout or elapsed == deadline, "invalid_message", "default before deadline without default policy")
     consumed = min(max(0, elapsed - grace - request["timeout_ms"]), request["time_bank_ms"])
     require(clock["time_bank_ms"] == request["time_bank_ms"] - consumed,
             "invalid_message", "selection time-bank arithmetic differs")
+
+
+def check_snapshot_clock(request: dict, grace: int) -> None:
+    """Both remaining durations describe the same atomic snapshot instant."""
+    deadline = grace + request["timeout_ms"] + request["time_bank_ms"]
+    remaining = request["remaining_ms"]
+    require(remaining <= deadline, "invalid_message", "snapshot remaining time exceeds original budget")
+    if "decision_group_id" not in request:
+        return
+    group_deadline = request["decision_group_deadline_ms"]
+    group_remaining = request["decision_group_remaining_ms"]
+    require(group_deadline >= deadline and remaining <= group_remaining <= group_deadline,
+            "invalid_message", "snapshot group clock differs from original deadlines")
+    selection = request["selection"]
+    if selection is None:
+        require(group_remaining - remaining == group_deadline - deadline,
+                "invalid_message", "open request and group clocks describe different snapshot instants")
+    elif group_remaining > 0:
+        require(selection["elapsed_ms"] <= group_deadline - group_remaining,
+                "invalid_message", "selection occurs after the snapshot's group clock")
 
 
 def negotiate(hello: dict, join: dict, welcome: dict, context: dict,
@@ -175,11 +198,15 @@ class Receiver:
         self.active_requests: set[str] = set()
         self.awaiting_request = False
         self.requests: dict[str, dict] = {}
+        # Diagnostic ACKs constrain later clocks without charging the bank.
+        self.request_clock_floor: dict[str, int] = {}
         self.terminal_acks: dict[str, dict] = {}
         self.expected_effects: list[dict] = []
         self.unadopted_reaction: dict | None = None
         self.time_bank_ms = welcome["rules"]["time_control"]["bank_ms"]
         self.original_seq = 0
+        self.last_event_seq: int | None = None
+        self.event_seq_floor = 0  # Preserved even by snapshots outside a round.
         self.applications: list[int] = []
         self.game = EventState(welcome["rules"], welcome["seat"] if welcome["mode"] == "play" else None)
         if self.recovery == "resume" and self.through == last_seq:
@@ -210,6 +237,28 @@ class Receiver:
             if getattr(error, "severity", "fatal") == "fatal":
                 self.closed = True
             raise
+
+    def _check_snapshot_prefix(self, state: dict) -> None:
+        pending = state.get("pending_requests", [])
+        require(not self.awaiting_request and {r["request_id"] for r in pending} == self.active_requests,
+                "invalid_message", "contiguous snapshot changes the issued request set")
+        expected_game = deepcopy(self.game)
+        expected_bank = self.time_bank_ms
+        for request in pending:
+            selection = request["selection"]
+            if selection is not None:
+                # Selection may advance before a terminal ACK is emitted;
+                # its clock and immutable candidate are checked below.
+                expected_bank = selection["time_bank_ms"]
+                expected_game.acknowledge(request, {**selection, "status": "defaulted"})
+        require(state["mode"] != "play" or state["time_bank_ms"] == expected_bank,
+                "invalid_message", "contiguous snapshot changes the shared time bank")
+        require(state["mode"] != "replay" or state["original_seq"] == self.original_seq,
+                "invalid_message", "contiguous snapshot advances the recording cursor")
+        if state["kyoku"] is not None:
+            require(state["kyoku"]["turn"]["last_event_seq"] == self.last_event_seq,
+                    "invalid_message", "contiguous snapshot changes the cause sequence")
+        expected_game.check_snapshot_prefix(state)
 
     def _expect_effects(self, request: dict, ack: dict) -> None:
         """Bind terminal decisions to their subsequent public effects."""
@@ -341,6 +390,32 @@ class Receiver:
             state = message["state"]
             require(all(state[key] == self.welcome[key] for key in ("mode", "view", "seat", "players")), "invalid_message", "snapshot changed session identity")
             require(not self.ended or state["game_phase"] == "ended", "invalid_message", "snapshot reopened an ended game")
+            turn = state["kyoku"]["turn"] if state["kyoku"] is not None else None
+            if turn is not None:
+                cause_seq = turn["last_event_seq"]
+                require(cause_seq is not None or state["mode"] == "spectate" and self.event_seq_floor == 0,
+                        "invalid_message", "snapshot erased a known session event sequence")
+                if cause_seq is not None:
+                    require(cause_seq >= self.event_seq_floor, "invalid_message", "snapshot rewound its cause event")
+                    if cause_seq in self.known:
+                        cause = self.decode(self.known[cause_seq])
+                        require(cause["kind"] == "event" and canonical_action(cause["event"]) == canonical_action(turn["last_event"]),
+                                "invalid_message", "snapshot cause differs from the retained ledger event")
+                    if cause_seq == self.last_event_seq and self.game.round is not None:
+                        require(canonical_action(turn["last_event"]) == canonical_action(self.game.last_cause),
+                                "invalid_message", "snapshot changed an already observed cause event")
+            if self.started and (contiguous or self.ended):
+                try:
+                    self._check_snapshot_prefix(state)
+                except (GameError, ScoringError) as error:
+                    raise SessionError("invalid_message", str(error)) from error
+            elif self.started and turn is not None and turn["last_event_seq"] is None:
+                # Before an observer's first event, a gap can cover only
+                # diagnostics/checkpoints, not a new public game state.
+                try:
+                    self._check_snapshot_prefix(state)
+                except (GameError, ScoringError) as error:
+                    raise SessionError("invalid_message", str(error)) from error
             self.floor = message["replaces_through_seq"]
             self.started = True
             self.ended = state["game_phase"] == "ended"
@@ -356,12 +431,16 @@ class Receiver:
                 self.original_seq = state["original_seq"]
             kyoku = state.get("kyoku")
             turn = kyoku["turn"] if isinstance(kyoku, dict) else None
+            self.last_event_seq = turn["last_event_seq"] if turn is not None else None
             if turn is not None:
                 bootstrap = state["mode"] == "spectate" and message["seq"] == 1 and message["replaces_through_seq"] == 0
                 last_event_seq = turn["last_event_seq"]
-                require((last_event_seq is None) == bootstrap
-                        and (bootstrap or type(last_event_seq) is int and 0 < last_event_seq <= message["replaces_through_seq"]),
+                require((not bootstrap or last_event_seq is None)
+                        and (last_event_seq is None and state["mode"] == "spectate"
+                             or type(last_event_seq) is int and 0 < last_event_seq <= message["replaces_through_seq"]),
                         "invalid_message", "snapshot cause event lies outside replacement range")
+                if last_event_seq is not None:
+                    self.event_seq_floor = last_event_seq
                 self.validate("visible-event", {"event": turn["last_event"], "mode": state["mode"],
                                                 "view": self.welcome["view"], "seat": self.welcome["seat"]})
                 require(kyoku["kyotaku"] == state["kyotaku"], "invalid_message", "snapshot kyotaku differs")
@@ -541,11 +620,7 @@ class Receiver:
                 self.validate("decision-cause", {"request": request, "cause": turn["last_event"]})
                 grace = self.welcome["rules"]["time_control"]["grace_ms"]
                 deadline = grace + request["timeout_ms"] + request["time_bank_ms"]
-                require(request["remaining_ms"] <= deadline, "invalid_message", "snapshot remaining time exceeds original budget")
-                if "decision_group_id" in request:
-                    require(request["decision_group_deadline_ms"] >= deadline and
-                            request["remaining_ms"] <= request["decision_group_remaining_ms"] <= request["decision_group_deadline_ms"],
-                            "invalid_message", "snapshot group clock differs from original deadlines")
+                check_snapshot_clock(request, grace)
                 selection = request["selection"]
                 if selection is not None:
                     require(selection["action_id"] in {c["action_id"] for c in request["legal_actions"]}, "invalid_message", "snapshot selection is not legal")
@@ -556,10 +631,22 @@ class Receiver:
                                 timeout=selection["source"] == "default" and self.welcome["rules"]["invalid_action_policy"] != "default")
                 else:
                     require(request["time_bank_ms"] == state["time_bank_ms"], "invalid_message", "open request changed the shared balance")
+                observed_elapsed = selection["elapsed_ms"] if selection is not None else deadline - request["remaining_ms"]
+                require(observed_elapsed >= self.request_clock_floor.get(rid, 0), "invalid_message",
+                        "snapshot clock precedes an observed request clock")
+                self.request_clock_floor[rid] = observed_elapsed
                 if request["request_id"] in self.requests:
                     old = self.requests[request["request_id"]]
                     immutable = ("seat", "caused_by_seq", "timeout_ms", "time_bank_ms", "legal_actions", "default_action_id", "decision_group_id", "decision_group_members", "decision_group_deadline_ms", "decision_group_close")
                     require(all(request.get(key) == old.get(key) for key in immutable), "invalid_message", "snapshot changed an issued request")
+                    if "remaining_ms" in old:
+                        require(request["remaining_ms"] <= old["remaining_ms"], "invalid_message",
+                                "snapshot increased the remaining request time")
+                        if "decision_group_remaining_ms" in old:
+                            require(request["decision_group_remaining_ms"] <= old["decision_group_remaining_ms"],
+                                    "invalid_message", "snapshot increased the remaining group time")
+                        if selection is not None:
+                            check_clock(old, selection, grace, user=selection["source"] == "user")
                     if old.get("selection") is not None:
                         require(selection is not None and all(selection[k] == old["selection"][k] for k in ("action_id", "source", "elapsed_ms", "time_bank_ms")),
                                 "invalid_message", "snapshot changed a frozen selection")
@@ -603,6 +690,8 @@ class Receiver:
                     self.game.apply(event)
                 except (GameError, ScoringError) as error:
                     raise SessionError("invalid_message", str(error)) from error
+                self.last_event_seq = seq
+                self.event_seq_floor = seq
                 bank_scope = self.welcome["rules"]["time_control"]["bank_scope"]
                 if event["type"] == "start_game" or (event["type"] == "start_kyoku" and bank_scope == "kyoku"):
                     self.time_bank_ms = self.welcome["rules"]["time_control"]["bank_ms"]
@@ -622,6 +711,8 @@ class Receiver:
                 require(message["request_id"] not in self.request_ids and not self.active_requests, "invalid_message", "request id or seat is already in use")
                 require(message["time_bank_ms"] == self.time_bank_ms, "invalid_message", "request changed the seat's remaining time bank")
                 require(message["caused_by_seq"] < seq, "invalid_message", "request cause is not a previous event")
+                require(message["caused_by_seq"] == self.last_event_seq, "invalid_message",
+                        "request does not refer to the current decision event's sequence")
                 cause = self.decode(self.known[message["caused_by_seq"]]) if message["caused_by_seq"] in self.known else None
                 require(cause is not None and cause["kind"] == "event", "invalid_message", "request does not refer to an applied event")
                 self.validate("decision-cause", {"request":message,"cause":cause["event"]})
@@ -641,8 +732,11 @@ class Receiver:
                 else:
                     request = self.requests[rid]
                     grace = self.welcome["rules"]["time_control"]["grace_ms"]
+                    require(message["elapsed_ms"] >= self.request_clock_floor.get(rid, 0), "invalid_message",
+                            "ACK clock precedes an observed request clock")
                     check_clock(request, message, grace, user=status in {"accepted", "passed", "superseded", "rejected"},
                                 timeout=status == "defaulted" and self.welcome["rules"]["invalid_action_policy"] != "default")
+                    self.request_clock_floor[rid] = message["elapsed_ms"]
                     remaining = message["time_bank_ms"]
                     selection = request.get("selection")
                     if selection is not None:

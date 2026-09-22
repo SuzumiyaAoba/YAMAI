@@ -222,7 +222,7 @@ class ProtocolRegressionTests(unittest.TestCase):
     @staticmethod
     def _win(**overrides):
         win = {"actor": 1, "target": 0, "pai": "9s", "fu": 30, "han": 1,
-               "yakus": [{"id": "riichi", "value": 1, "unit": "han"}], "bonuses": [],
+               "yakus": [{"id": "pinfu", "value": 1, "unit": "han"}], "bonuses": [],
                "hand_points": 1000, "deltas": [-1000, 1000, 0, 0], "ura_dora_markers": [], "pao": []}
         win.update(overrides)
         return win
@@ -391,18 +391,23 @@ class ProtocolRegressionTests(unittest.TestCase):
         with self.assertRaises(GameError):
             state.apply(self._end_kyoku({"type": "hora", "wins": [self._win(ura_dora_markers=["5m"])]},
                                         [-1000, 1000, 0, 0], [24000, 26000, 25000, 25000]))
-        state = self._dealt()
-        self._open_reaction(state)
-        state.round["reach_status"][1]["state"] = "accepted"
-        for markers in ([], ["5m", "6m"]):
-            with self.assertRaises(GameError):
-                state.apply(self._end_kyoku({"type": "hora", "wins": [self._win(ura_dora_markers=markers)]},
-                                            [-1000, 1000, 0, 0], [24000, 26000, 25000, 25000]))
-        state = self._dealt()
-        self._open_reaction(state)
-        state.round["reach_status"][1]["state"] = "accepted"
-        state.apply(self._end_kyoku({"type": "hora", "wins": [self._win(ura_dora_markers=["5m"])]},
-                                    [-1000, 1000, 0, 0], [24000, 26000, 25000, 25000]))
+        for markers in ([], ["5m", "6m"], ["5m"]):
+            state = self._dealt()
+            self._open_reaction(state)
+            state.round["reach_status"][1]["state"] = "accepted"
+            state.scores[1] -= 1000
+            state.kyotaku = state.round["kyotaku"] = 1
+            win = self._win(ura_dora_markers=markers, han=2, hand_points=2000,
+                            yakus=[{"id": "pinfu", "value": 1, "unit": "han"},
+                                   {"id": "riichi", "value": 1, "unit": "han"}],
+                            deltas=[-2000, 3000, 0, 0])
+            end = self._end_kyoku({"type": "hora", "wins": [win]},
+                                  [-2000, 3000, 0, 0], [23000, 27000, 25000, 25000])
+            if len(markers) == 1:
+                state.apply(end)
+            else:
+                with self.assertRaises(GameError):
+                    state.apply(end)
 
     def _reach_window_snapshot(self):
         snapshot = copy.deepcopy(VECTORS["V18_snapshot_state"]["positive"])
@@ -715,15 +720,24 @@ class ProtocolRegressionTests(unittest.TestCase):
         # then be rejected as "draw before reach acceptance". The receiver
         # must reject it at restore time instead.
         trace = VECTORS["V104_wire_complete_game"]["positive"]["trace"]
-        receiver = self.receiver(trace["welcome"])
-        for step in trace["steps"][:4]:
-            receiver.receive(self.raw(step["message"]))
-        receiver.receive(self.raw(self._reach_window_snapshot()))
+        def prepare():
+            receiver = self.receiver(trace["welcome"])
+            for step in trace["steps"][:4]:
+                receiver.receive(self.raw(step["message"]))
+            # Recover the missing ACK (5), reach (6) and discard (7).
+            # A contiguous checkpoint cannot replace the issued draw request.
+            welcome = copy.deepcopy(trace["welcome"])
+            welcome.update(resumed=True, replay_from_seq=5, replay_through_seq=7)
+            welcome["resume"]["token"] = "rt_ERITFBUWFxgZGhscHR4fIA"
+            receiver.begin_resume(welcome)
+            snapshot = self._reach_window_snapshot()
+            snapshot.update(seq=8, replaces_through_seq=7)
+            snapshot["state"]["kyoku"]["turn"]["last_event_seq"] = 7
+            return receiver, snapshot
+        receiver, snapshot = prepare()
+        receiver.receive(self.raw(snapshot))
         self.assertEqual(receiver.game.round["reach_status"][0]["state"], "declared")
-        receiver = self.receiver(trace["welcome"])
-        for step in trace["steps"][:4]:
-            receiver.receive(self.raw(step["message"]))
-        snapshot = self._reach_window_snapshot()
+        receiver, snapshot = prepare()
         kyoku = snapshot["state"]["kyoku"]
         kyoku["turn"]["last_event"] = {"type": "ankan_declared", "actor": 0, "consumed": ["1m"] * 4}
         kyoku["pending_kan"] = kyoku["turn"]["last_event"]

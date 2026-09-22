@@ -16,7 +16,7 @@ from typing import Any
 from scoring_reference import (
     Meld, ORPHANS, TILES, ScoringError, hand_parts, inventory,
     score_hand, shapes, tile_index, waits, pao_assignments,
-    basic_points, normal_payments, settle_win,
+    basic_points, normal_payments, settle_win, validate_win_declarations,
 )
 
 
@@ -218,6 +218,42 @@ def check_hora_payments(wins: list[dict], kyoku: dict, rules: dict) -> None:
         result = settle_win(data, kyoku, score, rules, honba, credits[win["actor"]])
         require(win["pao"] == result["pao"] and win["deltas"] == result["deltas"],
                 "win deltas differ from public payments, honba or deposits")
+
+
+def check_hora_yaku_context(win: dict, kyoku: dict, cause: dict, rules: dict) -> None:
+    """Reject role claims contradicted by public calls, reach and win source."""
+    actor = win["actor"]
+    melds = kyoku["melds"][actor]
+    closed = all(m["type"] == "ankan" for m in melds)
+    validate_win_declarations(win, rules, closed=closed)
+    ids = {y["id"] for y in win["yakus"]}
+    yakuman = any(y["unit"] == "yakuman" for y in win["yakus"])
+    tsumo = win["actor"] == win["target"]
+    reach = kyoku["reach_status"][actor]
+    accepted = reach["state"] == "accepted"
+    first_draw = tsumo and kyoku["first_turn_eligible"][actor]
+    require(("tenhou" in ids) == (first_draw and actor == kyoku["oya"])
+            and ("chiihou" in ids) == (first_draw and actor != kyoku["oya"]),
+            "first-draw yakuman differs from public history")
+    require(not ids & {"kokushi_musou", "suuankou", "chuuren_poutou", "tenhou", "chiihou"} or closed,
+            "closed-only yakuman on an open hand")
+    require(not ids & {"kokushi_musou", "chuuren_poutou", "chiitoitsu"} or not melds,
+            "special hand contains a fixed meld")
+    if not yakuman:
+        expected = {
+            "riichi": accepted and not reach["double"],
+            "double_riichi": accepted and reach["double"],
+            "ippatsu": accepted and reach["ippatsu"],
+            "menzen_tsumo": closed and tsumo,
+            "rinshan_kaihou": tsumo and kyoku["rinshan"],
+            "chankan": cause["type"] in {"ankan_declared", "kakan_declared"},
+            "haitei": tsumo and kyoku["haitei"],
+            "houtei": not tsumo and kyoku["haitei"],
+        }
+        require(all((name in ids) == present for name, present in expected.items()),
+                "situational yaku differ from public history")
+    require(accepted or all(b["id"] != "uradora" for b in win["bonuses"]),
+            "ura bonus without accepted reach")
 
 
 def riichi_ankan(hand: dict, drawn: str, rules: dict) -> bool:
@@ -440,6 +476,39 @@ class EventState:
         self.last_cause: dict | None = None
         self.required_event: str | None = None
         self.pao_due: list[dict] = []
+
+    def check_snapshot_prefix(self, snapshot: dict) -> None:
+        """A checkpoint of a fully observed prefix cannot replace its facts."""
+        require(self.required_event is None and not self.pao_due
+                and not (self.game_phase == "between_kyoku" and self.next.get("type") == "end_game"),
+                "snapshot interrupts a committed event transaction")
+        require(snapshot["game_phase"] == self.game_phase
+                and snapshot["scores"] == self.scores and snapshot["kyotaku"] == self.kyotaku,
+                "contiguous snapshot changes committed phase, scores or deposits")
+        expected_next = ({key: value for key, value in self.next.items() if key != "type"}
+                         if self.game_phase == "between_kyoku" else None)
+        require(canonical_action(snapshot["next_kyoku"]) == canonical_action(expected_next),
+                "contiguous snapshot changes the next round")
+        if self.round is None:
+            return
+        previous, current = deepcopy(self.round), deepcopy(snapshot["kyoku"])
+        old_phase, new_phase = previous["turn"]["phase"], current["turn"]["phase"]
+        require(new_phase == old_phase or (new_phase == "resolving"
+                and old_phase in {"awaiting_action", "awaiting_responses"}),
+                "contiguous snapshot rewinds the decision phase")
+        require(canonical_action(current["turn"]["last_event"]) == canonical_action(self.last_cause),
+                "contiguous snapshot changes the last committed event")
+        # Ordering a visible hand or a consumed multiset is not a game event.
+        # Selection clocks are checked against the receiver's shared bank.
+        for kyoku in (previous, current):
+            kyoku["turn"] = {"actor": kyoku["turn"]["actor"]}
+            for hand in kyoku["hands"]:
+                if "tiles" in hand:
+                    hand["tiles"].sort()
+            if "self_state" in kyoku:
+                kyoku["self_state"].pop("time_bank_ms", None)
+        require(canonical_action(current) == canonical_action(previous),
+                "contiguous snapshot changes observed round state")
 
     def restore(self, snapshot: dict) -> None:
         kyoku = snapshot["kyoku"]
@@ -907,6 +976,7 @@ class EventState:
                 for win in result["wins"]:
                     require(win["target"] == cause["actor"] and (tile is None or win["pai"] == tile), "win differs from its source event")
                     require((win["actor"] == win["target"]) == (cause["type"] == "tsumo"), "win method differs from its source event")
+                    check_hora_yaku_context(win, r, cause, self.rules)
                     require([yaku["id"] for yaku in win["yakus"]] == sorted(yaku["id"] for yaku in win["yakus"]), "win yaku ids are not in ASCII order")
                     require([bonus["id"] for bonus in win["bonuses"]] == sorted(bonus["id"] for bonus in win["bonuses"]), "win bonus ids are not in ASCII order")
                     yakuman = sum(yaku["value"] for yaku in win["yakus"] if yaku["unit"] == "yakuman")

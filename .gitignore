@@ -2,6 +2,8 @@ _apalache-out/
 __pycache__/
 .mdxr/
 *.mdx
+!/docs/auth-implementation-plan.mdx
+!/docs/spec-review.mdx
 /docs/*.html
 /verification/*.html
 /verification/quint/*.html
