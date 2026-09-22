@@ -17,6 +17,7 @@ from scoring_reference import (
     Meld, ORPHANS, TILES, ScoringError, hand_parts, inventory,
     score_hand, shapes, tile_index, waits, pao_assignments,
     basic_points, normal_payments, settle_win, validate_win_declarations,
+    YAKU_MIN_SEQUENCES, YAKU_MIN_TRIPLETS,
 )
 
 
@@ -228,6 +229,21 @@ def check_hora_yaku_context(win: dict, kyoku: dict, cause: dict, rules: dict) ->
     validate_win_declarations(win, rules, closed=closed)
     ids = {y["id"] for y in win["yakus"]}
     yakuman = any(y["unit"] == "yakuman" for y in win["yakus"])
+    quads = sum(m["type"] in {"ankan", "daiminkan", "kakan"} for m in melds)
+    require(("suukantsu" in ids) == (quads == 4),
+            "four-quads yakuman differs from the committed melds")
+    if not yakuman:
+        require(("sankantsu" in ids) == (quads == 3),
+                "three-quads yaku differs from the committed melds")
+        require("sanankou" not in ids or sum(m["type"] != "ankan" for m in melds) <= 1,
+                "three concealed triplets conflict with public open melds")
+    sequences = sum(m["type"] == "chi" for m in melds)
+    triplets = len(melds) - sequences
+    require(all(YAKU_MIN_SEQUENCES.get(name, 0) <= 4 - triplets
+                and YAKU_MIN_TRIPLETS.get(name, 0) <= 4 - sequences for name in ids),
+            "yaku shape conflicts with the committed melds")
+    require(not ids & {"honroutou", "tsuuiisou", "chinroutou"} or sequences == 0,
+            "all terminals or honors cannot contain a public sequence")
     tsumo = win["actor"] == win["target"]
     reach = kyoku["reach_status"][actor]
     accepted = reach["state"] == "accepted"

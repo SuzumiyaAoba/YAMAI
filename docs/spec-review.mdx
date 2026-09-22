@@ -6,15 +6,88 @@ version: "1.0-draft.1"
 editor: "none"
 ---
 
-<Callout kind="note" title="対象と判定基準">
+<Callout kind="note" title="今回の点検">
 
-[規範本文](yamai-protocol.md)の全20章・付録、21 Schema、registry、manifest、公式ベクトル、検査実装、5つの形式モデルの対応と検証範囲を確認した。本文内の矛盾、同じ入力に対する解釈の分岐、派生成果物の検査漏れを修正対象とした。現在のブランチ上で作業し、認証サービスの実装は[別の実装計画](auth-implementation-plan.mdx)へ記載した。
+[規範本文](yamai-protocol.md)の全20章・付録を起点に、21 Schema、registry、manifest、公式ベクトル、検査実装、5つの形式モデルの対応を再点検した。開始時点のmainブランチに未コミット変更はなく、383組の正負ベクトルと168件の回帰テストは成功した。今回発見した6項目をR17–R22として修正し、確認を繰り返した。認証サービスは未実装であり、[認証・認可の実装計画](auth-implementation-plan.mdx)を更新した。
 
 </Callout>
 
 <Toc depth="3" title="目次" />
 
-## 発見事項と修正
+## 今回の発見事項と修正
+
+| ID | 問題と影響 | 修正と再確認 |
+|---|---|---|
+| R17 | 欠落回復snapshotの最後のevent番号が既知のままでも、点数・手牌・受信済みrequest IDを書き換えられた。元のrequestを消すこともできた | 同じ原因eventのsnapshotには、連続prefixと同じ確定状態の照合を適用。まだ受信していない元requestの復元、選択の固定、手牌の並べ替えは許可。ACKに対応する結果eventを欠く置換は拒否。§13.3、V384–V387/V393 |
+| R18 | game単位の持ち時間を消費した後、欠落区間を置換する局間snapshotで残量を補充できた | game scopeの残量を非増加に限定。1,000msから1,001msへの増加を拒否し、500msへの減少・同値、およびkyoku scopeの正当なresetを確認。§13.3、V388 |
+| R19 | 槓なしの和了に三槓子・四槓子を付けても金額を合わせれば受理した。平和と公開暗槓、大三元・四喜と過剰なチーなど、公開面子と役が矛盾する場合もあった | 和了者の成立槓数と役を双方向に照合。通常役・役満の必要面子数と公開面子、混老頭・字一色・清老頭とチーの矛盾も拒否。正しい槓の役を削除した負例も確認。§7.6.7.2、V389–V390、採点回帰 |
+| R20 | 大四喜の倍化を有効にしても単倍を受理した。単騎に限られる四暗刻ロンも、倍化の不足を検出しなかった | 大四喜はルール、四暗刻ロンはルールと和了方法から必要倍数を確定。四暗刻ツモは待ちが非公開なら単倍も許可。§7.6.7.2、V391/V394 |
+| R21 | 途中観戦でsnapshotと受信能力の両方が不足すると、§6.4の優先順に反してunsupported_limitを先に返した | modeに必須のcapabilityをlimitより先に検査。片方だけ不足する場合も確認。§6.4、V392 |
+| R22 | 既存のV369・V370の正例は、原因eventを維持したまま自己の未終端requestを消し、resolvingを復元していた | 正例に元requestとawaiting_responsesを維持。負例の原因payload変更・snapshot番号参照は残し、元の検査目的を保持した |
+
+## 修正と再確認の反復
+
+<Steps>
+  <Step status="done">初回：仕様の全章、成果物と検証範囲を確認。既存383組の正負ベクトル、119件と49件の回帰テストを実行した。</Step>
+  <Step status="done">第1回：欠落snapshotによる既知状態の書換えを再現。未受信requestの復元と、ACKから結果eventまでの原子性も確認し、同じ原因eventの契約を修正した。</Step>
+  <Step status="done">第2回：復旧時のgame単位bank、公開槓数・面子、必須の倍役満、交渉の拒否順へ確認を広げた。既存正例2件の前提を訂正し、11組の正負ベクトルと8件の回帰テストを追加した。</Step>
+  <Step status="done">第3回：公開チーと大三元・四喜の矛盾も再現し、R19の面子数検査を役満へ拡張。混老頭・字一色・清老頭の順子禁止も確認した。</Step>
+  <Step status="done">最終確認：全成果物と176件の回帰検査を再実行。5モデルの検査結果、生成した7 HTMLと184の参照、最終差分を確認した。</Step>
+</Steps>
+
+## 領域ごとの確認範囲
+
+| 領域 | 今回確認した契約 |
+|---|---|
+| §1–6 | JSON・frame・envelope、交渉する版とprofileの組、capability、limit、seat/target、拒否の優先順 |
+| §7 | 牌山と136枚の保存、合法候補、フリテン、局進行、役・符・金額、供託・本場・責任払い。公開面子と槓数・倍化の判定を追加 |
+| §8–10 | 全3seatの反応、個別期限、計時と選択の固定、ACKと結果event、複合行動、リーチと槓の順序 |
+| §11–13 | viewの秘匿、再送byte、有限再送範囲、token、snapshotと既知状態の保持、局間・終局・持ち時間 |
+| §14–20・付録 | 拡張、資源上限、manifest/hash、適合35項目、認証・認可の境界、registry、状態機械 |
+| 派生成果物 | Schema参照・registry・JSON例・正負ベクトル・採点fixture・検査の責務・形式モデルの境界 |
+
+## 検査結果
+
+検査日：2026-09-22。下記の検査結果と、生成文書・最終差分を確認した。
+
+| 検査 | 結果 |
+|---|---|
+| 標準ライブラリの回帰テスト | scripts配下127件、tests配下49件の計176件が成功 |
+| 完全手牌からの公開役検査 | 全和了fixtureを再計算し、各和了者の公開面子・状況へ射影して検査。過剰拒否なし |
+| 成果物validator | 成功。21 Schema、394組の正負ベクトル、14採点例、78正例・36負例、本文15 JSON例 |
+| 独立JSON Schema・採点CLI | Nix固定環境で成功。Draft 2020-12の634 instance検査、採点78正例・36負例 |
+| Nix固定環境の形式検査 | 5モデルの成功結果を確認。4モデルを今回再実行し、拡張モデルは入力が一致する既存成果物を再利用 |
+| mdxr 0.2.0 | 7 HTMLを生成。内部リンク・見出し参照184件が成功 |
+| 最終差分 | git diff --check成功。既存ベクトルはhash更新を除きV369・V370の前提だけを修正し、11組を追加 |
+
+profile hashを再計算し、本文の交渉例・wire記録・registry・release manifestを同期した。既存規範の検査漏れと曖昧な適用範囲を修正し、新しいwire memberは追加していない。`published:false` のdraftとして保持し、ブランチ切替・公開tagの作成は行っていない。
+
+回帰検査には `python3 -m unittest discover -s scripts -p 'test_*.py'` と `python3 tests/test_regressions.py`、成果物には `python3 scripts/validate_artifacts.py` を使用した。固定環境の一括検査は `nix flake check path:. --no-update-lock-file --offline` で開始し、拡張モデルの既存成果物を再利用できると確認した時点で重複した探索を停止した。Nixの開始後に加えたR19の面子数検査も、同じ固定Python環境で成果物・回帰・独立Schema・採点CLIを再実行し、すべて成功した。形式モデルと環境定義はNix実行時の入力と一致することを確認した。
+
+<Details summary="拡張モデルの成功結果を再利用した根拠">
+
+保存済みの入力と現在の `yamai_protocol_extended.qnt`、`flake.nix`、`flake.lock` がbyte単位で一致することを確認した。derivationのbuildCommand・nativeBuildInputs・systemも一致し、次の2成果物は `nix-store --verify-path` による内容ハッシュ検査に成功した。
+
+| 成果物 | 確認した結果 |
+|---|---|
+| `/nix/store/c6igf8qflnfry6r7hhg9hd7z7yiabl6q-yamai-quint-model-extended` | TLCの安全性検査で違反なし。保存された実行時間は362,115ms |
+| `/nix/store/xaiicyjfzhbaa2rsidaq2mjjxi8viql7-yamai-quint-model-extended-witnesses` | 3つの具体的runが成功。2,000 sample中、要求される13種類のwitnessがすべて1回以上到達 |
+
+拡張モデルはこの成功済み結果を再利用し、baseline・request・delivery・session-ledgersは今回の実行結果を確認した。Python検査には最終修正後の作業ツリーを使用した。
+
+</Details>
+
+## 検証の限界
+
+今回の修正は、Pythonによる受信・交渉・公開採点契約の検査で確認する。Quintの5モデルは既存の有限抽象モデルであり、新しいpayload条件そのものの形式証明や実装とのrefinement証明ではない。詳細は[検証ガイド](../verification/README.md)と[形式モデルの説明](../verification/quint/README.md)に従う。
+
+非公開手牌が必要な役の完全判定、ホストの牌山生成、暗号学的token生成、実サービスの認証、独立実装間の相互運用性は、このリポジトリの受信テストだけでは保証できない。認証計画の受入条件は未実装のためtodoとしている。HTMLはMarkdown・MDXから生成する閲覧用成果物である。
+
+## 以前の修正記録
+
+R1–R16は今回の開始時点でmainに存在した記録である。今回の追加修正と区別して残す。
+
+<Details summary="R1–R16の履歴">
 
 | ID | 問題と影響 | 修正と確認先 |
 |---|---|---|
@@ -35,52 +108,5 @@ editor: "none"
 | R15 | 平和と対々和、七対子と面子役、一盃口と三暗刻などの不両立を、金額を合わせれば受理した | 最小順子数・刻子数、特殊形、字牌・么九牌・色数・必要順子の条件を公開役から検査。V374–V383。既存の完全手牌fixtureから再計算した全和了も通過 |
 | R16 | 既存の槓・責任払いsnapshot例を猶予3,000msのルールで検査すると、個別残18,000msに対して同期限のgroup残が21,000msだった | V292・V293・V324の共通前提を18,000msへ同期。負例は本来の牌・責任履歴の不備を維持し、回帰テストが意図した理由を検査できる状態にした |
 
-R3はJSON Schemaの不具合ではない。`uniqueItems` は配列要素全体の一意性を扱うため、object内のIDだけの一意性には別の制約が必要である。[JSON Schema Validation §6.4.3](https://json-schema.org/draft/2020-12/json-schema-validation#name-uniqueitems)を参照する。
 
-R1–R11は開始時点に存在した修正記録であり、既存の未コミット変更を保持して点検した。今回追加で再現・修正した事項はR12–R16である。認証計画にも、認証成功後に原因eventとgroup時計のcore検査を省略しない受入条件AUTH-09を追記した。
-
-## 全体を再確認した順序
-
-<Steps>
-  <Step status="done">初回：規範本文の全章・付録を読み、Schema・registry・検査実装・形式モデルの対応を確認。開始時点の366組の正負ベクトルと160件の回帰テストが成功した。</Step>
-  <Step status="done">第1回の修正と再確認：観戦checkpointとgroup時計の不備を再現。gap回復へ確認を広げ、原因eventの巻戻し・別payload・非event参照も修正し、V367–V373を追加した。</Step>
-  <Step status="done">第2回の修正と再確認：採点の面子数・牌種条件の不両立を追加で発見し、V374–V383を追加。全和了fixtureを公開役検査へ通して過剰拒否を確認し、既存snapshot例の時計も同期した。</Step>
-  <Step status="done">最終確認：383組の正負ベクトル、168件の回帰テスト、独立Schema・採点検査、固定環境の17検査が成功。7 HTMLと183リンク、最終差分を確認した。</Step>
-</Steps>
-
-## 仕様領域ごとの確認
-
-| 領域 | 確認内容 |
-|---|---|
-| §1–6：基本契約・通信・交渉 | JSONの厳密さ、frame、envelope、版/profile/capabilityの組、拒否順、seatとtarget |
-| §7：ルール・採点 | 136枚の保存、赤牌、全合法候補、見逃し、槓・リーチ、通常役・役満・符・金額・供託・責任払い、20符・25符の適用条件、役の必要面子数・牌種条件の不両立、次局 |
-| §8–10：判断とイベント | 全3seatの反応、原因seq、個別期限、原子的なACKと結果、既定選択、取消し・不採用・複合行動 |
-| §11–13：view・エラー・復旧 | 非漏洩、検証順、同一byte再送、token rotate、有限再送範囲、snapshotと未解決requestの保持、連続prefixの照合、原因eventの保持、時計の逆行・異なる固定時点の拒否 |
-| §14–20・付録 | 拡張の境界、資源上限、manifest/hash、適合35項目、認証・認可の対象外範囲、registryと状態機械 |
-| 派生成果物 | Schema参照、registryとの一致、本文JSON例、公式ベクトル、採点fixture、検査層と形式モデルの限界 |
-
-## 検査結果
-
-2026-09-22、次の検査を実施した。正例の受理だけでなく、負例が指定した理由で拒否されることも公式ベクトルで確認した。
-
-| 検査 | 結果 |
-|---|---|
-| `python3 scripts/validate_artifacts.py` | 成功。21 Schema、383組の正負ベクトル、14採点例、78正例・36負例の採点fixture、本文15 JSON例 |
-| `python3 -m unittest discover -s scripts -p 'test_*.py'` | 119件成功 |
-| `python3 tests/test_regressions.py` | 49件成功 |
-| Nix固定環境の `scripts/check_jsonschema.py` | 成功。Draft 2020-12の21 Schemaと634件の独立した入力検証 |
-| `scripts/score_oracle.py` | 78正例・36負例が成功。artifact validatorと同じ採点エンジンを使うため、独立した採点実装とは数えない |
-| `nix flake check path:. --no-update-lock-file --offline` | aarch64-darwinの17検査が成功。5形式モデルの型・安全性・到達例と、定義済みの時間的性質を検査。検査時の保存済みsourceと最終状態で5モデル・flake.nix・flake.lockが同一であることも確認。他のOS・CPU向けの検査は実行していない |
-| 最終状態のNix `artifact-validator` | 成功。追加の役の面子数検査も含む全168件の回帰・成果物・独立Schema・採点検査を実施。保存済み入力と現在の仕様・実装・Schema・registry・ベクトル等41ファイルの同一性を確認 |
-| `scripts/render_docs.py` によるmdxr生成 | 最終記録を含めmdxr 0.2.0で7 HTMLを生成。ローカルの183リンクについてファイルと見出しの存在を確認 |
-| `git diff --check` | 成功 |
-
-今回の再点検では公式ベクトルを366組から383組へ増やし、manifestの件数制約を同期した。profile hashを再計算して、交渉例・wire記録・registry・release manifestの同一性を揃えた。新しいwire memberは追加せず、規範の不整合・曖昧さと派生検査の不足を修正した。`published:false` のdraftのままとし、新しい公開tagは作成していない。
-
-## 検証の範囲
-
-他家の秘密手牌、暗号学的なtoken生成、実サービスの認証、異なる実装間の相互運用性は、このリポジトリのテストだけでは保証できない。形式モデルの結果にも有限境界と環境仮定がある。[検証ガイド](../verification/README.md)と[形式モデルの説明](../verification/quint/README.md)に従う。
-
-今回追加したsnapshotの原因・時計式・役の不両立はPythonの受信・採点検査で確認した。Quintは既存の抽象モデルの範囲を再検査しており、これらの具体的なpayload検査を新たに形式証明したとは扱わない。
-
-HTMLは参考文書を含む閲覧用成果物であり、規範本文の原本はMarkdownである。認証・認可計画と本レビューはMDXを原本とする。
+</Details>

@@ -46,6 +46,18 @@ class SessionInvariants(unittest.TestCase):
             check()
         self.assertEqual(error.exception.code, 'invalid_message')
 
+    def test_spectate_capability_rejection_precedes_limits(self):
+        trace = self.trace('spectate_requires_snapshot')
+        trace['join']['receive_limits']['max_json_depth'] = 16
+        validate = v._session_schema_validator(self.schemas, self.digest)
+        for snapshot, expected in ((False, 'unsupported_capability'), (True, 'unsupported_limit')):
+            with self.subTest(snapshot=snapshot):
+                trace['join']['capabilities']['optional'] = ['snapshot'] if snapshot else []
+                with self.assertRaises(SessionError) as error:
+                    negotiate(trace['hello'], trace['join'], trace['welcome'], trace['context'],
+                              validate, v.PROTOCOL, v.PROFILE_REVISION, self.digest)
+                self.assertEqual(error.exception.code, expected)
+
     def test_request_cause_distinguishes_identical_events(self):
         for stale in (False, True):
             with self.subTest(stale=stale):
@@ -724,6 +736,77 @@ class SessionInvariants(unittest.TestCase):
         state['time_bank_ms'] = state['kyoku']['self_state']['time_bank_ms'] = 14500
         self.assertEqual(receiver.receive(self.raw(snapshot)), 'applied')
         self.assertEqual(receiver.time_bank_ms, 14500)
+
+    def test_gap_without_new_event_preserves_state_and_issued_request(self):
+        for variant in ('scores', 'tiles', 'request_id', 'ack_without_result'):
+            with self.subTest(variant=variant):
+                trace = self.trace('historical_snapshot_replay')
+                receiver = self.receiver(trace['welcome'])
+                for step in trace['steps'][:4]:
+                    receiver.receive(self.raw(step['message']))
+                snapshot = trace['steps'][4]['message']
+                state = snapshot['state']
+                if variant == 'scores':
+                    state['scores'] = [26000, 24000, 25000, 25000]
+                elif variant == 'tiles':
+                    state['kyoku']['hands'][0]['tiles'][0] = 'E'
+                elif variant == 'request_id':
+                    state['pending_requests'][0]['request_id'] = 'replacement'
+                else:
+                    ack = deepcopy(trace['steps'][5]['message'])
+                    ack['seq'] = 5
+                    receiver.receive(self.raw(ack))
+                    state['pending_requests'] = []
+                    state['kyoku']['turn']['phase'] = 'resolving'
+                receiver.begin_resume(dict(trace['welcome'], resumed=True, replay_from_seq=receiver.applied + 1,
+                                           replay_through_seq=8))
+                snapshot.update(seq=9, replaces_through_seq=8)
+                self.assert_rejected_atomically(receiver, snapshot)
+
+    def test_gap_without_new_event_can_restore_missing_request_and_selection(self):
+        for received_request in (False, True):
+            for selected in (False, True):
+                with self.subTest(received_request=received_request, selected=selected):
+                    trace = self.trace('historical_snapshot_replay')
+                    receiver = self.receiver(trace['welcome'])
+                    for step in trace['steps'][:4 if received_request else 3]:
+                        receiver.receive(self.raw(step['message']))
+                    snapshot = trace['steps'][4]['message']
+                    state = snapshot['state']
+                    state['kyoku']['hands'][0]['tiles'].reverse()
+                    if selected:
+                        request = state['pending_requests'][0]
+                        request.update(remaining_ms=0, selection=dict(action_id=request['default_action_id'],
+                                       source='user', elapsed_ms=6500, time_bank_ms=14500))
+                        state['time_bank_ms'] = state['kyoku']['self_state']['time_bank_ms'] = 14500
+                    receiver.begin_resume(dict(trace['welcome'], resumed=True, replay_from_seq=receiver.applied + 1,
+                                               replay_through_seq=6))
+                    snapshot.update(seq=7, replaces_through_seq=6)
+                    self.assertEqual(receiver.receive(self.raw(snapshot)), 'applied')
+                    self.assertEqual(receiver.active_requests, {'r1'})
+                    self.assertEqual(receiver.time_bank_ms, 14500 if selected else 15000)
+
+    def test_game_scoped_bank_cannot_increase_across_missing_rounds(self):
+        for scope in ('game', 'kyoku'):
+            for bank in (500, 1000, 1001, 15000):
+                with self.subTest(scope=scope, bank=bank):
+                    trace = self.trace('wire_complete_game')
+                    trace['welcome']['rules']['time_control']['bank_scope'] = scope
+                    trace['steps'][0]['message']['event']['rules']['time_control']['bank_scope'] = scope
+                    trace['steps'][4]['message'].update(elapsed_ms=20000, time_bank_ms=1000)
+                    receiver = self.receiver(trace['welcome'])
+                    for step in trace['steps'][:6]:
+                        receiver.receive(self.raw(step['message']))
+                    receiver.begin_resume(dict(trace['welcome'], resumed=True, replay_from_seq=7,
+                                               replay_through_seq=121))
+                    snapshot = deepcopy(self.vectors['V57_snapshot_between_kyoku_deposits']['positive'])
+                    snapshot.update(seq=122, replaces_through_seq=121)
+                    snapshot['state']['time_bank_ms'] = bank
+                    if scope == 'game' and bank > 1000:
+                        self.assert_rejected_atomically(receiver, snapshot)
+                    else:
+                        self.assertEqual(receiver.receive(self.raw(snapshot)), 'applied')
+                        self.assertEqual(receiver.time_bank_ms, bank)
 
     def test_snapshot_clocks_cannot_rewind(self):
         for variant in ('remaining', 'selection', 'ack'):

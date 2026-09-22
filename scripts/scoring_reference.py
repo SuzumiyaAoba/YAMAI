@@ -53,6 +53,8 @@ YAKU_MIN_TRIPLETS = {
     "toitoi": 4, "sanankou": 3, "sanshoku_doukou": 3, "sankantsu": 3,
     "shousangen": 2, "yakuhai_haku": 1, "yakuhai_hatsu": 1,
     "yakuhai_chun": 1, "seat_wind": 1, "round_wind": 1,
+    "daisangen": 3, "shousuushii": 3, "daisuushii": 4,
+    "suuankou": 4, "suukantsu": 4, "chinroutou": 4,
 }
 
 
@@ -126,6 +128,12 @@ def validate_win_declarations(win: dict, rules: dict | None = None, *, closed: b
             if name in DOUBLE_YAKUMAN_CONDITIONS and value == 2:
                 require(DOUBLE_YAKUMAN_CONDITIONS[name] in rules["double_yakuman"],
                         "invalid_message", "double yakuman condition is disabled")
+            if name == "daisuushii":
+                require(value == (2 if "daisuushii" in rules["double_yakuman"] else 1),
+                        "invalid_message", "big four winds multiplier differs from the enabled rule")
+            if name == "suuankou" and win["actor"] != win["target"]:
+                require(value == (2 if "suuankou_tanki" in rules["double_yakuman"] else 1),
+                        "invalid_message", "four concealed triplets by ron require the tanki multiplier")
             require(name != "tanyao" or closed is not False or rules["kuitan"],
                     "invalid_message", "open tanyao is disabled")
 

@@ -79,6 +79,8 @@ JSON LinesのTCP版を提供する段階では、同じprincipalを得られるT
 
 欠落区間の回復でも、既知の原因eventの番号・payloadを保持する。個別requestとgroupの残期間は同じsnapshot固定時点から計算し、selectionをその時点より未来に置かない。これらのcore条件を認証adapter内で再定義せず、既存の受信・状態検査へ引き渡す。
 
+原因eventの番号が変わらない欠落回復では、点数・手牌・受信済みrequest IDの保持も検査する。まだ届いていない元requestの復元は許可するが、認証成功を契機に別requestへ交換しない。game単位の持ち時間は再接続や局間snapshotで補充しない。
+
 同時resumeの成功は1件だけにする。commit前の拒否でtokenを消費しない。welcome配送前に切断しても、commit後のrotateを取り消さない。紛失tokenの救済を追加する場合は管理経路で再認証する設計を別途定義し、旧tokenの再使用を許可しない。
 
 権限の更新には世代番号を持たせ、session作成・resume・private配送の判断と失効を直列化する。失効確定後は未配送のprivateデータとaction受付を停止し、tokenを失効させる。ゲームの既存requestは通常の期限まで進める。mode/viewを途中変更してledgerを書き換えない。
@@ -133,6 +135,7 @@ seat予約、target取得、welcome commit、token rotate、旧接続停止に�
   <Req id="AUTH-07" status="todo">policy障害と不正Originを拒否し、認証追加後も全core検査を通過する。</Req>
   <Req id="AUTH-08" status="todo">認証済みresumeでもsnapshotのprefix照合を省略せず、点数・手牌・request ID・終局結果の書き換えを拒否する。</Req>
   <Req id="AUTH-09" status="todo">欠落回復でも原因eventの巻戻し・別payload・非event参照を拒否し、個別・group時計とselectionの固定時点を一致させる。</Req>
+  <Req id="AUTH-10" status="todo">同じ原因eventの欠落回復で点数・手牌・発行済みrequest IDを変更せず、未受信requestだけを復元する。game単位の持ち時間を補充しない。</Req>
 </Reqs>
 
 外部IDプロバイダー、永続ストア、権限の管理UI、記録の公開時期はサービス側で決める。この選定は本計画の契約を変更せずadapterとpolicy設定へ反映する。

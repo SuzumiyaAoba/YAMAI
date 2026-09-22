@@ -3,7 +3,7 @@
   "protocol_version": "1.0-draft.1",
   "profile": "riichi-4p",
   "profile_revision": "1.0-draft.1",
-  "profile_hash": "sha256:39b8a439ea83530ce782be760dcee169b9ad46ade327e35bd19961cea5533213",
+  "profile_hash": "sha256:d70fc4979c719ed8c733c8043eacb34466354ed8749b0d8336164f1ba58a7b02",
   "registry": [
     "registry/protocol/1.0-draft.1/registry.json",
     "registry/riichi-4p/1.0-draft.1/registry.json"
@@ -2318,6 +2318,72 @@
     {
       "id": "V383_public_yaku_straight_middle_sequence",
       "area": "scoring-public-yaku-compatibility",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V384_gap_same_event_preserves_scores",
+      "area": "snapshot-known-event-state",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V385_gap_same_event_preserves_tiles",
+      "area": "snapshot-known-event-state",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V386_gap_same_event_preserves_request_ids",
+      "area": "snapshot-known-event-state",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V387_gap_same_event_restores_unreceived_request",
+      "area": "snapshot-known-event-state",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V388_snapshot_game_bank_cannot_replenish",
+      "area": "snapshot-game-bank",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V389_public_sankantsu_requires_committed_kans",
+      "area": "scoring-public-melds",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V390_public_suukantsu_requires_committed_kans",
+      "area": "scoring-public-melds",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V391_public_daisuushii_uses_enabled_double",
+      "area": "scoring-public-multiplier",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V392_spectate_capability_precedes_limits",
+      "area": "negotiation-error-priority",
+      "expect_positive": "valid",
+      "expect_negative": "unsupported_capability"
+    },
+    {
+      "id": "V393_gap_same_event_keeps_unresolved_reaction",
+      "area": "snapshot-known-event-state",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V394_public_suuankou_ron_uses_tanki_double",
+      "area": "scoring-public-multiplier",
       "expect_positive": "valid",
       "expect_negative": "invalid_message"
     }

@@ -327,7 +327,7 @@ hostは同一 `seq` の再送、resume replayおよびrange replayに、ledger e
         "1.0-draft.1"
       ],
       "hashes": {
-        "1.0-draft.1": "sha256:39b8a439ea83530ce782be760dcee169b9ad46ade327e35bd19961cea5533213"
+        "1.0-draft.1": "sha256:d70fc4979c719ed8c733c8043eacb34466354ed8749b0d8336164f1ba58a7b02"
       },
       "protocol_versions": {
         "1.0-draft.1": [
@@ -362,7 +362,7 @@ hostは同一 `seq` の再送、resume replayおよびrange replayに、ledger e
   "seat": 0,
   "profile": "riichi-4p",
   "profile_revision": "1.0-draft.1",
-  "profile_hash": "sha256:39b8a439ea83530ce782be760dcee169b9ad46ade327e35bd19961cea5533213",
+  "profile_hash": "sha256:d70fc4979c719ed8c733c8043eacb34466354ed8749b0d8336164f1ba58a7b02",
   "client": {
     "name": "ExampleAI",
     "version": "2.3.0"
@@ -406,7 +406,7 @@ profile_hashは、vector manifestのprofile_hash_inputsに列挙したJSONをpro
   "view": "seat",
   "profile": "riichi-4p",
   "profile_revision": "1.0-draft.1",
-  "profile_hash": "sha256:39b8a439ea83530ce782be760dcee169b9ad46ade327e35bd19961cea5533213",
+  "profile_hash": "sha256:d70fc4979c719ed8c733c8043eacb34466354ed8749b0d8336164f1ba58a7b02",
   "client": {
     "name": "ExampleAI",
     "version": "2.3.0"
@@ -452,7 +452,7 @@ profile_hashは、vector manifestのprofile_hash_inputsに列挙したJSONをpro
   "view": "seat",
   "profile": "riichi-4p",
   "profile_revision": "1.0-draft.1",
-  "profile_hash": "sha256:39b8a439ea83530ce782be760dcee169b9ad46ade327e35bd19961cea5533213",
+  "profile_hash": "sha256:d70fc4979c719ed8c733c8043eacb34466354ed8749b0d8336164f1ba58a7b02",
   "players": [
     {
       "seat": 0,
@@ -582,7 +582,7 @@ welcomeのplayersはseat 0～3の順に並べる。新規playとreplayのwelcome
 1. frame・JSONの検査を行う。
 2. [join-proposal Schema](../schemas/protocol/1.0-draft.1/negotiation/join-proposal.schema.json)で型、必須member、mode/view/target、重複などを検査する。この段階ではversion/profile/revisionの選択値をconst一致で拒否しない。構造違反はinvalid_messageとする。
 3. 広告済みかつ対応するversionがなければunsupported_version、profileがなければunsupported_profile、revision/hashの組が異なればprofile_mismatchとし、その後に提供しないmode/viewをunsupported_viewとする。
-4. required capabilityとmode制約を確認し、満たせなければunsupported_capabilityとする。profileの受信下限を満たせなければunsupported_limitとする。
+4. required capabilityとmode制約を確認し、満たせなければunsupported_capabilityとする。途中観戦に必須のsnapshotも、この段階で検査する。その後でprofileの受信下限を検査し、満たせなければunsupported_limitとする。両方を満たさない場合はunsupported_capabilityを優先する。
 5. target取得とresumeの資格・範囲を検査し、取得不能・失効・保持不能はresume_unavailableとする。
 6. 有効なwelcomeを構築する。クライアントはwelcomeの構造・選択の一致を確認し、不一致はfatal invalid_message、構造が有効でも未対応のルール値はfatal unsupported_rulesで拒否する。
 
@@ -1240,6 +1240,10 @@ wireへ出力する通常役IDは重複してはならず、各IDの `value` は
 受信者は、公開された各winの符・飜・役満倍数から基本点と `hand_points` を再計算し、本場・供託・公開済み責任履歴を用いて各winの `deltas` を検査する（MUST）。点数の全体保存だけでは、支払額や支払seatの正しさを保証しない。非公開手牌のため役・符の成立自体を再判定できないviewでも、この公開値間の算術検査を省略してはならない（MUST NOT）。
 
 この再計算へ不正な役宣言を入力してはならない（MUST NOT）。全viewの受信者は、IDの一意性・排他関係に加え、公開された副露から決まる門前限定と食い下がり、`kuitan`、倍役満の有効条件、リーチ成立・ダブルリーチ・一発、ロン／ツモ・嶺上・槍槓・海底／河底・第一自摸役との整合を検査する（MUST）。通常役を加算する和了では、公開履歴から成立が確定する状況役を欠落させてもならない。七対子の25符、平和のツモ20符／ロン30符、未成立リーチへの裏ドラbonus禁止も同様である。逆方向の制約も検査し、25符は七対子、20符は平和ツモの場合だけ許可する（MUST）。ロンの20符や、七対子役を持たない25符は、点数の算術が一致していても `invalid_message` とする。真の役満では通常役・bonusを出力しない。待ち形など非公開情報を要する倍化条件の完全判定はホストが行うが、無効なconditionに対応するvalue 2は受信者も拒否する。
+
+成立済みの槓は暗槓を含め全viewで公開されているため、和了者の槓子数も役宣言と照合する（MUST）。四槓子は正確に4槓の場合だけ出力し、4槓なら欠落させない。真の役満でない和了の三槓子も、正確に3槓の場合だけ出力し、3槓なら欠落させない。未成立の槓宣言や他家の槓を数えてはならない。通常役・役満とも、必要な面子数と公開面子が両立しない役を拒否する。例えば平和には公開刻子・槓子を含められず、大三元・小四喜には3組、大四喜には4組の刻子または槓子が必要なため、その枠を埋めるチーを含められない。混老頭・字一色・清老頭にチーは成立しない。三暗刻は公開された明刻・明槓・チーが合計2組以上ある手に成立しない。
+
+大四喜の倍化条件は役IDとルールだけで確定するため、`rules.double_yakuman` に `daisuushii` があればvalue 2、なければ1とする。四暗刻のロンは単騎に限られるため、`suuankou_tanki` が有効ならvalue 2、無効なら1とする（MUST）。四暗刻のツモは非公開の待ちによって単倍・倍役満の両方があり得るため、このロン専用の推論を適用しない。受信者は倍化の不足も過大計上と同様に拒否する。
 
 ##### 7.6.7.3 責任払い
 
@@ -2209,6 +2213,8 @@ snapshotは、一つの原子的なhost状態とそのsessionへの投影を表�
 
 ACK前に固定されたselection、残期間、および他家の判断のresolvingへの進行は、eventを増やさずにsnapshotへ反映できる。自己の見逃しフリテンは固定された選択を適用した値、共有time bankはそのselectionの計時値と照合し、選択固定がなければ従前の値を保持する（MUST）。requestの元のID・候補・予算や、既に固定したselectionを変更する許可ではない。既にend_gameまたはended snapshotを適用済みの場合は、seqを飛び越える回復snapshotでも最終点数・供託・順位・持ち時間を変更してはならない（MUST NOT）。終局後に許可される診断と回復messageには、これらを変更する権限がない。
 
+欠落範囲を置換する場合も、局内のlast_event_seqが保持している最後のeventと同じなら、その間に新しいgame eventはない。この場合は連続snapshotと同じ確定状態の照合を行い、点数・手牌・公開局面・受信済みrequest IDを変更してはならない（MUST NOT）。既知の原因に対してまだrequest自体を受信していない場合だけ、その元のrequestとselectionをsnapshotから復元できる。選択による時計・見逃しの更新は上記の条件に従う。終端ACKを受信済みでも、その結果eventを欠くsnapshotを同じ原因のまま受理してはならない。snapshotから復元した原因eventにも同じ規則を適用する。
+
 snapshotが現在の回復終端より前なら回復待ちを維持し、throughまで適用する前にOPEN requestへ回答してはならない（MUST NOT）。resumeの再送中にgapも検出した場合、回復終端はreplay_through_seqとreceived_seqの大きい方とし、片方の解消だけで回答を解禁しない。重複snapshotは通常のseq/byte比較に従い、再適用しない。新規観戦の初期snapshotは第11節に従う。
 
 受信者はgame stateと未解決requestを一括置換し、最後に適用したseqをsnapshot.seqとする。次messageはその値+1になる。置換範囲の古いmessageを後着で再適用してはならない（MUST NOT）。以前のpayloadを保持していれば同一seqの衝突を検査し、未保持の置換範囲は内容を推測せず無視する。置換範囲より新しい同一seqには通常のbyte比較規則を適用する。
@@ -2226,6 +2232,8 @@ stateはmode、seat、view、players、scores、game_phase、kyotaku、kyoku、n
 state.kyotakuは局外・局内・終了後を通じた供託本数である。局内のkyoku.kyotaku、または次局のnext_kyoku.kyotakuが存在すれば同値とする（MUST）。between_kyokuとendedではpending_requestsは空でなければならない。新規start_game直後のnext_kyokuは東1局・oya=0・本場供託0である。ended snapshotではscores、kyotaku、final_rankingsを最終結果として適用し、end_gameを再生成しない。
 
 全game_phaseで `sum(state.scores) + state.kyotaku × rules.riichi_stick_value == 4 × rules.starting_points` を満たさなければならない（MUST）。snapshotは第7.4節の点数保存則の例外ではない。受信者は交渉済みrulesを使って置換前に検査し、不一致ならfatal `invalid_message` として元の点数・供託・request・seqを保持する（MUST）。開始点や供託額を既定値で補って検査してはならない。
+
+`bank_scope == "game"` の持ち時間は同じgame中にresetされないため、欠落した局の結果や新しいrequestを復元する場合も、state.time_bank_msを既に観測した共有残量より増やしてはならない（MUST NOT）。`bank_scope == "kyoku"` では未受信のstart_kyokuによるresetがあり得る。ただし同じ原因eventのcheckpointでresetすることはどちらのscopeでも不正であり、元のrequestの不変条件と時計式も維持する。
 
 `next_kyoku` は次局の座標を直接指定し、前局結果の `next.type` を含めない。between_kyokuの復元後はこれらの座標と一致する `start_kyoku` を受理する（MUST）。前局のrenchan/rotate tagの復元を追加条件として要求してはならず、between_kyoku snapshotだけから `end_game` を許可してはならない（MUST NOT）。終了済み状態にはended snapshotを使用する。
 
@@ -2349,11 +2357,11 @@ Protocol Version は message Schema と参照先、および交渉入力を検�
 11. play/replay の情報秘匿
 12. message・depth・action 数上限、ゲーム全体の点数範囲を保証するrulesの受理境界
 13. 暗槓・大明槓・加槓ごとの槓ドラ公開時点
-14. `han`、`yakus`、`bonuses`、役満倍数の整合、役IDの重複・排他・必要面子数と牌種条件・有効ルール・公開履歴との照合、20符・25符の適用条件の双方向検査
+14. `han`、`yakus`、`bonuses`、役満倍数の整合、役IDの重複・排他・必要面子数と牌種条件・有効ルール・公開履歴との照合、20符・25符の適用条件の双方向検査、公開された槓子数・面子と役の一致、大四喜と四暗刻ロンの倍化
 15. `sequence_gap` 後の範囲再送とsnapshot置換
 16. resume tokenのrotate、期限切れ、replay、snapshot
 17. 同一transport上の複数sessionと `end_game.rankings`
-18. snapshotの未使用 `seq`、一時振聴、一発、第一巡、手番、time bank、局間復元から次局開始までの進行、連続prefixの確定状態・request ID・元記録位置の保持と終局状態の不変性、原因eventの番号・payloadの保持と途中観戦の未発行番号の扱い
+18. snapshotの未使用 `seq`、一時振聴、一発、第一巡、手番、time bank、局間復元から次局開始までの進行、連続prefixと同じ原因eventの欠落回復での確定状態・request IDの保持、未受信requestの復元、game単位のbank非増加、元記録位置・終局状態の保持、原因eventの番号・payloadの保持と途中観戦の未発行番号の扱い
 19. 未解決requestを含むresumeでのtimeout継続とsnapshot強制、個別・group残期間が同じ固定時点を表すこととselectionがその時点以前であること
 20. 複数ロンの本場・供託配分と責任払いの端数
 21. bankruptcy、連荘、アガリ止め、延長の評価順

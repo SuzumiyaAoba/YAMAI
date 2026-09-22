@@ -81,10 +81,10 @@ def negotiate(hello: dict, join: dict, welcome: dict, context: dict,
     if join["mode"] != "play":
         require("resume" not in required, "unsupported_capability", "resume is unavailable in this mode")
         enabled.discard("resume")
-    limits = {"max_message_bytes": 1048576, "max_json_depth": 64, "max_unresolved_requests": 4}
-    require(all(hello["receive_limits"][key] == value and join["receive_limits"][key] == value for key, value in limits.items()), "unsupported_limit", "profile receive limits cannot be met")
     if join["mode"] == "spectate" and context.get("game_started", False):
         require("snapshot" in enabled, "unsupported_capability", "mid-game spectate needs snapshot")
+    limits = {"max_message_bytes": 1048576, "max_json_depth": 64, "max_unresolved_requests": 4}
+    require(all(hello["receive_limits"][key] == value and join["receive_limits"][key] == value for key, value in limits.items()), "unsupported_limit", "profile receive limits cannot be met")
     if join["mode"] in {"spectate", "replay"}:
         require(context.get("target_available", True), "resume_unavailable", "target is unavailable")
 
@@ -238,10 +238,13 @@ class Receiver:
                 self.closed = True
             raise
 
-    def _check_snapshot_prefix(self, state: dict) -> None:
+    def _check_snapshot_prefix(self, state: dict, *, allow_unreceived_request: bool = False) -> None:
         pending = state.get("pending_requests", [])
-        require(not self.awaiting_request and {r["request_id"] for r in pending} == self.active_requests,
-                "invalid_message", "contiguous snapshot changes the issued request set")
+        require(not (self.expected_effects or self.unadopted_reaction),
+                "invalid_message", "snapshot lacks the acknowledged decision's result event")
+        require((allow_unreceived_request and self.awaiting_request)
+                or (not self.awaiting_request and {r["request_id"] for r in pending} == self.active_requests),
+                "invalid_message", "snapshot changes the request set without a new cause event")
         expected_game = deepcopy(self.game)
         expected_bank = self.time_bank_ms
         for request in pending:
@@ -404,18 +407,19 @@ class Receiver:
                     if cause_seq == self.last_event_seq and self.game.round is not None:
                         require(canonical_action(turn["last_event"]) == canonical_action(self.game.last_cause),
                                 "invalid_message", "snapshot changed an already observed cause event")
-            if self.started and (contiguous or self.ended):
+            same_cause = (turn is not None and self.game.round is not None
+                          and turn["last_event_seq"] == self.last_event_seq)
+            if self.started and (contiguous or self.ended or same_cause):
                 try:
-                    self._check_snapshot_prefix(state)
+                    # A gap with the same last event can contain diagnostics,
+                    # selection and an as-yet unreceived request, but cannot
+                    # alter facts that require a newer game event.
+                    self._check_snapshot_prefix(state, allow_unreceived_request=not contiguous and same_cause)
                 except (GameError, ScoringError) as error:
                     raise SessionError("invalid_message", str(error)) from error
-            elif self.started and turn is not None and turn["last_event_seq"] is None:
-                # Before an observer's first event, a gap can cover only
-                # diagnostics/checkpoints, not a new public game state.
-                try:
-                    self._check_snapshot_prefix(state)
-                except (GameError, ScoringError) as error:
-                    raise SessionError("invalid_message", str(error)) from error
+            if self.started and state["mode"] == "play" and self.welcome["rules"]["time_control"]["bank_scope"] == "game":
+                require(state["time_bank_ms"] <= self.time_bank_ms, "invalid_message",
+                        "snapshot replenishes a game-scoped time bank")
             self.floor = message["replaces_through_seq"]
             self.started = True
             self.ended = state["game_phase"] == "ended"
