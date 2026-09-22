@@ -240,6 +240,8 @@ TCP と標準入出力は同じフレーミングを使用できる（MAY）。T
 - binary message は `unsupported_frame` として拒否する（MUST）
 - WebSocket の message boundary を YAMAI の message boundary とする（MUST）
 
+WebSocket自身のhandshake・frame・UTF-8違反は [RFC 6455] の接続失敗処理を優先する（MUST）。例えば不正UTF-8は接続を失敗させ、Closeを送れる場合は1007、frame規約違反は1002を用いる。YAMAIのerrorを送るために失敗後のdata frameを送信したり、後続dataを処理したりしてはならない（MUST NOT）。ローカルの診断分類は第12節に従うが、transportが送信不能または既に終了処理中ならerror messageの配送を要求しない。正常なtext message内のJSON構文違反と、WebSocket層の違反を区別する。
+
 ### 4.4 transport 非依存性
 
 transport は message の意味を変更してはならない（MUST NOT）。batch transport は1フレームへ複数 YAMAI message を格納してはならない（MUST NOT）。複数 message はそれぞれ独立したフレームとして連続送信する。
@@ -274,6 +276,21 @@ transport は message の意味を変更してはならない（MUST NOT）。ba
 | `original_seq` | replay eventでは必須、それ以外は禁止 | replay元記録のhost message seq。replay sessionの振り直し前の番号 |
 
 ID は1～64文字の ASCII `[A-Za-z0-9._:-]` でなければならない（MUST）。復号した文字列全体を検査し、末尾の改行・空白やUnicode文字も許可してはならない（MUST NOT）。ID の内部構造を受信側が解釈してはならない（MUST NOT）。
+
+ID以外の交渉用文字列・配列にも、次の閉じた上限を適用する（MUST）。文字列長はJSON復号後のUnicode scalar value数で数え、UTF-8 byte数・UTF-16 code unit数・表示上の文字数で代用しない。ASCII限定のmemberでは文字数とbyte数が一致する。message全体には別途第4.1節のbyte上限を適用する。
+
+| member | 字句・長さ・要素数 |
+|---|---|
+| Protocol Version / profile revision | 第1節の版文法、ASCIIで32文字以下 |
+| profile名 | 1～32文字、先頭は小文字英字、以降は小文字英字・数字・hyphen |
+| 安定capability名 | 1～64文字、先頭は小文字英字、以降は小文字英字・数字・underscore。実験値は第14節 |
+| `client.name`、`players[].name`、`join.room` | 存在する場合は1～128文字。表示名やroomを認証済みの主体IDとして扱わない |
+| `client.version` | 1～64文字。クライアント自身の版を表す文字列であり、Protocol Versionの文法を要求しない |
+| `hello.versions`、`profiles[].revisions`、`profiles[].protocol_versions[revision]` | 各1～16要素、同じ配列内の重複を禁止 |
+| `hello.profiles` | 1～16要素、profile名を重複させない |
+| `capabilities.required` / `optional` | 各0～64要素。両配列間も重複を禁止 |
+| `welcome.capabilities` | 0～128要素、重複なしのASCII昇順 |
+| `resume.token` | 22～256文字、ASCII英数字および `.`、`_`、`~`、`-` のみ。乱数強度・期限・所有権は第13節 |
 
 byte-for-byteの比較対象はUTF-8 JSON payloadであり、JSONLの行末CR/LF、WebSocketのframe header・mask・fragment境界を含まない。payload内の空白、member順、escape表記は比較対象であり、再送でJSONを再直列化して変更してはならない（MUST NOT）。
 
@@ -327,7 +344,7 @@ hostは同一 `seq` の再送、resume replayおよびrange replayに、ledger e
         "1.0-draft.1"
       ],
       "hashes": {
-        "1.0-draft.1": "sha256:17f6723191f7670c12d8cd8e3bf8051f74397eef7dd28f7eae1b49ed5c54bc94"
+        "1.0-draft.1": "sha256:a2e314f5a134a43a3c2539ced8aafa84699e315e78566c3b304d58a393d1bafc"
       },
       "protocol_versions": {
         "1.0-draft.1": [
@@ -362,7 +379,7 @@ hostは同一 `seq` の再送、resume replayおよびrange replayに、ledger e
   "seat": 0,
   "profile": "riichi-4p",
   "profile_revision": "1.0-draft.1",
-  "profile_hash": "sha256:17f6723191f7670c12d8cd8e3bf8051f74397eef7dd28f7eae1b49ed5c54bc94",
+  "profile_hash": "sha256:a2e314f5a134a43a3c2539ced8aafa84699e315e78566c3b304d58a393d1bafc",
   "client": {
     "name": "ExampleAI",
     "version": "2.3.0"
@@ -406,7 +423,7 @@ profile_hashは、vector manifestのprofile_hash_inputsに列挙したJSONをpro
   "view": "seat",
   "profile": "riichi-4p",
   "profile_revision": "1.0-draft.1",
-  "profile_hash": "sha256:17f6723191f7670c12d8cd8e3bf8051f74397eef7dd28f7eae1b49ed5c54bc94",
+  "profile_hash": "sha256:a2e314f5a134a43a3c2539ced8aafa84699e315e78566c3b304d58a393d1bafc",
   "client": {
     "name": "ExampleAI",
     "version": "2.3.0"
@@ -452,7 +469,7 @@ profile_hashは、vector manifestのprofile_hash_inputsに列挙したJSONをpro
   "view": "seat",
   "profile": "riichi-4p",
   "profile_revision": "1.0-draft.1",
-  "profile_hash": "sha256:17f6723191f7670c12d8cd8e3bf8051f74397eef7dd28f7eae1b49ed5c54bc94",
+  "profile_hash": "sha256:a2e314f5a134a43a3c2539ced8aafa84699e315e78566c3b304d58a393d1bafc",
   "players": [
     {
       "seat": 0,
@@ -570,6 +587,8 @@ welcomeはseqを持たない（MUST NOT）。mode/viewとprofileの選択をjoin
 `rules` のすべての member は §7.2 の表と §7.6 の規則で意味を定義する。§7.2 が必須とする member を省略してはならず（MUST NOT）、クライアントは理解できない必須ルール値を `unsupported_rules` で拒否しなければならない（MUST）。Schema はこの表の派生表現に過ぎない。
 
 welcomeのplayersはseat 0～3の順に並べる。新規playとreplayのwelcome.scoresは開始点、途中観戦とresumeでは同期対象時点の点数を返す（MUST）。resumeでwelcome.scoresを既存の対局状態へ上書きしてはならない。last_seq=0から古いstart_gameを再生する場合は、rules.starting_pointsによる初期点を適用し、その後のeventで現在へ進める。再開でrules、players、seat、mode/view、有効capability集合を変更してはならない（MUST NOT）。
+
+新規sessionの初期化には、seq=1のstart_game、または第11節の観戦初期snapshotを使う。hostはこの初期化messageを最初にledgerへcommitし、初期化前の入力に対するrecoverable errorを含め、他の非fatal messageを先に採番・配信してはならない（MUST NOT）。初期化できずsessionを終了するときだけ、seq=1のfatal errorを送れる。受信者も初期化前の連続した非fatal error・request・ACKをfatal invalid_messageとして拒否する（MUST）。これにより診断がseq=1を消費してstart_gameを開始不能にしない。履歴再送と欠落回復は第13節に従う。
 
 新規playおよびreplayのクライアントは、welcome受理時に全seatのscoresがrules.starting_pointsと一致することを検査する（MUST）。replayのtargetが進行中または終了済みでも、現在点数・最終点数を開始点数として受理してはならない。違反は後続のstart_gameを待たずfatal invalid_messageとする。
 
@@ -1643,6 +1662,8 @@ Schemaとsession/game IDを検証してから、次の順に処理する（MUST�
 
 resumeまたはsequence-gapのreplayでは、生成済みACKを元のseqとwire内容で再送する。元の終端ACK、後着の通知、明示選択か自動選択か、計時結果およびID対応を少なくとも同gameの `end_game` と保留中の後着通知のcommitまで保持する（MUST）。有効なresume tokenが残る場合は第13節の回復にも必要な履歴を保持する。
 
+受信者は観測済みの後着 `(request_id, action_id)` も保持し、同じ組のstale通知を別の新しいseqで受理してはならない（MUST NOT）。同一seq・同一byteの再送は通常どおり無視し、同じrequestでも異なる後着action_idは別attemptとする。requestを終端化する取消しstaleは後着通知とは別である。resumeやsnapshotで、既に観測したattemptを消去して再通知を許可しない。snapshotで元requestを失った場合も、置換後に観測した後着通知の重複は検査する（MUST）。
+
 `end_game` のcommit前に入力処理へ登録した後着actionの `stale` 通知は、結果event列が `end_game` を含む場合もその後へ一度だけ追加する（MUST）。この通知は終了済みgameを変更しない。ホストは保留通知をledgerへcommitし、同じtransportで配信する場合は送信キューへ記録してから、次sessionのhelloを開始する。`end_game` のcommit以後に新しく受信した、構文・Schema・当該session/game IDが正しいactionは無応答で破棄し、新しいACKを生成してはならない（MUST NOT）。transportを次sessionで再利用する場合も前sessionのIDを受理してはならない（MUST NOT）。
 
 ## 10. イベント順序
@@ -1781,6 +1802,8 @@ spectate/replayへrequestやACKを送信してはならず、これらのsession
 
 進行中gameへの新規spectateはsnapshot capabilityを必要とし、welcomeに続くseq=1、replaces_through_seq=0のpublic snapshotで参加時点の状態を設定してからlive配信する（MUST）。これを最初のstart_gameの例外とする。参加前のprivate messageを再送しない。両者がsnapshotを有効化できなければ `unsupported_capability` で拒否する。game開始前のspectateは通常のstart_gameから開始してよい。接続し直すspectatorは常に新sessionを作る。
 
+観戦初期snapshotとwelcomeは同じ参加時点を固定し、snapshot.state.scoresをwelcome.scoresと一致させる（MUST）。固定後の変更はseq=2以後のeventで送る。初期化の許可だけでseqを飛び越えてはならない。初期snapshotが欠落して後続messageを受信した場合は、sequence_gapによる回復として元のseq=1を再送するか、第13.3節で許可する新しいsnapshotを生成する。後者は欠落中のeventを含み得るため、古いwelcome.scoresとの一致ではなく通常の回復条件を検査する。
+
 mode を途中で変更してはならない（MUST NOT）。完全情報 replay を play クライアントへ送信してはならない（MUST NOT）。
 
 ## 12. エラー
@@ -1828,6 +1851,8 @@ mode を途中で変更してはならない（MUST NOT）。完全情報 replay
 
 `severity == "recoverable"` の error は、関連する不正 message を状態へ適用せず、session を継続できることを表す。`severity == "fatal"` の error を送信した endpoint は、当該 error の送信完了後に新しい application message を送信してはならず（MUST NOT）、transport を終了しなければならない（MUST）。
 
+fatalを確定したendpointは以後の入力適用を直ちに停止し、送信可能な場合だけerrorを通知する。errorの送信完了を無期限に待って切断を遅らせてはならない（MUST NOT）。transportが既に壊れている場合やWebSocket自体の失敗処理では、第4.3節と第15節の終了条件を優先する。errorの不達はfatal sessionやtokenを復活させる理由にならない。
+
 `invalid_message` は、プレイヤーからホストへの `action` が第8.2節の必須member `yamai`、`kind`、`session_id`、`game_id` および既知のrequest_idを正しい型で持ち、`action_id` またはその他のaction固有memberだけがSchema違反である場合に限りrecoverableとする。既知の解決済みrequestへのwell-formedなactionはSchema違反ではなく、第9.2節の冪等性・conflict・後着規則で処理しなければならない（MUST）。それ以外のHost → Player message、交渉message、ID不一致または状態変更messageのSchema違反はfatalとする（MUST）。
 
 一つの受信messageに複数の不備がある場合、各受信endpointは次の検証優先順で最初の一つだけをerror codeへ写像しなければならない（MUST）。交渉messageの選択値は第6.4節の順に検査する。host messageのseq検査はPlayerが行い、seqのないPlayer messageへ適用しない。後段の検証を行って副作用を発生させてはならない（MUST NOT）。
@@ -1843,11 +1868,13 @@ mode を途中で変更してはならない（MUST NOT）。完全情報 replay
 | 7 | session/game phase、`original_seq`、caused_by_seq、request/group前提 | `invalid_message`、fatal |
 | 8 | request_id/action_idの対応、期限、冪等性および優先順位 | `invalid_action`/`request_conflict`、recoverable |
 
-非対応のWebSocket binary messageは `unsupported_frame`、JSONLの先頭byteや改行境界の違反は `invalid_frame` とする。frame検査を通過したpayloadの不正UTF-8またはBOMは `invalid_json` とする。例えばBOMで始まるJSONL行は先頭byteが `{` ではないため、第1層で `invalid_frame` となる。
+第5層のmode制約はseq欠落より先に検査する。spectate/replayへのrequest・ACKは、そのpayloadが単独のSchemaに適合していてもfatal invalid_messageとし、未来seqを理由にsequence_gapへ読み替えてはならない（MUST NOT）。保持済みseqの同一byte再送・内容衝突と置換済み範囲の扱いは第4層を先に適用する。
+
+非対応のWebSocket binary messageは `unsupported_frame`、JSONLの先頭byteや改行境界の違反は `invalid_frame` とする。WebSocketの長さ0のtext messageはframeとして有効だがJSON textではないため、`invalid_json` とする。空白だけのtext messageも同じである。frame検査を通過したpayloadの不正UTF-8またはBOMは `invalid_json` とする。ただしWebSocket層の不正UTF-8は第4.3節の接続失敗処理を優先する。例えばBOMで始まるJSONL行は先頭byteが `{` ではないため、第1層で `invalid_frame` となる。
 
 action固有memberのSchema違反には上記の限定的なrecoverable `invalid_message` を適用する。構文・Schema・envelopeが正しく、第8層だけで不備を検出したplayer `action` は第8.5・9.2節の `invalid_action` または `request_conflict` とする。未知requestへのactionも第8.5節に従い、推測でrequestを補わない。それ以外は上表のcode/severityに従い、session/game ID、directionまたは必須memberを推測で補ってはならない。hostは同一受信messageに対してrecoverable errorを二つ以上返してはならず、errorを返しただけで元requestを終端化してはならない（MUST NOT）。
 
-`message` は診断専用とし、プログラム分岐には `code` を使用しなければならない（MUST）。秘密情報、手牌、token または stack trace を `message` に含めてはならない（MUST NOT）。
+`message` は1～4,096文字の診断専用文字列とし、プログラム分岐には `code` を使用しなければならない（MUST）。文字数は第5節と同じ方法で数える。秘密情報、手牌、token または stack trace を `message` に含めてはならない（MUST NOT）。
 
 交渉前のerrorはfatalだけを許可し、request/actionやseqの競合を報告しない。交渉後のinvalid_action/request_conflict/resume_unavailableはHost→Player、sequence_gap/sequence_conflict/unsupported_rulesはPlayer→Hostとする。invalid_frame、invalid_json、unsupported_frame、invalid_message、resource_limit、internal_errorは状況に従ってどちらも送れる（MUST）。方向別のSchemaで検査し、Playerから送るinvalid_messageは常にfatalとする。未知のerror codeはinvalid_messageとして拒否する。
 
@@ -2363,7 +2390,7 @@ Protocol Version は message Schema と参照先、および交渉入力を検�
 1. 版不一致と未対応ルールの拒否
 2. JSONL の分割・複数行一括受信
 3. `seq` の重複・欠落・衝突
-4. action の正常、遅延、重複、異なる再送
+4. action の正常、遅延、重複、異なる再送、および同じ後着attemptへのstale通知の別seqでの重複拒否
 5. chi、pon、daiminkan、ankan、kakan、槍槓
 6. リーチ複合 action と供託
 7. 赤牌を含む consumed
@@ -2381,7 +2408,7 @@ Protocol Version は message Schema と参照先、および交渉入力を検�
 19. 未解決requestを含むresumeでのtimeout継続とsnapshot強制、個別・group残期間が同じ固定時点を表すこととselectionがその時点以前であること
 20. 複数ロンの本場・供託配分と責任払いの端数
 21. bankruptcy、連荘、アガリ止め、延長の評価順
-22. play、spectate、replayのseat・request禁止・visibility
+22. play、spectate、replayのseat・request禁止・visibility、観戦初期snapshotとwelcomeの同一時点・seq=1の照合
 23. `riichi-4p` の全役・符・点数および支払のtest vector。event投影を省略する採点入力の第一巡・一発・嶺上・槓数、通常流局の完全手牌と槓数の整合
 24. profile revision/hash、required/optional capability、mode/view/target交渉
 25. decision groupの全member、共通deadline、close、優先順位および原子解決
@@ -2389,7 +2416,7 @@ Protocol Version は message Schema と参照先、および交渉入力を検�
 27. notenのtenpai人数別payments、kyotaku本数の積算・配分・繰越・終局
 28. 嶺上和了時の槓ドラ分岐、`ura_dora_markers` およびreplay `original_seq`
 29. grace、deadline境界、同一seatの重複request、送信backpressure
-30. Protocol Coreの全message Apply前後条件、失敗時の副作用なし、検証層ごとのerror優先順、同内容の過去eventを原因に指定したrequestの拒否
+30. Protocol Coreの全message Apply前後条件、失敗時の副作用なし、初期化前の非fatal診断禁止、mode違反と欠番を含む検証層ごとのerror優先順、同内容の過去eventを原因に指定したrequestの拒否
 31. wire ledgerの連続seq、同一seqのbyte-for-byte再送、transaction境界および未送信entryの保持
 32. decision groupの同時action、個別timeout、同値timestampのtimeout優先、linearization後の一回限り解決
 33. 新規joinの明示seat・最小空席割当、resume seat固定、game/recording replay target

@@ -1399,7 +1399,7 @@ def semantic_transport_trace(trace: Mapping[str, Any]) -> None:
     elif transport == "websocket":
         _require(trace.get("message_type") in {"text", "binary"}, "invalid_frame", "invalid websocket message type")
         if trace.get("message_type") == "text":
-            _require(isinstance(trace.get("message"), str) and trace["message"] != "", "invalid_frame", "empty websocket text message")
+            _require(isinstance(trace.get("message"), str), "invalid_frame", "websocket text payload must be a string")
             if "fragments" in trace:
                 _require(isinstance(trace["fragments"], list) and "".join(trace["fragments"]) == trace["message"], "invalid_frame", "websocket fragments do not reconstruct the message")
             message = strict_load_bytes(trace["message"].encode("utf-8"), max_bytes=1048576)

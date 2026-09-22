@@ -200,6 +200,7 @@ class Receiver:
         # Diagnostic ACKs constrain later clocks without charging the bank.
         self.request_clock_floor: dict[str, int] = {}
         self.terminal_acks: dict[str, dict] = {}
+        self.late_attempts: set[tuple[str, str]] = set()
         self.expected_effects: list[dict] = []
         self.unadopted_reaction: dict | None = None
         self.time_bank_ms = welcome["rules"]["time_control"]["bank_ms"]
@@ -378,6 +379,9 @@ class Receiver:
             return "duplicate"
         self.validate("host-application", message)
         kind = message["kind"]
+        mode = self.welcome["mode"]
+        require(mode == "play" or kind not in {"request", "ack"}, "invalid_message",
+                "observer received a request or ACK")
         if kind == "snapshot":
             require("snapshot" in self.welcome["capabilities"], "invalid_message", "snapshot capability is not enabled")
             contiguous = seq == self.applied + 1
@@ -387,10 +391,15 @@ class Receiver:
             # need not cover the current recovery frontier, and applying it
             # must not end replay early. Only a jump needs recovery authority.
             require((contiguous and self.started) or self.recovery is not None or self.resume_snapshot_allowed, "invalid_message", "snapshot lacks bootstrap or recovery authorization")
+            require(self.recovery != "initial" or seq == 1, "invalid_message",
+                    "initial observer snapshot must use the first session sequence")
             required_floor = self.applied if contiguous else max(self.applied, self.gap_received, self.through if self.resume_snapshot_allowed else 0)
             require(message["replaces_through_seq"] >= required_floor and seq == message["replaces_through_seq"] + 1, "invalid_message", "snapshot replacement range is insufficient")
             state = message["state"]
             require(all(state[key] == self.welcome[key] for key in ("mode", "view", "seat", "players")), "invalid_message", "snapshot changed session identity")
+            if not self.started and mode == "spectate" and not self.welcome["resumed"] and seq == 1:
+                require(state["scores"] == self.welcome["scores"], "invalid_message",
+                        "initial observer snapshot differs from welcome scores")
             require(not self.ended or state["game_phase"] == "ended", "invalid_message", "snapshot reopened an ended game")
             turn = state["kyoku"]["turn"] if state["kyoku"] is not None else None
             if turn is not None:
@@ -513,10 +522,11 @@ class Receiver:
                 self.gap_received = max(self.gap_received, seq)
                 self.recovery = "gap"
                 return "sequence_gap"
-            mode = self.welcome["mode"]
+            require(self.started or kind == "event" and message["event"]["type"] == "start_game"
+                    or kind == "error" and message["severity"] == "fatal",
+                    "invalid_message", "nonfatal message precedes session initialization")
             require(not (self.expected_effects or self.unadopted_reaction) or kind == "event" or (kind == "error" and message["severity"] == "fatal"),
                     "invalid_message", "message interrupts acknowledged action effects")
-            require(mode == "play" or kind not in {"request", "ack"}, "invalid_message", "observer received a request or ACK")
             if kind == "event":
                 event = message["event"]
                 self.validate("visible-event", {"event":event,"mode":mode,"view":self.welcome["view"],"seat":self.welcome["seat"]})
@@ -575,10 +585,14 @@ class Receiver:
                 rid, status = message["request_id"], message["status"]
                 if rid not in self.active_requests:
                     require(status == "stale" and (rid in self.request_ids or self.floor > 0), "invalid_message", "ACK refers to an unissued or terminal request")
+                    attempt = (rid, message["action_id"])
+                    require(attempt not in self.late_attempts, "invalid_message",
+                            "late attempt was assigned a second ACK sequence")
                     if rid in self.terminal_acks:
                         require(self.terminal_acks[rid]["status"] in {"defaulted", "stale"},
                                 "invalid_message", "late stale ACK follows an explicit terminal selection")
                         require(all(message[key] == self.terminal_acks[rid][key] for key in ("elapsed_ms", "time_bank_ms")), "invalid_message", "late ACK changed the original clock")
+                    self.late_attempts.add(attempt)
                 else:
                     request = self.requests[rid]
                     grace = self.welcome["rules"]["time_control"]["grace_ms"]

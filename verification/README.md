@@ -57,9 +57,9 @@ stateful trace は1つの peer session の時刻付き message と不変の wire
 | §17 | 主な本文 | 正負vector・実行検査 | 検証する境界 |
 |---|---|---|---|
 | 1 | §6.3/6.4 | V63–V74、V133–V134/V330 | 構造・版・profile・ルール拒否の順序、新規replayの開始点 |
-| 2 | §4.2 | V02/V06、test_validator | UTF-8/CRLFの分割、複数frame、EOF |
+| 2 | §4.2/4.3/12 | V02/V06/V417、test_validator | UTF-8/CRLFの分割、複数frame、EOF、空のWebSocket text messageはinvalid_json |
 | 3 | §5/13 | V105–V108/V113 | 連続prefix、同一byte再送、衝突時の原子的拒否 |
-| 4 | §8/9 | V35–V50/V100–V103/V331–V341 | 正常・後着・重複・別IDの再送、採用・不採用・取消しと結果 |
+| 4 | §8/9 | V35–V50/V100–V103/V331–V341/V414 | 正常・後着・重複・別IDの再送、採用・不採用・取消しと結果、後着attemptごとのstale通知は一度だけ |
 | 5 | §7.3/10 | V176–V196/V235–V246/V253/V258–V259/V272 | 全鳴き、宣言と成立、槍槓時の取消し、槍槓不可でも3seatの反応要求 |
 | 6 | §8.3/10.3 | V197–V200/V247–V249 | 複合リーチ、鳴かれた打牌、供託の一回控除 |
 | 7 | §7.3 | V192–V196/V256/V258–V260 | 赤牌の物理枚数、consumed multiset、同値牌の自摸切り区別 |
@@ -77,7 +77,7 @@ stateful trace は1つの peer session の時刻付き message と不変の wire
 | 19 | §9/13 | V19/V55/V60/V62/V109–V110/V361–V366/V371–V373、delivery形式モデル | 固定選択・元の時計、空範囲を含む再配送、snapshotの残期間と後続selection/ACKの経過時間が逆行しないこと、rejected後も観測した経過時間を保持、個別・group時計が同じ固定時点を表しselectionがその時点以前であること |
 | 20 | §7.6.7/7.6.8 | V20、採点multiple-ron/pao fixture | 本場配分、責任役満成分、供託の別会計 |
 | 21 | §7.2 | V151–V175 | トビ・連荘・アガリ止め・延長の順序 |
-| 22 | §6.2/11 | V28/V30/V51/V78–V82/V94–V95/V143–V150 | mode/view/target、観戦のrequest/ACK禁止 |
+| 22 | §6.2/11 | V28/V30/V51/V78–V82/V94–V95/V143–V150/V412–V413/V415–V416 | mode/view/target、観戦のrequest/ACK禁止、初期snapshotとwelcomeの点数一致・seq=1 |
 | 23 | §7.6 | scoring_reference、採点fixture・索引・回帰テスト、N37–N41 | 全登録役、全符項目、限界点、支払いの再計算。投影省略時も第一巡と全seatの槓数、嶺上と一発、通常流局の全手牌と槓数の整合を検査 |
 | 24 | §6/14/19 | V63–V93/V127–V142 | revision対応表、hash、capabilityと拡張Schemaのsession分離 |
 | 25 | §8.1/8.4 | V31–V50/V52/V60/V254–V256、request形式モデル | 他家3人、個別/共通期限、選択後に一度だけ競合解決 |
@@ -85,7 +85,7 @@ stateful trace は1つの peer session の時刻付き message と不変の wire
 | 27 | §7.2/7.5、§7.6.8 | V27/V57–V58/V151–V175、noten_0–noten_4 | 聴牌人数、供託繰越・配分・終了時残本数 |
 | 28 | §10.2/11、§7.6.5 | V211–V226/V124、裏ドラ採点fixture | 嶺上和了前の公開、裏ドラ枚数、元記録cursor |
 | 29 | §9/15 | V31–V50/V116–V122/V139/V141、test_game_contract | 猶予、切り捨て前期限、予約済み出力、再送で二重課金しない |
-| 30 | §3.1/6.4/8.1/12 | V63–V103/V108/V261/V273/V342/V392、Receiver回帰 | Applyの原子性、errorの方向・優先順、途中観戦の必須capabilityとlimitの競合、同一seqの衝突と不正payloadの競合、同内容の過去eventへの原因参照 |
+| 30 | §3.1/6.3/6.4/8.1/12 | V63–V103/V108/V261/V273/V342/V392/V411–V413、Receiver回帰 | Applyの原子性、初期化前の非fatal診断拒否、errorの方向・優先順、途中観戦の必須capabilityとlimitの競合、同一seqの衝突と不正payloadの競合、mode違反を欠番より先に拒否、同内容の過去eventへの原因参照 |
 | 31 | §3.2/5/13 | V105–V115/V261–V262 | wire ledger、再送byte、transactionの非交錯 |
 | 32 | §8.1.1/8.4/9 | V35–V50/V263/V267/V331–V341 | 全3選択、strict deadline、ACKと結果の同一transaction・優先順位 |
 | 33 | §6.2/13 | V85–V93/V136/V266/V268–V270 | 明示seat、最小空席、resumeでの再指定禁止、replay target |
@@ -93,6 +93,8 @@ stateful trace は1つの peer session の時刻付き message と不変の wire
 | 35 | §11/13.3 | V53–V62/V143–V150/V264–V265 | snapshot・last_eventを含む全viewの非漏洩 |
 
 V409–V410は項目18のsnapshot復元を補完する。嶺上手番と、その嶺上牌から連続槓を宣言した反応待ちの両方で、他seatの一発資格を復活させる負例を拒否する。正常な一発なしの復元と、拒否時の状態・ledger・適用seqの原子性も回帰検査する。N37–N41の対照として、第一自摸、一発なしのリーチ嶺上和了、暗槓を含む通常流局の正例を使用する。未成立の槓宣言への槍槓では一発・第一巡資格を誤って失効させないことも確認する。
+
+V411–V417は、初期化・mode別のエラー優先順・後着通知・観戦初期snapshot・WebSocketの空payloadを補完する。Receiver回帰ではplay/spectate/replay、現在と未来のseq、同一byteの再送と別seqの再通知、resume/snapshotを挟む同一attempt、観戦初期snapshotを欠落後に再送する経路を区別する。WebSocketの実frame、Closeの送信、失敗後のdata停止はtransport実装での結合試験対象であり、このpayload検査だけではRFC 6455の接続終了を実証しない。
 
 完全候補の照合では期待集合の一部だけを検査せず、順序とconsumedの並びを除いた集合全体を比較する。現行coreの候補数には余裕がある。自摸番は打牌15以下・リーチ15以下・暗槓3以下・加槓4以下・和了1・九種九牌1の合計39以下、反応はchiの3順子×4赤牌消費パターン×13打牌、ponの3消費パターン×13打牌、daiminkan4消費パターン、hora/none各1の合計201以下という保守的上限があり、512を超えない。実際の牌枚数・喰い替えはこれをさらに制限する。私的拡張は独自の上限・fixtureと第14節の契約を必要とする。
 

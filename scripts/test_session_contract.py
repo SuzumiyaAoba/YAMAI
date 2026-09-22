@@ -474,6 +474,105 @@ class SessionInvariants(unittest.TestCase):
         with self.assertRaises(SessionError):
             receiver.receive(self.raw(forbidden))
 
+    def test_initial_message_precedes_recoverable_diagnostics(self):
+        for mode in ('play', 'spectate', 'replay'):
+            for first in ('start_game', 'recoverable', 'fatal'):
+                with self.subTest(mode=mode, first=first):
+                    trace = self.trace('wire_complete_game')
+                    welcome = trace['welcome']
+                    if mode != 'play':
+                        welcome.update(mode=mode, view='public', seat=None, capabilities=['snapshot'])
+                        welcome.pop('resume', None)
+                    receiver = self.receiver(welcome)
+                    identity = {key: welcome[key] for key in ('yamai', 'session_id', 'game_id')}
+                    error = dict(identity, kind='error', seq=1, code='invalid_message',
+                                 severity='recoverable', message='invalid input')
+                    if first == 'recoverable':
+                        self.assert_rejected_atomically(receiver, error)
+                    elif first == 'fatal':
+                        error.update(severity='fatal')
+                        self.assertEqual(receiver.receive(self.raw(error)), 'applied')
+                        self.assertTrue(receiver.closed)
+                    else:
+                        start = trace['steps'][0]['message']
+                        if mode == 'replay':
+                            start['original_seq'] = 1
+                        receiver.receive(self.raw(start))
+                        error['seq'] = 2
+                        self.assertEqual(receiver.receive(self.raw(error)), 'applied')
+
+    def test_observer_request_and_ack_rejection_precedes_sequence_gap(self):
+        for mode in ('spectate', 'replay'):
+            for index in (3, 4):
+                for seq in (1, 99):
+                    with self.subTest(mode=mode, kind=index, seq=seq):
+                        trace = self.trace('wire_complete_game')
+                        welcome = trace['welcome']
+                        welcome.update(mode=mode, view='public', seat=None, capabilities=['snapshot'])
+                        welcome.pop('resume', None)
+                        receiver = self.receiver(welcome)
+                        message = trace['steps'][index]['message']
+                        message['seq'] = seq
+                        self.assert_rejected_atomically(receiver, message)
+                        self.assertIsNone(receiver.recovery)
+
+    def test_late_attempt_is_not_reissued_across_resume_or_snapshot(self):
+        for checkpoint in ('none', 'resume', 'snapshot'):
+            with self.subTest(checkpoint=checkpoint):
+                trace = self.trace('queued_stale_after_end_game')
+                receiver = self.receiver(trace['welcome'])
+                for step in trace['steps']:
+                    receiver.receive(self.raw(step['message']))
+                late = deepcopy(trace['steps'][-1]['message'])
+                self.assertEqual(receiver.receive(self.raw(late)), 'duplicate')
+                distinct = dict(late, action_id='different-late-attempt', seq=receiver.applied + 1)
+                self.assertEqual(receiver.receive(self.raw(distinct)), 'applied')
+                if checkpoint == 'resume':
+                    welcome = deepcopy(trace['welcome'])
+                    welcome.update(resumed=True, replay_from_seq=receiver.applied + 1,
+                                   replay_through_seq=receiver.applied)
+                    receiver.begin_resume(welcome)
+                elif checkpoint == 'snapshot':
+                    identity = {key: trace['welcome'][key] for key in ('yamai', 'session_id', 'game_id')}
+                    state = {key: trace['welcome'][key] for key in ('mode', 'view', 'seat', 'players')}
+                    state.update(game_phase='ended', scores=receiver.game.scores.copy(),
+                                 kyotaku=receiver.game.kyotaku, kyoku=None, next_kyoku=None,
+                                 final_rankings=trace['steps'][-2]['message']['event']['rankings'],
+                                 time_bank_ms=receiver.time_bank_ms, pending_requests=[])
+                    snapshot = dict(identity, kind='snapshot', seq=receiver.applied + 1,
+                                    replaces_through_seq=receiver.applied, state=state)
+                    self.assertEqual(receiver.receive(self.raw(snapshot)), 'applied')
+                late['seq'] = receiver.applied + 1
+                self.assert_rejected_atomically(receiver, late)
+
+    def test_observer_initial_snapshot_matches_welcome_and_first_sequence(self):
+        for defect in ('none', 'scores', 'sequence'):
+            with self.subTest(defect=defect):
+                trace = self.trace('observer_bootstrap_authorization')
+                receiver = self.receiver(trace['welcome'], initial_snapshot=True)
+                snapshot = trace['steps'][0]['message']
+                if defect == 'scores':
+                    snapshot['state']['scores'][0] += 100
+                    snapshot['state']['scores'][1] -= 100
+                elif defect == 'sequence':
+                    snapshot.update(seq=2, replaces_through_seq=1)
+                if defect == 'none':
+                    self.assertEqual(receiver.receive(self.raw(snapshot)), 'applied')
+                else:
+                    self.assert_rejected_atomically(receiver, snapshot)
+
+    def test_observer_initial_snapshot_can_be_replayed_after_a_gap(self):
+        trace = self.trace('observer_bootstrap_authorization')
+        receiver = self.receiver(trace['welcome'], initial_snapshot=True)
+        snapshot = trace['steps'][0]['message']
+        identity = {key: snapshot[key] for key in ('yamai', 'session_id', 'game_id')}
+        event = dict(identity, kind='event', seq=2,
+                     event=dict(type='dahai', actor=0, pai='9s', tsumogiri=True))
+        self.assertEqual(receiver.receive(self.raw(event)), 'sequence_gap')
+        self.assertEqual(receiver.receive(self.raw(snapshot)), 'applied')
+        self.assertEqual(receiver.receive(self.raw(event)), 'applied')
+        self.assertIsNone(receiver.recovery)
+
     def test_unsupported_mode_or_view_has_a_distinct_error(self):
         trace = self.trace('unsupported_mode')
         for context in ({'supported_modes':[]}, {'supported_views':{trace['join']['mode']:[]}}):

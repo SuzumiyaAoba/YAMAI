@@ -112,6 +112,17 @@ class ValidatorBoundaries(unittest.TestCase):
             self.assert_error('invalid_frame', v.parse_jsonl_chunks, [raw])
         self.assert_error('invalid_json', v.parse_jsonl_chunks, [b'{\n"x":1}\n'])
 
+    def test_websocket_empty_text_is_a_json_error(self):
+        for payload in ('', ' ', '\r\n'):
+            with self.subTest(payload=repr(payload)):
+                trace = {'trace_type': 'transport', 'transport': 'websocket',
+                         'message_type': 'text', 'message': payload, 'fragments': [payload]}
+                self.assert_error('invalid_json', v.semantic_transport_trace, trace)
+        self.assert_error('unsupported_frame', v.semantic_transport_trace,
+                          {'trace_type': 'transport', 'transport': 'websocket', 'message_type': 'binary'})
+        v.semantic_transport_trace({'trace_type': 'transport', 'transport': 'websocket',
+                                    'message_type': 'text', 'message': '{}', 'fragments': ['', '{', '}']})
+
     def test_schema_bool_is_not_numeric_const_or_enum(self):
         for schema in ({'const': 1}, {'enum': [1]}, {'const': [1]}, {'enum': [[1]]}):
             value = [True] if isinstance(schema.get('const', schema.get('enum', [None])[0]), list) else True
