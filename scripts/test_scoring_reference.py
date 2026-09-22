@@ -257,6 +257,68 @@ class ScoringInvariants(unittest.TestCase):
         f['state']['furiten'] = True
         self.assertEqual(calculate_fixture(f, self.rules), f['expected'])
 
+    def test_rinshan_cancels_ippatsu_with_or_without_event_projection(self):
+        original = self.fixtures['timing_riichi_rinshan_cancels_ippatsu']
+        self.assertEqual(calculate_fixture(original, self.rules), original['expected'])
+        f = deepcopy(original)
+        f['state']['events'] = []
+        f['state']['pre_state'] = {k: deepcopy(v) for k, v in f['state'].items()
+                                  if k not in {'events', 'pre_state', 'furiten'}}
+        self.assertEqual(calculate_fixture(f, self.rules), original['expected'])
+        for state in (f['state'], f['state']['pre_state']):
+            state['ippatsu'] = True
+        with self.assertRaises(ScoringError) as error:
+            calculate_fixture(f, self.rules)
+        self.assertEqual(error.exception.code, 'invalid_context')
+
+        win = deepcopy(original['expected']['wins'][0])
+        win['yakus'].insert(0, dict(id='ippatsu', value=1, unit='han'))
+        win['han'] += 1
+        with self.assertRaisesRegex(ScoringError, 'mutually exclusive'):
+            validate_win_declarations(win, self.rules)
+
+    def test_first_draw_cannot_survive_another_seats_committed_kan(self):
+        for name in ('yakuman_tenhou', 'yakuman_chiihou'):
+            with self.subTest(fixture=name):
+                f = deepcopy(self.fixtures[name])
+                f['state']['events'] = []
+                f['state']['pre_state'] = {k: deepcopy(v) for k, v in f['state'].items()
+                                          if k not in {'events', 'pre_state', 'furiten'}}
+                self.assertEqual(calculate_fixture(f, self.rules), f['expected'])
+                for state in (f['state'], f['state']['pre_state']):
+                    state['kan_counts'][(f['input']['actor'] + 1) % 4] = 1
+                f['input']['dora_markers'].append('8m')
+                with self.assertRaises(ScoringError) as error:
+                    calculate_fixture(f, self.rules)
+                self.assertEqual(error.exception.code, 'invalid_context')
+
+    def test_draw_kan_counts_match_every_seats_hand(self):
+        for name in ('noten_1', 'noten_1_with_ankan'):
+            original = self.fixtures[name]
+            self.assertEqual(calculate_fixture(original, self.rules), original['expected'])
+            for seat in range(4):
+                with self.subTest(fixture=name, seat=seat):
+                    f = deepcopy(original)
+                    for state in (f['state'], f['state']['pre_state']):
+                        state['kan_counts'][seat] = 1 - state['kan_counts'][seat]
+                    with self.assertRaises(ScoringError) as error:
+                        calculate_fixture(f, self.rules)
+                    self.assertEqual(error.exception.code, 'invalid_context')
+
+    def test_uncommitted_kan_does_not_cancel_first_turn_or_ippatsu(self):
+        for riichi in (False, True):
+            with self.subTest(riichi=riichi):
+                f = deepcopy(self.fixtures['yakuman_kokushi_ankan_robbery'])
+                for state in (f['state'], f['state']['pre_state']):
+                    state.update(first_turn=not riichi, reach_accepted=riichi, ippatsu=riichi)
+                    if riichi:
+                        state.update(kyotaku=1, scores=[25000, 24000, 25000, 25000])
+                if riichi:
+                    f['input']['ura_dora_markers'] = ['2p']
+                result = calculate_fixture(f, self.rules)
+                self.assertEqual(result['result_type'], 'hora')
+                self.assertEqual(result['wins'][0]['yakus'], f['expected']['wins'][0]['yakus'])
+
     def test_disabled_pao_retains_normal_payment_and_honba(self):
         f = deepcopy(self.fixtures['settlement_pao_partial_ron'])
         f['rule_overrides']['pao'] = {**self.rules['pao'], 'yakus':[]}

@@ -646,6 +646,21 @@ class SessionInvariants(unittest.TestCase):
             self.assertIsNone(receiver.last_event_seq)
             self.assertEqual(receiver.event_seq_floor, 0)
 
+    def test_rinshan_snapshot_cannot_restore_any_seats_ippatsu(self):
+        for number in (409, 410):
+            name = next(k for k in self.vectors if k.startswith(f'V{number}_'))
+            for side in ('positive', 'negative'):
+                with self.subTest(case=name, side=side):
+                    snapshot = deepcopy(self.vectors[name][side])
+                    welcome = self.trace('observer_bootstrap_authorization')['welcome']
+                    welcome['scores'] = snapshot['state']['scores'].copy()
+                    receiver = self.receiver(welcome, initial_snapshot=True)
+                    if side == 'positive':
+                        self.assertEqual(receiver.receive(self.raw(snapshot)), 'applied')
+                        self.assertFalse(any(s['ippatsu'] for s in receiver.game.round['reach_status']))
+                    else:
+                        self.assert_rejected_atomically(receiver, snapshot)
+
     def observer_after_discard_gap(self):
         trace = self.trace('observer_bootstrap_authorization')
         receiver = self.receiver(trace['welcome'], initial_snapshot=True)

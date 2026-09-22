@@ -101,7 +101,8 @@ def validate_win_declarations(win: dict, rules: dict | None = None, *, closed: b
     ids = {item["id"] for item in win["yakus"]}
     for left, right in (("riichi", "double_riichi"), ("iipeikou", "ryanpeikou"),
                         ("honitsu", "chinitsu"), ("chanta", "junchan"),
-                        ("shousuushii", "daisuushii"), ("tenhou", "chiihou")):
+                        ("shousuushii", "daisuushii"), ("tenhou", "chiihou"),
+                        ("ippatsu", "rinshan_kaihou")):
         require(not {left, right} <= ids, "invalid_message", "mutually exclusive yaku declarations")
     for special in ("kokushi_musou", "chuuren_poutou"):
         require(special not in ids or not ids & (YAKUMAN_IDS - {special, "tenhou", "chiihou"}),
@@ -405,9 +406,13 @@ def _context(data: dict[str, Any], state: dict[str, Any], fixed: tuple[Meld, ...
     require(not state["reach_accepted"] or state["kyotaku"]>=1, "invalid_context", "accepted riichi deposit is missing")
     require(not (state["double_riichi"] or state["ippatsu"]) or state["reach_accepted"], "invalid_context", "riichi qualification without accepted riichi")
     require(not state["first_turn"] or (not fixed and not state["reach_accepted"] and not state["rinshan"]), "invalid_context", "first turn qualification contradicts calls/riichi")
+    require(not state["first_turn"] or not any(state["kan_counts"]),
+            "invalid_context", "first turn qualification survives a committed kan")
     if state["first_turn"] and data["win_method"] == "tsumo":
         require(state["wall_remaining"] == 69 - (actor - state["oya"]) % 4, "invalid_context", "first draw wall count differs")
     require(not state["rinshan"] or (actor == target and any(m.kind == "quad" for m in fixed)), "invalid_context", "rinshan without own kan/tsumo")
+    require(not (state["rinshan"] and state["ippatsu"]),
+            "invalid_context", "ippatsu survives the kan preceding a rinshan win")
     require(not state["last_tile"] or (state["wall_remaining"] == 0 and not state["rinshan"] and state["pending_kan"] is None), "invalid_context", "last live tile qualification differs")
     pending = state["pending_kan"]
     if pending:
@@ -678,6 +683,10 @@ def calculate_fixture(fixture: dict[str, Any], base_rules: dict[str, Any]) -> di
         require(data["reason"]=="fanpai","invalid_context","explicit draw fixture must be exhaustive")
         for seat,hand in enumerate(data["hands"]):
             hand_parts(hand,rules,seat)
+        kan_counts = [sum(m["kind"] in {"ankan", "daiminkan", "kakan"} for m in hand["melds"])
+                      for hand in data["hands"]]
+        require(state["kan_counts"] == kan_counts and sum(kan_counts) <= 4,
+                "invalid_context", "draw kan counts differ from the four hands' committed melds")
         physical = [tile for hand in data["hands"] for tile in hand["concealed_tiles"]]
         physical.extend(tile for hand in data["hands"] for meld in hand["melds"] for tile in meld["tiles"])
         inventory(physical,rules)

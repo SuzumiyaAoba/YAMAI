@@ -3,7 +3,7 @@
   "protocol_version": "1.0-draft.1",
   "profile": "riichi-4p",
   "profile_revision": "1.0-draft.1",
-  "profile_hash": "sha256:ba95685e745ba61cd839b90327878bc0a99c451f3a9c5c1893f2495e9738aa07",
+  "profile_hash": "sha256:17f6723191f7670c12d8cd8e3bf8051f74397eef7dd28f7eae1b49ed5c54bc94",
   "registry": [
     "registry/protocol/1.0-draft.1/registry.json",
     "registry/riichi-4p/1.0-draft.1/registry.json"
@@ -2468,6 +2468,18 @@
     {
       "id": "V408_small_dragons_requires_the_remaining_dragon_pair",
       "area": "scoring-public-tiles",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V409_snapshot_rinshan_cancels_all_ippatsu",
+      "area": "snapshot-rinshan-ippatsu",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V410_snapshot_consecutive_kan_cancels_all_ippatsu",
+      "area": "snapshot-rinshan-ippatsu",
       "expect_positive": "valid",
       "expect_negative": "invalid_message"
     }

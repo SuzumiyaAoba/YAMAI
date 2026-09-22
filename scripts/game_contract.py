@@ -69,6 +69,8 @@ def check_snapshot_rinshan(kyoku: dict, rules: dict | None = None) -> None:
     require(not kyoku["haitei"] or kyoku["wall_remaining"] == 0,
             "last-tile flag without an exhausted live wall")
     require(not (kyoku["rinshan"] and kyoku["haitei"]), "rinshan and last-live-tile flags are mutually exclusive")
+    require(not kyoku["rinshan"] or not any(s["ippatsu"] for s in kyoku["reach_status"]),
+            "ippatsu survives the kan preceding the rinshan turn")
     require(not kyoku["rinshan"] or (possible_kans and (rinshan_decision or kyoku["pending_kan"] is not None)),
             "rinshan draw pending without a committed kan or its decision window")
     if rules is not None and kyoku["rinshan"] and rinshan_decision:

@@ -13823,6 +13823,368 @@
         ],
         "kyotaku": 0
       }
+    },
+    {
+      "id": "timing_riichi_rinshan_cancels_ippatsu",
+      "category": "timing",
+      "input": {
+        "hand": {
+          "concealed_tiles": [
+            "2p",
+            "3p",
+            "4p",
+            "4p",
+            "5p",
+            "6p",
+            "7s",
+            "8s",
+            "9s",
+            "5s"
+          ],
+          "melds": [
+            {
+              "kind": "ankan",
+              "tiles": [
+                "1m",
+                "1m",
+                "1m",
+                "1m"
+              ],
+              "open": false
+            }
+          ]
+        },
+        "winning_tile": "5s",
+        "win_method": "tsumo",
+        "actor": 1,
+        "target": 1,
+        "type": "hora",
+        "dora_markers": [
+          "2m",
+          "3m"
+        ],
+        "ura_dora_markers": [
+          "7m",
+          "8m"
+        ]
+      },
+      "state": {
+        "bakaze": "E",
+        "kyoku": 1,
+        "oya": 0,
+        "wall_remaining": 40,
+        "rinshan": true,
+        "reach_accepted": true,
+        "honba": 0,
+        "kyotaku": 1,
+        "scores": [
+          25000,
+          24000,
+          25000,
+          25000
+        ],
+        "double_riichi": false,
+        "ippatsu": false,
+        "first_turn": false,
+        "last_tile": false,
+        "furiten": false,
+        "pending_kan": null,
+        "kan_counts": [
+          0,
+          1,
+          0,
+          0
+        ],
+        "pre_state": {
+          "bakaze": "E",
+          "kyoku": 1,
+          "oya": 0,
+          "wall_remaining": 41,
+          "rinshan": false,
+          "reach_accepted": true,
+          "honba": 0,
+          "kyotaku": 1,
+          "scores": [
+            25000,
+            24000,
+            25000,
+            25000
+          ],
+          "double_riichi": false,
+          "ippatsu": true,
+          "first_turn": false,
+          "last_tile": false,
+          "pending_kan": null,
+          "kan_counts": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        "events": [
+          {
+            "type": "ankan_declared",
+            "actor": 1,
+            "pai": "1m"
+          },
+          {
+            "type": "ankan",
+            "actor": 1,
+            "pai": "1m"
+          },
+          {
+            "type": "tsumo",
+            "actor": 1,
+            "pai": "5s"
+          }
+        ]
+      },
+      "rule_overrides": {},
+      "expected": {
+        "result_type": "hora",
+        "wins": [
+          {
+            "actor": 1,
+            "target": 1,
+            "winning_tile": "5s",
+            "fu": 60,
+            "han": 3,
+            "yakus": [
+              {
+                "id": "menzen_tsumo",
+                "value": 1,
+                "unit": "han"
+              },
+              {
+                "id": "riichi",
+                "value": 1,
+                "unit": "han"
+              },
+              {
+                "id": "rinshan_kaihou",
+                "value": 1,
+                "unit": "han"
+              }
+            ],
+            "bonuses": [],
+            "basic_points": 1920,
+            "hand_points": 7900,
+            "pao": [],
+            "ura_dora_markers": [
+              "7m",
+              "8m"
+            ],
+            "payments": [
+              {
+                "from": 0,
+                "to": 1,
+                "points": 3900
+              },
+              {
+                "from": 2,
+                "to": 1,
+                "points": 2000
+              },
+              {
+                "from": 3,
+                "to": 1,
+                "points": 2000
+              }
+            ],
+            "kyotaku_points": 1000,
+            "deltas": [
+              -3900,
+              8900,
+              -2000,
+              -2000
+            ]
+          }
+        ],
+        "deltas": [
+          -3900,
+          8900,
+          -2000,
+          -2000
+        ],
+        "scores": [
+          21100,
+          32900,
+          23000,
+          23000
+        ],
+        "kyotaku": 0
+      }
+    },
+    {
+      "id": "noten_1_with_ankan",
+      "category": "noten",
+      "input": {
+        "type": "ryukyoku",
+        "reason": "fanpai",
+        "hands": [
+          {
+            "concealed_tiles": [
+              "1m",
+              "2m",
+              "3m",
+              "4m",
+              "5m",
+              "6m",
+              "7m",
+              "8m",
+              "9m",
+              "2p",
+              "3p",
+              "4p",
+              "5s"
+            ],
+            "melds": []
+          },
+          {
+            "concealed_tiles": [
+              "1p",
+              "2p",
+              "3p",
+              "4p",
+              "5p",
+              "6p",
+              "7p",
+              "8p",
+              "C",
+              "2s",
+              "3s",
+              "4s",
+              "5m"
+            ],
+            "melds": []
+          },
+          {
+            "concealed_tiles": [
+              "1s",
+              "2s",
+              "3s",
+              "4s",
+              "5s",
+              "6s",
+              "7s",
+              "8s",
+              "P",
+              "2m",
+              "3m",
+              "4m",
+              "5p"
+            ],
+            "melds": []
+          },
+          {
+            "concealed_tiles": [
+              "S",
+              "S",
+              "S",
+              "W",
+              "W",
+              "W",
+              "N",
+              "N",
+              "9m",
+              "P"
+            ],
+            "melds": [
+              {
+                "kind": "ankan",
+                "open": false,
+                "tiles": [
+                  "E",
+                  "E",
+                  "E",
+                  "E"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "state": {
+        "bakaze": "E",
+        "kyoku": 1,
+        "oya": 0,
+        "wall_remaining": 0,
+        "rinshan": false,
+        "reach_accepted": false,
+        "honba": 0,
+        "kyotaku": 0,
+        "scores": [
+          25000,
+          25000,
+          25000,
+          25000
+        ],
+        "double_riichi": false,
+        "ippatsu": false,
+        "first_turn": false,
+        "last_tile": false,
+        "furiten": false,
+        "pending_kan": null,
+        "kan_counts": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "pre_state": {
+          "bakaze": "E",
+          "kyoku": 1,
+          "oya": 0,
+          "wall_remaining": 0,
+          "rinshan": false,
+          "reach_accepted": false,
+          "honba": 0,
+          "kyotaku": 0,
+          "scores": [
+            25000,
+            25000,
+            25000,
+            25000
+          ],
+          "double_riichi": false,
+          "ippatsu": false,
+          "first_turn": false,
+          "last_tile": false,
+          "pending_kan": null,
+          "kan_counts": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "events": []
+      },
+      "rule_overrides": {},
+      "expected": {
+        "result_type": "ryukyoku",
+        "reason": "fanpai",
+        "tenpai": [
+          true,
+          false,
+          false,
+          false
+        ],
+        "deltas": [
+          3000,
+          -1000,
+          -1000,
+          -1000
+        ],
+        "scores": [
+          28000,
+          24000,
+          24000,
+          24000
+        ],
+        "kyotaku": 0
+      }
     }
   ],
   "negative_fixtures": [
@@ -18418,6 +18780,576 @@
       },
       "rule_overrides": {},
       "expected_error": "invalid_hand"
+    },
+    {
+      "id": "N37_ippatsu_after_rinshan_kan",
+      "input": {
+        "hand": {
+          "concealed_tiles": [
+            "2p",
+            "3p",
+            "4p",
+            "4p",
+            "5p",
+            "6p",
+            "7s",
+            "8s",
+            "9s",
+            "5s"
+          ],
+          "melds": [
+            {
+              "kind": "ankan",
+              "tiles": [
+                "1m",
+                "1m",
+                "1m",
+                "1m"
+              ],
+              "open": false
+            }
+          ]
+        },
+        "winning_tile": "5s",
+        "win_method": "tsumo",
+        "actor": 1,
+        "target": 1,
+        "type": "hora",
+        "dora_markers": [
+          "2m",
+          "3m"
+        ],
+        "ura_dora_markers": [
+          "7m",
+          "8m"
+        ]
+      },
+      "state": {
+        "bakaze": "E",
+        "kyoku": 1,
+        "oya": 0,
+        "wall_remaining": 40,
+        "rinshan": true,
+        "reach_accepted": true,
+        "honba": 0,
+        "kyotaku": 1,
+        "scores": [
+          25000,
+          24000,
+          25000,
+          25000
+        ],
+        "double_riichi": false,
+        "ippatsu": true,
+        "first_turn": false,
+        "last_tile": false,
+        "furiten": false,
+        "pending_kan": null,
+        "kan_counts": [
+          0,
+          1,
+          0,
+          0
+        ],
+        "pre_state": {
+          "bakaze": "E",
+          "kyoku": 1,
+          "oya": 0,
+          "wall_remaining": 40,
+          "rinshan": true,
+          "reach_accepted": true,
+          "honba": 0,
+          "kyotaku": 1,
+          "scores": [
+            25000,
+            24000,
+            25000,
+            25000
+          ],
+          "double_riichi": false,
+          "ippatsu": true,
+          "first_turn": false,
+          "last_tile": false,
+          "pending_kan": null,
+          "kan_counts": [
+            0,
+            1,
+            0,
+            0
+          ]
+        },
+        "events": []
+      },
+      "rule_overrides": {},
+      "expected_error": "invalid_context"
+    },
+    {
+      "id": "N38_yakuman_tenhou_after_other_seat_kan",
+      "input": {
+        "hand": {
+          "concealed_tiles": [
+            "1m",
+            "2m",
+            "3m",
+            "4m",
+            "5m",
+            "6m",
+            "7p",
+            "8p",
+            "9p",
+            "2s",
+            "3s",
+            "4s",
+            "5m"
+          ],
+          "melds": []
+        },
+        "winning_tile": "5m",
+        "win_method": "tsumo",
+        "actor": 0,
+        "target": 0,
+        "type": "hora",
+        "dora_markers": [
+          "6m",
+          "8m"
+        ],
+        "ura_dora_markers": []
+      },
+      "state": {
+        "bakaze": "E",
+        "kyoku": 1,
+        "oya": 0,
+        "wall_remaining": 69,
+        "rinshan": false,
+        "reach_accepted": false,
+        "honba": 0,
+        "kyotaku": 0,
+        "scores": [
+          25000,
+          25000,
+          25000,
+          25000
+        ],
+        "double_riichi": false,
+        "ippatsu": false,
+        "first_turn": true,
+        "last_tile": false,
+        "furiten": false,
+        "pending_kan": null,
+        "kan_counts": [
+          0,
+          1,
+          0,
+          0
+        ],
+        "pre_state": {
+          "bakaze": "E",
+          "kyoku": 1,
+          "oya": 0,
+          "wall_remaining": 69,
+          "rinshan": false,
+          "reach_accepted": false,
+          "honba": 0,
+          "kyotaku": 0,
+          "scores": [
+            25000,
+            25000,
+            25000,
+            25000
+          ],
+          "double_riichi": false,
+          "ippatsu": false,
+          "first_turn": true,
+          "last_tile": false,
+          "pending_kan": null,
+          "kan_counts": [
+            0,
+            1,
+            0,
+            0
+          ]
+        },
+        "events": []
+      },
+      "rule_overrides": {},
+      "expected_error": "invalid_context"
+    },
+    {
+      "id": "N39_yakuman_chiihou_after_other_seat_kan",
+      "input": {
+        "hand": {
+          "concealed_tiles": [
+            "1m",
+            "2m",
+            "3m",
+            "4m",
+            "5m",
+            "6m",
+            "7p",
+            "8p",
+            "9p",
+            "2s",
+            "3s",
+            "4s",
+            "5m"
+          ],
+          "melds": []
+        },
+        "winning_tile": "5m",
+        "win_method": "tsumo",
+        "actor": 1,
+        "target": 1,
+        "type": "hora",
+        "dora_markers": [
+          "6m",
+          "8m"
+        ],
+        "ura_dora_markers": []
+      },
+      "state": {
+        "bakaze": "E",
+        "kyoku": 1,
+        "oya": 0,
+        "wall_remaining": 68,
+        "rinshan": false,
+        "reach_accepted": false,
+        "honba": 0,
+        "kyotaku": 0,
+        "scores": [
+          25000,
+          25000,
+          25000,
+          25000
+        ],
+        "double_riichi": false,
+        "ippatsu": false,
+        "first_turn": true,
+        "last_tile": false,
+        "furiten": false,
+        "pending_kan": null,
+        "kan_counts": [
+          0,
+          0,
+          1,
+          0
+        ],
+        "pre_state": {
+          "bakaze": "E",
+          "kyoku": 1,
+          "oya": 0,
+          "wall_remaining": 68,
+          "rinshan": false,
+          "reach_accepted": false,
+          "honba": 0,
+          "kyotaku": 0,
+          "scores": [
+            25000,
+            25000,
+            25000,
+            25000
+          ],
+          "double_riichi": false,
+          "ippatsu": false,
+          "first_turn": true,
+          "last_tile": false,
+          "pending_kan": null,
+          "kan_counts": [
+            0,
+            0,
+            1,
+            0
+          ]
+        },
+        "events": []
+      },
+      "rule_overrides": {},
+      "expected_error": "invalid_context"
+    },
+    {
+      "id": "N40_draw_omits_committed_kan",
+      "input": {
+        "type": "ryukyoku",
+        "reason": "fanpai",
+        "hands": [
+          {
+            "concealed_tiles": [
+              "1m",
+              "2m",
+              "3m",
+              "4m",
+              "5m",
+              "6m",
+              "7m",
+              "8m",
+              "9m",
+              "2p",
+              "3p",
+              "4p",
+              "5s"
+            ],
+            "melds": []
+          },
+          {
+            "concealed_tiles": [
+              "1p",
+              "2p",
+              "3p",
+              "4p",
+              "5p",
+              "6p",
+              "7p",
+              "8p",
+              "C",
+              "2s",
+              "3s",
+              "4s",
+              "5m"
+            ],
+            "melds": []
+          },
+          {
+            "concealed_tiles": [
+              "1s",
+              "2s",
+              "3s",
+              "4s",
+              "5s",
+              "6s",
+              "7s",
+              "8s",
+              "P",
+              "2m",
+              "3m",
+              "4m",
+              "5p"
+            ],
+            "melds": []
+          },
+          {
+            "concealed_tiles": [
+              "S",
+              "S",
+              "S",
+              "W",
+              "W",
+              "W",
+              "N",
+              "N",
+              "9m",
+              "P"
+            ],
+            "melds": [
+              {
+                "kind": "ankan",
+                "open": false,
+                "tiles": [
+                  "E",
+                  "E",
+                  "E",
+                  "E"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "state": {
+        "bakaze": "E",
+        "kyoku": 1,
+        "oya": 0,
+        "wall_remaining": 0,
+        "rinshan": false,
+        "reach_accepted": false,
+        "honba": 0,
+        "kyotaku": 0,
+        "scores": [
+          25000,
+          25000,
+          25000,
+          25000
+        ],
+        "double_riichi": false,
+        "ippatsu": false,
+        "first_turn": false,
+        "last_tile": false,
+        "furiten": false,
+        "pending_kan": null,
+        "kan_counts": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "pre_state": {
+          "bakaze": "E",
+          "kyoku": 1,
+          "oya": 0,
+          "wall_remaining": 0,
+          "rinshan": false,
+          "reach_accepted": false,
+          "honba": 0,
+          "kyotaku": 0,
+          "scores": [
+            25000,
+            25000,
+            25000,
+            25000
+          ],
+          "double_riichi": false,
+          "ippatsu": false,
+          "first_turn": false,
+          "last_tile": false,
+          "pending_kan": null,
+          "kan_counts": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        "events": []
+      },
+      "rule_overrides": {},
+      "expected_error": "invalid_context"
+    },
+    {
+      "id": "N41_draw_invents_committed_kan",
+      "input": {
+        "type": "ryukyoku",
+        "reason": "fanpai",
+        "hands": [
+          {
+            "concealed_tiles": [
+              "1m",
+              "2m",
+              "3m",
+              "4m",
+              "5m",
+              "6m",
+              "7m",
+              "8m",
+              "9m",
+              "2p",
+              "3p",
+              "4p",
+              "5s"
+            ],
+            "melds": []
+          },
+          {
+            "concealed_tiles": [
+              "1p",
+              "2p",
+              "3p",
+              "4p",
+              "5p",
+              "6p",
+              "7p",
+              "8p",
+              "C",
+              "2s",
+              "3s",
+              "4s",
+              "5m"
+            ],
+            "melds": []
+          },
+          {
+            "concealed_tiles": [
+              "1s",
+              "2s",
+              "3s",
+              "4s",
+              "5s",
+              "6s",
+              "7s",
+              "8s",
+              "P",
+              "2m",
+              "3m",
+              "4m",
+              "5p"
+            ],
+            "melds": []
+          },
+          {
+            "concealed_tiles": [
+              "E",
+              "E",
+              "E",
+              "S",
+              "S",
+              "S",
+              "W",
+              "W",
+              "W",
+              "N",
+              "N",
+              "9m",
+              "P"
+            ],
+            "melds": []
+          }
+        ]
+      },
+      "state": {
+        "bakaze": "E",
+        "kyoku": 1,
+        "oya": 0,
+        "wall_remaining": 0,
+        "rinshan": false,
+        "reach_accepted": false,
+        "honba": 0,
+        "kyotaku": 0,
+        "scores": [
+          25000,
+          25000,
+          25000,
+          25000
+        ],
+        "double_riichi": false,
+        "ippatsu": false,
+        "first_turn": false,
+        "last_tile": false,
+        "furiten": false,
+        "pending_kan": null,
+        "kan_counts": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "pre_state": {
+          "bakaze": "E",
+          "kyoku": 1,
+          "oya": 0,
+          "wall_remaining": 0,
+          "rinshan": false,
+          "reach_accepted": false,
+          "honba": 0,
+          "kyotaku": 0,
+          "scores": [
+            25000,
+            25000,
+            25000,
+            25000
+          ],
+          "double_riichi": false,
+          "ippatsu": false,
+          "first_turn": false,
+          "last_tile": false,
+          "pending_kan": null,
+          "kan_counts": [
+            1,
+            0,
+            0,
+            0
+          ]
+        },
+        "events": []
+      },
+      "rule_overrides": {},
+      "expected_error": "invalid_context"
     }
   ]
 }

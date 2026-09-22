@@ -327,7 +327,7 @@ hostは同一 `seq` の再送、resume replayおよびrange replayに、ledger e
         "1.0-draft.1"
       ],
       "hashes": {
-        "1.0-draft.1": "sha256:ba95685e745ba61cd839b90327878bc0a99c451f3a9c5c1893f2495e9738aa07"
+        "1.0-draft.1": "sha256:17f6723191f7670c12d8cd8e3bf8051f74397eef7dd28f7eae1b49ed5c54bc94"
       },
       "protocol_versions": {
         "1.0-draft.1": [
@@ -362,7 +362,7 @@ hostは同一 `seq` の再送、resume replayおよびrange replayに、ledger e
   "seat": 0,
   "profile": "riichi-4p",
   "profile_revision": "1.0-draft.1",
-  "profile_hash": "sha256:ba95685e745ba61cd839b90327878bc0a99c451f3a9c5c1893f2495e9738aa07",
+  "profile_hash": "sha256:17f6723191f7670c12d8cd8e3bf8051f74397eef7dd28f7eae1b49ed5c54bc94",
   "client": {
     "name": "ExampleAI",
     "version": "2.3.0"
@@ -406,7 +406,7 @@ profile_hashは、vector manifestのprofile_hash_inputsに列挙したJSONをpro
   "view": "seat",
   "profile": "riichi-4p",
   "profile_revision": "1.0-draft.1",
-  "profile_hash": "sha256:ba95685e745ba61cd839b90327878bc0a99c451f3a9c5c1893f2495e9738aa07",
+  "profile_hash": "sha256:17f6723191f7670c12d8cd8e3bf8051f74397eef7dd28f7eae1b49ed5c54bc94",
   "client": {
     "name": "ExampleAI",
     "version": "2.3.0"
@@ -452,7 +452,7 @@ profile_hashは、vector manifestのprofile_hash_inputsに列挙したJSONをpro
   "view": "seat",
   "profile": "riichi-4p",
   "profile_revision": "1.0-draft.1",
-  "profile_hash": "sha256:ba95685e745ba61cd839b90327878bc0a99c451f3a9c5c1893f2495e9738aa07",
+  "profile_hash": "sha256:17f6723191f7670c12d8cd8e3bf8051f74397eef7dd28f7eae1b49ed5c54bc94",
   "players": [
     {
       "seat": 0,
@@ -1080,6 +1080,8 @@ chi/ponの複合打牌では `tsumogiri:false` とする。喰い替えは、鳴
 
 `haitei` はlive wall最後の牌の自摸和了だけで成立し、`rinshan_kaihou` と併記してはならない。`houtei` は最終打牌へのロンだけで成立し、槍槓や嶺上和了の結果へ付与してはならない。複数の通常役が同じ時刻述語を満たす場合は、表の排他規則以外は併記する。
 
+嶺上手番の直前には必ず槓成立があるため、嶺上手番中は全seatの一発資格がfalseであり、`ippatsu` と `rinshan_kaihou` は複合しない（MUST NOT）。第一巡資格も自分だけでなく全seatの槓成立によって失効する。宣言だけで未成立の槓は、これらの資格を失効させない。
+
 ##### 7.6.2.7 聴牌
 
 通常流局の `tenpai` は、当該seatの和了前局面へ合法な牌種を1枚追加したとき、第7.6.2.1節のいずれかの合法な和了形を少なくとも1個得られることをいう（MUST）。和了に必要な役の有無、フリテン、牌山に残る実枚数は `tenpai` の真偽を変更しない。したがって、役なし形でも形が完成するなら聴牌である。赤五は牌種として通常五と同じ候補を生成し、物理牌が5枚になる候補は除外する。
@@ -1335,6 +1337,10 @@ state.pre_stateは採点に関連するイベント投影の前の完全な状�
 この投影から、live wall、槓数、pending kan、リーチ成立、宣言時の第一巡資格、一発、最終牌、供託控除とscoresを更新し、stateの値と一致させる（MUST）。非空の和了用投影は、和了牌の原因となった自摸・打牌・槓宣言で終わり、actor/target/paiも和了入力と一致しなければならない。first_turnの自摸は親からの順にlive wall残69、68、67、66の第一自摸を表す。海底/河底の投影は残1から0への通常自摸を含む。
 
 furitenは行動選択・全捨て牌履歴・現在の待ち集合も必要とするため、当該event投影では更新せず、最終stateの明示的な入力とする。pre_stateには含めない。牌の所有・合法手・フリテン状態遷移そのものはYAMAI 仕様書の状態vectorで検査する。状態を変える投影が不要な牌姿・配分fixtureはeventsを空配列とし、必要な事実をpre_stateとstateへ同じ値で固定できる。これは完全なwireログの省略値を推測する許可ではない。
+
+投影が空でも、明示した局面値同士の矛盾は許可しない（MUST NOT）。和了入力の `first_turn:true` は全seatの `kan_counts` が0であること、`rinshan:true` は `ippatsu:false` であることを必要とする。前状態と最終状態へ同じ矛盾値を書いて一致させても `invalid_context` とする。通常の第一自摸、リーチ後の合法な暗槓による一発なしの嶺上和了、および未成立の槓宣言への槍槓を混同しない。
+
+通常流局の採点入力でも、4seatそれぞれの `kan_counts` はそのseatの完全な `hands[].melds` に含む暗槓・大明槓・加槓の個数と一致し、卓全体で4以下でなければならない（MUST）。聴牌人数とノーテン精算が偶然一致しても、この不一致は `invalid_context` とする。
 
 expectedは全役、bonus、符、飜、基本点、hand_points、pao、裏表示牌、seat間payments、供託受取kyotaku_points、deltas、確定scores、供託残本数を記録する。複数ロンは全和了入力の物理牌と共有和了牌・表示牌が同じ136枚の集合へ収まることも検証する（MUST）。通常流局は4人の手牌からtenpaiとノーテン罰符を計算する。penaltyはruleから配分を計算する。入力時・出力時の `sum(scores) + kyotaku × riichi_stick_value` はゲーム開始時の `4 × starting_points` と一致する。
 
@@ -2261,6 +2267,8 @@ dora_markersは公開済み表示牌1～5枚、pending_doraはnullまたは `{ka
 
 加槓は元のpon位置を保持するため、melds末尾を常に最新の槓と解釈してはならない（MUST NOT）。snapshot単体では、末尾のankan/daiminkanまたは列内のkakanが最新の成立槓になり得る。rinshanとpending_doraはこの候補およびrules.kan_dora_timingと矛盾してはならず、pending_doraがある場合はrinshan=trueかつ対応kan_typeの候補が必要である（MUST）。rinshanの自摸判断中にpending_doraがなければ、before_rinshanの候補を少なくとも1個持つ。履歴を持つホストは実際の直前の成立槓を用いて検証する。rinshanとhaiteiは同時にtrueにしてはならない（MUST NOT）。
 
+`rinshan:true` のsnapshotでは、その直前の槓成立が全seatの一発資格を消しているため、全 `reach_status[].ippatsu` をfalseとする（MUST）。嶺上牌から連続槓を宣言して反応待ちになった場合も、前の成立槓による失効を保持する。最初の槓宣言が未成立で `rinshan:false` の場合は、この規則だけで一発資格を消してはならない（MUST NOT）。
+
 turnはactor、phase、last_event_seq、last_eventを持つ。last_eventは最後に確定したevent payloadの全体であり、viewの秘匿を適用する。last_event_seqは置換範囲内の正のseqである。ただし途中観戦で初期snapshotから開始し、当該sessionのledgerにまだeventが存在しない間はnullとし、last_eventには参加時点の最新game eventを投影して入れる（MUST）。初期snapshotのseq=1/replaces_through_seq=0だけでなく、最初のeventまでに診断・回復snapshotを記録した場合もnullを保持する。snapshot自身や他sessionの番号をeventの番号として代用しない（MUST NOT）。play/replayではnullを使わない。
 
 欠落範囲を置換するsnapshotでも、last_event_seqを既に観測したsession内eventの番号より小さくしたりnullへ戻したりしてはならない（MUST NOT）。参照先のwireを保持している場合はkindがeventであり、そのpayloadがlast_eventと同値であることを検査する。同じ番号の原因eventを以前のsnapshotから復元済みの場合もpayloadを変更しない。途中観戦でnullを維持する後続snapshotは、新しいeventを含まないため、欠落があっても既知の公開局面を変更してはならない。選択固定に伴うphaseの進行だけは本節の連続prefixと同じ規則で許可する。復元したeventはpending requestのcaused_by_seqの権威として使用できるが、新しいeventとして二重適用しない。
@@ -2374,7 +2382,7 @@ Protocol Version は message Schema と参照先、および交渉入力を検�
 20. 複数ロンの本場・供託配分と責任払いの端数
 21. bankruptcy、連荘、アガリ止め、延長の評価順
 22. play、spectate、replayのseat・request禁止・visibility
-23. `riichi-4p` の全役・符・点数および支払のtest vector
+23. `riichi-4p` の全役・符・点数および支払のtest vector。event投影を省略する採点入力の第一巡・一発・嶺上・槓数、通常流局の完全手牌と槓数の整合
 24. profile revision/hash、required/optional capability、mode/view/target交渉
 25. decision groupの全member、共通deadline、close、優先順位および原子解決
 26. pao決定履歴、責任seat、chombo payments、未解決requestのterminal化
