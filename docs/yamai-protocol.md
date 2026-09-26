@@ -295,13 +295,13 @@ ID以外の交渉用文字列・配列にも、次の閉じた上限を適用す
 
 byte-for-byteの比較対象はUTF-8 JSON payloadであり、JSONLの行末CR/LF、WebSocketのframe header・mask・fragment境界を含まない。payload内の空白、member順、escape表記は比較対象であり、再送でJSONを再直列化して変更してはならない（MUST NOT）。
 
-プレイヤーは**連続して完全に適用した最大seq**を保持し、期待値をその値+1とする（MUST）。第12節の構文・envelope・Schema検査を通過したmessageのうち、期待値より大きいseqを持つものを破棄し、expected_seqとreceived_seqを持つrecoverable sequence_gapを送る。破棄した番号へ適用位置を進めてはならない（MUST NOT）。ホストの同じseqの再送は元のpayloadとbyte-for-byteで同一とし、同一の再送を再適用してはならない。保持している同じseqの内容が異なればfatal sequence_conflictとする。snapshotで置換した未保持の過去範囲は第13.3節に従う。
+プレイヤーは**連続して完全に適用した最大seq**を保持し、期待値をその値+1とする（MUST）。第12節の第1～5層を通過した新しいmessageのうち、期待値より大きいseqを持つものを破棄し、expected_seqとreceived_seqを持つrecoverable sequence_gapを送る。ただし第13.3節で許可されたsnapshotの飛越しは同節に従う。破棄した番号へ適用位置を進めてはならない（MUST NOT）。ホストの同じseqの再送は元のpayloadとbyte-for-byteで同一とし、同一の再送を再適用してはならない。保持している同じseqの内容が異なれば、payload Schemaより先にfatal sequence_conflictとする。snapshotで置換した未保持の過去範囲も第12節の第1～4層を適用する。
 
 `sequence_gap` を受信したホストは、`expected_seq` から送信済みの最新 `seq` までの全messageを元の番号と内容で再送しなければならない（MUST）。一部だけを再送してはならない（MUST NOT）。再送できず `snapshot` capability が有効なら、第13.3節のsnapshotを送信できる（MAY）。いずれも不可能な場合、ホストはfatal `resume_unavailable`でsessionを終了しなければならない（MUST）。
 
 `seq` は「受信できたmessage数」ではなく、hostがこのsessionへcommitしたapplication messageの永続的なledger番号である。hostは送信前に次の不変条件を満たすledger entryを作成し、entryとwire bytesの永続化に成功してからtransportへ渡さなければならない（MUST）。transportへのdelivery確認を待ってseqを割り当てたり、切断を理由に未送信entryを削除したりしてはならない（MUST NOT）。
 
-受信側は `applied_seq` と、検証済みの `wire_bytes` を少なくとも最後の連続prefixについて保持する。`seq == applied_seq + 1` のmessageだけを構文・Schema・状態遷移検証後に適用し、適用成功後に `applied_seq` を進める。`seq <= applied_seq` は同じ `wire_bytes` ならduplicateとして無視できるが、byte-for-byteで異なる場合は `sequence_conflict` としなければならない。`seq > applied_seq + 1` はmessageを一切適用せず、第12節の検査層を通過した場合に限り `sequence_gap(expected_seq=applied_seq+1, received_seq=seq)`を返す。error送信によってapplied prefixを先へ進めてはならない。
+受信側は `applied_seq` と、検証済みの `wire_bytes` を少なくとも最後の連続prefixについて保持する。`seq == applied_seq + 1` のmessageだけを構文・Schema・状態遷移検証後に適用し、適用成功後に `applied_seq` を進める。`seq <= applied_seq` は同じ `wire_bytes` ならduplicateとして無視できるが、byte-for-byteで異なる場合は `sequence_conflict` としなければならない。`seq > applied_seq + 1` はmessageを一切適用せず、第12節の検査層を通過した場合に限り `sequence_gap(expected_seq = applied_seq + 1, received_seq = seq)`を返す。error送信によってapplied prefixを先へ進めてはならない。
 
 hostは同一 `seq` の再送、resume replayおよびrange replayに、ledger entryのwire bytesをそのまま使用しなければならない。JSON objectをparseして再serializeしたもの、別のviewへ再投影したもの、または同じsemantic payloadを異なるmember順で組み立てたものは同一messageとみなさない（MUST NOT）。
 
@@ -345,7 +345,7 @@ hostは同一 `seq` の再送、resume replayおよびrange replayに、ledger e
         "1.0-draft.1"
       ],
       "hashes": {
-        "1.0-draft.1": "sha256:a2e314f5a134a43a3c2539ced8aafa84699e315e78566c3b304d58a393d1bafc"
+        "1.0-draft.1": "sha256:a189dece5cedebfc545a8300970ea375220ec0436a34401d42a4cadf8fb3c27a"
       },
       "protocol_versions": {
         "1.0-draft.1": [
@@ -380,7 +380,7 @@ hostは同一 `seq` の再送、resume replayおよびrange replayに、ledger e
   "seat": 0,
   "profile": "riichi-4p",
   "profile_revision": "1.0-draft.1",
-  "profile_hash": "sha256:a2e314f5a134a43a3c2539ced8aafa84699e315e78566c3b304d58a393d1bafc",
+  "profile_hash": "sha256:a189dece5cedebfc545a8300970ea375220ec0436a34401d42a4cadf8fb3c27a",
   "client": {
     "name": "ExampleAI",
     "version": "2.3.0"
@@ -424,7 +424,7 @@ profile_hashは、vector manifestのprofile_hash_inputsに列挙したJSONをpro
   "view": "seat",
   "profile": "riichi-4p",
   "profile_revision": "1.0-draft.1",
-  "profile_hash": "sha256:a2e314f5a134a43a3c2539ced8aafa84699e315e78566c3b304d58a393d1bafc",
+  "profile_hash": "sha256:a189dece5cedebfc545a8300970ea375220ec0436a34401d42a4cadf8fb3c27a",
   "client": {
     "name": "ExampleAI",
     "version": "2.3.0"
@@ -470,7 +470,7 @@ profile_hashは、vector manifestのprofile_hash_inputsに列挙したJSONをpro
   "view": "seat",
   "profile": "riichi-4p",
   "profile_revision": "1.0-draft.1",
-  "profile_hash": "sha256:a2e314f5a134a43a3c2539ced8aafa84699e315e78566c3b304d58a393d1bafc",
+  "profile_hash": "sha256:a189dece5cedebfc545a8300970ea375220ec0436a34401d42a4cadf8fb3c27a",
   "players": [
     {
       "seat": 0,
@@ -1489,7 +1489,7 @@ groupの `D_G` は全 `D_i` 以上でなければならない（MUST）。時計
 
 hostはaction入力とtimerを一つの順序で処理する。候補を新規選択できるのは、切り捨て前の受信・構文検証・入力登録時刻が個別deadlineより厳密に前の場合だけである。deadlineと同時刻なら常にtimeoutを優先し、arrival_ticketやworkerの順序で逆転させない（MUST）。
 
-groupの `linearization point` は、全memberがSELECTED（応答またはdefault固定）になった時点、または `D_G` のexpiry処理時点に、state-machine lock内で一度だけ記録する。linearization pointまでは候補を外部へ終端ACK（`accepted`/`passed`/`superseded`/`defaulted`/`stale`）として確定してはならず、同groupを再評価してはならない（MUST NOT）。ただし第8.5節のchombo取消しによる `stale` はこの制約の対象外とする。同一gameの次decisionは現decisionの結果event列を記録した後で開始する。異なるsessionのcaused_by_seqを共通の番号として比較してはならない。
+groupの `linearization point` は、全memberがSELECTED（応答またはdefault固定）になった時点、または `D_G` のexpiry処理時点に、state-machine lock内で一度だけ記録する。linearization pointまでは候補を外部へ終端ACK（`accepted`、`passed`、`superseded`、`defaulted`、`stale`）として確定してはならず、同groupを再評価してはならない（MUST NOT）。ただし第8.5節のchombo取消しによる `stale` はこの制約の対象外とする。同一gameの次decisionは現decisionの結果event列を記録した後で開始する。異なるsessionのcaused_by_seqを共通の番号として比較してはならない。
 
 requestの候補を固定する最初の期限内action ingressまたは個別deadlineによるdefault固定時に、`elapsed_ms` を一度だけ確定し、`consumed_ms = min(max(0, elapsed_ms - grace_ms - timeout_ms), prior_time_bank_ms)` をそのseatのbankから控除する。rejectedの不正actionは候補を固定せず、その時点の経過を通知するだけでselectionの時計を確定しない。候補固定後にgroup closeを待つ時間は同じrequestのbankを追加消費しない。ACKの `time_bank_ms` はこの控除後の値であり、group内の他requestとの待ち時間を二重に差し引いてはならない（MUST NOT）。
 
@@ -1855,6 +1855,8 @@ fatalを確定したendpointは以後の入力適用を直ちに停止し、送�
 
 `invalid_message` は、プレイヤーからホストへの `action` が第8.2節の必須member `yamai`、`kind`、`session_id`、`game_id` および既知のrequest_idを正しい型で持ち、`action_id` またはその他のaction固有memberだけがSchema違反である場合に限りrecoverableとする。既知の解決済みrequestへのwell-formedなactionはSchema違反ではなく、第9.2節の冪等性・conflict・後着規則で処理しなければならない（MUST）。それ以外のHost → Player message、交渉message、ID不一致または状態変更messageのSchema違反はfatalとする（MUST）。
 
+Host→Player専用のenvelope memberである `seq` または `original_seq` をplayer actionに付けた場合は、第3層のfatal invalid_messageとする（MUST）。値がnullであっても存在自体を違反とし、既知のrequest_idや終局後のactionを理由にrecoverableまたは無応答の例外へ変えてはならない（MUST NOT）。
+
 一つの受信messageに複数の不備がある場合、各受信endpointは次の検証優先順で最初の一つだけをerror codeへ写像しなければならない（MUST）。交渉messageの選択値は第6.4節の順に検査する。host messageのseq検査はPlayerが行い、seqのないPlayer messageへ適用しない。後段の検証を行って副作用を発生させてはならない（MUST NOT）。
 
 | 優先順 | 検証層 | 失敗時のcode/severity |
@@ -1870,13 +1872,15 @@ fatalを確定したendpointは以後の入力適用を直ちに停止し、送�
 
 第5層のmode制約はseq欠落より先に検査する。spectate/replayへのrequest・ACKは、そのpayloadが単独のSchemaに適合していてもfatal invalid_messageとし、未来seqを理由にsequence_gapへ読み替えてはならない（MUST NOT）。保持済みseqの同一byte再送・内容衝突と置換済み範囲の扱いは第4層を先に適用する。
 
+第11節のview投影も第5層で検査する。start_kyoku.handsのtiles/countとtsumo.paiの公開・非公開は、既に交渉したmode/view/seatから判定できるため、未来seqでも不一致はfatal invalid_messageとする（MUST）。手番や牌の保存など欠落中のeventに依存する状態検査は第7層に残し、未来の局面を現在状態へ仮適用してはならない（MUST NOT）。
+
 非対応のWebSocket binary messageは `unsupported_frame`、JSONLの先頭byteや改行境界の違反は `invalid_frame` とする。WebSocketの長さ0のtext messageはframeとして有効だがJSON textではないため、`invalid_json` とする。空白だけのtext messageも同じである。frame検査を通過したpayloadの不正UTF-8またはBOMは `invalid_json` とする。ただしWebSocket層の不正UTF-8は第4.3節の接続失敗処理を優先する。例えばBOMで始まるJSONL行は先頭byteが `{` ではないため、第1層で `invalid_frame` となる。
 
 action固有memberのSchema違反には上記の限定的なrecoverable `invalid_message` を適用する。構文・Schema・envelopeが正しく、第8層だけで不備を検出したplayer `action` は第8.5・9.2節の `invalid_action` または `request_conflict` とする。未知requestへのactionも第8.5節に従い、推測でrequestを補わない。それ以外は上表のcode/severityに従い、session/game ID、directionまたは必須memberを推測で補ってはならない。hostは同一受信messageに対してrecoverable errorを二つ以上返してはならず、errorを返しただけで元requestを終端化してはならない（MUST NOT）。
 
 `message` は1～4,096文字の診断専用文字列とし、プログラム分岐には `code` を使用しなければならない（MUST）。文字数は第5節と同じ方法で数える。秘密情報、手牌、token または stack trace を `message` に含めてはならない（MUST NOT）。
 
-交渉前のerrorはfatalだけを許可し、request/actionやseqの競合を報告しない。交渉後のinvalid_action/request_conflict/resume_unavailableはHost→Player、sequence_gap/sequence_conflict/unsupported_rulesはPlayer→Hostとする。invalid_frame、invalid_json、unsupported_frame、invalid_message、resource_limit、internal_errorは状況に従ってどちらも送れる（MUST）。方向別のSchemaで検査し、Playerから送るinvalid_messageは常にfatalとする。未知のerror codeはinvalid_messageとして拒否する。
+交渉前のerrorはfatalだけを許可し、request/actionやseqの競合を報告しない。交渉後の`invalid_action`、`request_conflict`、`resume_unavailable`はHost→Player、`sequence_gap`、`sequence_conflict`、`unsupported_rules`はPlayer→Hostとする。invalid_frame、invalid_json、unsupported_frame、invalid_message、resource_limit、internal_errorは状況に従ってどちらも送れる（MUST）。方向別のSchemaで検査し、Playerから送るinvalid_messageは常にfatalとする。未知のerror codeはinvalid_messageとして拒否する。
 
 sequence_gapには正のexpected_seqと、それより大きいreceived_seqを必須とする。request_conflictにはrequest_id/action_idを必須とし、終端状態を既に確定している場合だけoriginal_statusを付ける。その他のerrorへこれら専用のmemberを流用してはならない（MUST NOT）。
 
@@ -2290,7 +2294,7 @@ meldsはseat別の成立済みchi、pon、daiminkan、ankan、kakanだけを持�
 
 この対応は出現回数も含む一対一対応である。`(捨てたseat, called_by, pai)` の河要素の多重集合と、暗槓を除く全副露の `(target, actor, pai)` の多重集合が一致しなければならない（MUST）。赤五と通常五を区別し、1個の河要素を複数の副露へ対応付けたり、1個の副露へ複数の河要素を対応付けたりしてはならない（MUST NOT）。同じ表記の別々の捨て牌が複数回チーされる合法な場合は、同じ組がその回数だけ両側へ現れる。
 
-dora_markersは公開済み表示牌1～5枚、pending_doraはnullまたは `{kan_type,timing:"after_rinshan_discard"}` とする。後者は成立済み槓の表示牌を嶺上手番の選択後まで延期していることを表し、未公開牌そのものは含めない。paoは必須の配列で、各要素が `{actor,yaku_id,liable_seat}` を持ち、同じ(actor,yaku_id)を重複させない。公開済み副露履歴から導かれる全ての責任対応を、重複も欠落もなく保持する（MUST）。
+dora_markersは公開済み表示牌1～5枚、pending_doraはnullまたは `{kan_type, timing: "after_rinshan_discard"}` とする。後者は成立済み槓の表示牌を嶺上手番の選択後まで延期していることを表し、未公開牌そのものは含めない。paoは必須の配列で、各要素が `{actor,yaku_id,liable_seat}` を持ち、同じ(actor,yaku_id)を重複させない。公開済み副露履歴から導かれる全ての責任対応を、重複も欠落もなく保持する（MUST）。
 
 加槓は元のpon位置を保持するため、melds末尾を常に最新の槓と解釈してはならない（MUST NOT）。snapshot単体では、末尾のankan/daiminkanまたは列内のkakanが最新の成立槓になり得る。rinshanとpending_doraはこの候補およびrules.kan_dora_timingと矛盾してはならず、pending_doraがある場合はrinshan=trueかつ対応kan_typeの候補が必要である（MUST）。rinshanの自摸判断中にpending_doraがなければ、before_rinshanの候補を少なくとも1個持つ。履歴を持つホストは実際の直前の成立槓を用いて検証する。rinshanとhaiteiは同時にtrueにしてはならない（MUST NOT）。
 
@@ -2445,6 +2449,8 @@ YAMAI 自体は暗号化または peer authentication を提供しない。信�
 
 resume tokenはbearer credentialとして扱わなければならない（MUST）。ホストはtokenを平文で永続保存せず、one-way hashまたは同等の漏洩耐性を持つ形式で検証すべきである（SHOULD）。tokenを使用する再接続は、信頼境界を越える接続では上記のauthenticated confidential transport上でのみ許可する（MUST）。信頼境界内とみなした局所接続ではこの要件を適用しない。
 
+局所接続を信頼境界内とする判断は、ホストの設定とOS/transportから得た接続情報に基づく（MUST）。joinの自己申告、表示名、roomまたは拡張memberだけを根拠としてこの例外を適用してはならない（MUST NOT）。例外を適用する場合も、tokenの有効期間、一回使用、seat固定と第18.6節の認可要件を省略しない。認証済みの秘匿経路も信頼済みの局所境界も確認できない再開は、tokenを消費せずresume_unavailableで拒否する。
+
 ### 18.4 完全性と再送
 
 TLS を使用しない transport は、message の改ざんと session hijacking に脆弱である。`session_id`、`game_id` および `request_id` は認証 token ではない。これらを possession proof として使用してはならない（MUST NOT）。
@@ -2548,7 +2554,7 @@ stateDiagram-v2
   SESSION --> TRANSPORT_CLOSED: fatal error
 ```
 
-transport stateとsession stateは独立である。`SESSION_IDLE` では `hello`、`join`、`welcome` および交渉用 `error` だけを送信できる。`SESSION_ACTIVE` では第3節のgame-scoped messageを送信できる。図の `GROUP_OPEN` と `GROUP_CLOSED` は複数応答を待つdecision groupにだけ適用し、単独decisionの未解決requestはgroup stateを作らずrequest単独のlifecycleで管理する。decision groupでは全memberの選択固定または共通deadlineで `GROUP_CLOSED` へ遷移し、未選択memberへの既定選択、優先順位評価、全終端ACKの記録、結果event列の記録をこの順に一度だけ行う。`end_game` はsessionを `SESSION_ENDED` にするが、transportを閉じる必要はない。ホストは同じtransportで新しい `hello` を送信して次sessionを開始するか、transportを正常終了できる（MAY）。`SESSION_ENDED` のsessionは、第13.2節に従い新しいtransportでresumeして欠落した `end_game` や保留通知を届けた後、再び `SESSION_ENDED` へ戻る。本文の `SESSION_IDLE`/`SESSION_ACTIVE`/`SESSION_ENDED` は図の `IDLE`/`ACTIVE`/`ENDED` を指し、第3.1節のcanonical名では `IDLE` は `NEGOTIATING`、`TRANSPORT_CLOSED` は `FATAL_CLOSED` に対応する。
+transport stateとsession stateは独立である。`SESSION_IDLE` では `hello`、`join`、`welcome` および交渉用 `error` だけを送信できる。`SESSION_ACTIVE` では第3節のgame-scoped messageを送信できる。図の `GROUP_OPEN` と `GROUP_CLOSED` は複数応答を待つdecision groupにだけ適用し、単独decisionの未解決requestはgroup stateを作らずrequest単独のlifecycleで管理する。decision groupでは全memberの選択固定または共通deadlineで `GROUP_CLOSED` へ遷移し、未選択memberへの既定選択、優先順位評価、全終端ACKの記録、結果event列の記録をこの順に一度だけ行う。`end_game` はsessionを `SESSION_ENDED` にするが、transportを閉じる必要はない。ホストは同じtransportで新しい `hello` を送信して次sessionを開始するか、transportを正常終了できる（MAY）。`SESSION_ENDED` のsessionは、第13.2節に従い新しいtransportでresumeして欠落した `end_game` や保留通知を届けた後、再び `SESSION_ENDED` へ戻る。本文の `SESSION_IDLE`、`SESSION_ACTIVE`、`SESSION_ENDED` は図の `IDLE`/`ACTIVE`/`ENDED` を指し、第3.1節のcanonical名では `IDLE` は `NEGOTIATING`、`TRANSPORT_CLOSED` は `FATAL_CLOSED` に対応する。
 
 canonical game phaseは次の局進行を使用する。
 

@@ -90,7 +90,8 @@ def negotiate(hello: dict, join: dict, welcome: dict, context: dict,
     resumed = "resume" in join
     if resumed:
         require("resume" in enabled and join["mode"] == "play", "resume_unavailable", "resume is not enabled")
-        require(context.get("secure_transport", False), "resume_unavailable", "resume requires authenticated confidential transport")
+        require(context.get("secure_transport") is True or context.get("trusted_local_transport") is True,
+                "resume_unavailable", "resume requires a protected transport or a trusted local boundary")
         previous = context.get("resume_state")
         require(isinstance(previous, dict), "resume_unavailable", "session is not retained")
         require(not previous.get("fatal", False), "resume_unavailable", "fatal session cannot resume")
@@ -382,6 +383,9 @@ class Receiver:
         mode = self.welcome["mode"]
         require(mode == "play" or kind not in {"request", "ack"}, "invalid_message",
                 "observer received a request or ACK")
+        if kind == "event":
+            self.validate("visible-event", {"event": message["event"], "mode": mode,
+                                            "view": self.welcome["view"], "seat": self.welcome["seat"]})
         if kind == "snapshot":
             require("snapshot" in self.welcome["capabilities"], "invalid_message", "snapshot capability is not enabled")
             contiguous = seq == self.applied + 1
@@ -529,7 +533,6 @@ class Receiver:
                     "invalid_message", "message interrupts acknowledged action effects")
             if kind == "event":
                 event = message["event"]
-                self.validate("visible-event", {"event":event,"mode":mode,"view":self.welcome["view"],"seat":self.welcome["seat"]})
                 require(not self.ended, "invalid_message", "game event after end_game")
                 if mode == "replay":
                     require(type(message.get("original_seq")) is int and message["original_seq"] > self.original_seq, "invalid_message", "original_seq is not increasing")
@@ -662,7 +665,9 @@ def classify_player_input(message: dict, context: dict, validate: Callable[[str,
                 except SessionError:
                     break
     identity = context["identity"]
-    if not isinstance(message, dict) or message.get("kind") != "action" or not all(message.get(key) == value for key, value in identity.items()):
+    if (not isinstance(message, dict) or message.get("kind") != "action"
+            or "seq" in message or "original_seq" in message
+            or not all(message.get(key) == value for key, value in identity.items())):
         return {"code": "invalid_message", "severity": "fatal"}
     known = message.get("request_id") in context["known_request_ids"] if isinstance(message.get("request_id"), str) else False
     try:

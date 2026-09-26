@@ -3,7 +3,7 @@
   "protocol_version": "1.0-draft.1",
   "profile": "riichi-4p",
   "profile_revision": "1.0-draft.1",
-  "profile_hash": "sha256:a2e314f5a134a43a3c2539ced8aafa84699e315e78566c3b304d58a393d1bafc",
+  "profile_hash": "sha256:a189dece5cedebfc545a8300970ea375220ec0436a34401d42a4cadf8fb3c27a",
   "registry": [
     "registry/protocol/1.0-draft.1/registry.json",
     "registry/riichi-4p/1.0-draft.1/registry.json"
@@ -2524,6 +2524,36 @@
       "area": "transport-error-precedence",
       "expect_positive": "valid",
       "expect_negative": "invalid_json"
+    },
+    {
+      "id": "V418_resume_trusted_local_boundary",
+      "area": "resume-authorization",
+      "expect_positive": "valid",
+      "expect_negative": "resume_unavailable"
+    },
+    {
+      "id": "V419_start_kyoku_visibility_precedes_gap",
+      "area": "visibility-error-precedence",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V420_tsumo_visibility_precedes_gap",
+      "area": "visibility-error-precedence",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V421_action_seq_is_fatal",
+      "area": "direction-error-precedence",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V422_action_original_seq_is_fatal",
+      "area": "direction-error-precedence",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
     }
   ]
 }

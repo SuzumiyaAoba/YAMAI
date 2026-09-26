@@ -4,7 +4,7 @@ import json
 import unittest
 
 import validate_artifacts as v
-from session_contract import Receiver, SessionError, classify_player_input, negotiate
+from session_contract import Receiver, SessionError, check_token_trace, classify_player_input, negotiate
 from scoring_reference import basic_points, normal_payments, NORMAL_YAKU_HAN
 
 
@@ -45,6 +45,101 @@ class SessionInvariants(unittest.TestCase):
         with self.assertRaises(SessionError) as error:
             check()
         self.assertEqual(error.exception.code, 'invalid_message')
+
+    def test_resume_trust_boundary_is_host_controlled(self):
+        trace = self.trace('one_use_token_single_owner')
+        validate = v._session_schema_validator(self.schemas, self.digest)
+        for secure, trusted_local, accepted in ((True, False, True), (False, True, True),
+                                                (False, False, False), (False, 'true', False)):
+            with self.subTest(secure=secure, trusted_local=trusted_local):
+                candidate = deepcopy(trace)
+                candidate['context'] = {**candidate.get('context', {}),
+                                        'trusted_local_transport': trusted_local}
+                candidate['steps'] = candidate['steps'][:1]
+                step = candidate['steps'][0]
+                step['secure_transport'] = secure
+                # Peer-supplied metadata cannot establish the local trust boundary.
+                step['join']['x_review_trusted_local_transport'] = True
+                actual = check_token_trace(candidate, validate, v.PROTOCOL, v.PROFILE_REVISION, self.digest)
+                self.assertEqual(actual[0]['outcome'], 'accepted' if accepted else 'resume_unavailable')
+                expected = step['welcome']['resume']['token'] if accepted else candidate['initial']['token']
+                self.assertEqual(actual[0]['token'], expected)
+                if not accepted:
+                    self.assertEqual(actual[0]['active_connection'], candidate['initial']['active_connection'])
+                    self.assertEqual(actual[0]['expires_at_ms'], candidate['initial']['expires_at_ms'])
+
+    def test_local_resume_still_checks_token_lifetime_and_session(self):
+        trace = self.trace('resume_token_rotation')
+        validate = v._session_schema_validator(self.schemas, self.digest)
+        for defect in ('expired', 'consumed', 'fatal', 'wrong_token', 'future_seq'):
+            with self.subTest(defect=defect):
+                candidate = deepcopy(trace)
+                context = candidate['context']
+                context.update(secure_transport=False, trusted_local_transport=True)
+                previous = context['resume_state']
+                if defect == 'expired':
+                    context['now_ms'] = previous['expires_at_ms']
+                elif defect in ('consumed', 'fatal'):
+                    previous[defect] = True
+                elif defect == 'wrong_token':
+                    candidate['join']['resume']['token'] = 'rt_' + 'Z' * 22
+                else:
+                    candidate['join']['resume']['last_seq'] = previous['highest_seq'] + 1
+                before = deepcopy(context)
+                with self.assertRaises(SessionError) as error:
+                    negotiate(candidate['hello'], candidate['join'], candidate['welcome'], context,
+                              validate, v.PROTOCOL, v.PROFILE_REVISION, self.digest)
+                self.assertEqual(error.exception.code, 'resume_unavailable')
+                self.assertEqual(context, before)
+
+    def test_event_visibility_rejection_precedes_sequence_gap(self):
+        for suffix in ('visibility_play_self', 'visibility_spectate_public',
+                       'visibility_replay_public', 'visibility_replay_full',
+                       'visibility_replay_seat_0', 'visibility_replay_seat_1',
+                       'visibility_replay_seat_2', 'visibility_replay_seat_3'):
+            case = next(c for key, c in self.vectors.items() if key.endswith('_' + suffix))
+            for event_type in ('start_kyoku', 'tsumo'):
+                with self.subTest(view=suffix, event=event_type):
+                    trace = deepcopy(case['positive']['trace'])
+                    receiver = self.receiver(trace['welcome'])
+                    event = next(s['message'] for s in trace['steps']
+                                 if s['message'].get('event', {}).get('type') == event_type)
+                    event['seq'] += 100
+                    self.assertEqual(receiver.receive(self.raw(event)), 'sequence_gap')
+                    receiver = self.receiver(trace['welcome'])
+                    if event_type == 'start_kyoku':
+                        hand = event['event']['hands'][0]
+                        event['event']['hands'][0] = ({'count': len(hand['tiles'])} if 'tiles' in hand
+                                                    else {'tiles': ['1m'] * 4 + ['2m'] * 4 + ['3m'] * 4 + ['E']})
+                    else:
+                        event['event']['pai'] = None if event['event']['pai'] is not None else '1m'
+                    self.assert_rejected_atomically(receiver, event)
+
+    def test_visibility_does_not_override_retained_byte_conflict(self):
+        trace = self.trace('visibility_spectate_public')
+        receiver = self.receiver(trace['welcome'])
+        for step in trace['steps']:
+            receiver.receive(self.raw(step['message']))
+        last = trace['steps'][-1]['message']
+        self.assertEqual(receiver.receive(self.raw(last)), 'duplicate')
+        last['event']['pai'] = '1m'
+        with self.assertRaises(SessionError) as error:
+            receiver.receive(self.raw(last))
+        self.assertEqual(error.exception.code, 'sequence_conflict')
+
+    def test_action_host_envelope_fields_are_fatal(self):
+        trace = self.trace('wire_complete_game')
+        identity = {key: trace['welcome'][key] for key in ('yamai', 'session_id', 'game_id')}
+        validate = v._session_schema_validator(self.schemas, self.digest)
+        for ended in (False, True):
+            for field in ('seq', 'original_seq'):
+                for value in (1, None, '1'):
+                    with self.subTest(ended=ended, field=field, value=value):
+                        message = dict(identity, kind='action', request_id='r1', action_id='a1')
+                        message[field] = value
+                        context = {'identity': identity, 'known_request_ids': ['r1'], 'game_ended': ended}
+                        self.assertEqual(classify_player_input(message, context, validate),
+                                         {'code': 'invalid_message', 'severity': 'fatal'})
 
     def test_spectate_capability_rejection_precedes_limits(self):
         trace = self.trace('spectate_requires_snapshot')

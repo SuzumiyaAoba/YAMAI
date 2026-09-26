@@ -10,7 +10,7 @@
       "revision": "1.0-draft.1",
       "schema": "urn:yamai:schema:protocol:1.0-draft.1:riichi-4p",
       "rules_schema": "urn:yamai:schema:riichi-4p:1.0-draft.1:riichi-4p-rules",
-      "hash": "sha256:a2e314f5a134a43a3c2539ced8aafa84699e315e78566c3b304d58a393d1bafc"
+      "hash": "sha256:a189dece5cedebfc545a8300970ea375220ec0436a34401d42a4cadf8fb3c27a"
     }
   ],
   "capabilities": [

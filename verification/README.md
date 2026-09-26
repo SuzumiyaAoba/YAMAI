@@ -96,6 +96,8 @@ V409–V410は項目18のsnapshot復元を補完する。嶺上手番と、そ�
 
 V411–V417は、初期化・mode別のエラー優先順・後着通知・観戦初期snapshot・WebSocketの空payloadを補完する。Receiver回帰ではplay/spectate/replay、現在と未来のseq、同一byteの再送と別seqの再通知、resume/snapshotを挟む同一attempt、観戦初期snapshotを欠落後に再送する経路を区別する。WebSocketの実frame、Closeの送信、失敗後のdata停止はtransport実装での結合試験対象であり、このpayload検査だけではRFC 6455の接続終了を実証しない。
 
+V418–V422は項目11・16・30を補完する。V418はホストが信頼境界内と判断した局所接続でのresumeを許可し、同じ条件をjoinの拡張memberで自己申告しても許可しない。traceの `secure_transport` と `trusted_local_transport` は検査用のホスト側入力であり、wire memberではない。回帰検査では拒否時のtoken・期限・接続所有権の保持も確認する。V419–V420は未来seqの配牌・自摸にも交渉済みviewを適用し、投影違反をsequence_gapより先に拒否する。V421–V422はplayer actionへのseq/original_seq付加をfatalとして検査し、action_idだけの不正に許可されるrecoverableとの区別を確認する。回帰検査は全8通りのmode/view、終局後、null・型不正も含む。
+
 完全候補の照合では期待集合の一部だけを検査せず、順序とconsumedの並びを除いた集合全体を比較する。現行coreの候補数には余裕がある。自摸番は打牌15以下・リーチ15以下・暗槓3以下・加槓4以下・和了1・九種九牌1の合計39以下、反応はchiの3順子×4赤牌消費パターン×13打牌、ponの3消費パターン×13打牌、daiminkan4消費パターン、hora/none各1の合計201以下という保守的上限があり、512を超えない。実際の牌枚数・喰い替えはこれをさらに制限する。私的拡張は独自の上限・fixtureと第14節の契約を必要とする。
 
 ## 検証の範囲

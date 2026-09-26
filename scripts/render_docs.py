@@ -43,7 +43,12 @@ def to_mdx(source: Path, output: Path, version: str) -> str:
 
     lines = []
     fence = None
-    for line in body.splitlines():
+    table = False
+    body_lines = body.splitlines()
+    for index, line in enumerate(body_lines):
+        if table and not line.lstrip().startswith("|"):
+            lines.extend(["", "</Stack>", ""])
+            table = False
         marker = re.match(r"\s*(`{3,}|~{3,})(.*)$", line)
         if marker:
             delimiter = marker[1]
@@ -56,6 +61,13 @@ def to_mdx(source: Path, output: Path, version: str) -> str:
         if fence:
             lines.append(line)
             continue
+
+        # Wide specification tables scroll locally instead of widening the page.
+        # Detect a GFM header/delimiter pair; literal code stays unchanged above.
+        if (not table and line.lstrip().startswith("|") and index + 1 < len(body_lines)
+                and re.fullmatch(r"\s*\|(?:\s*:?-{3,}:?\s*\|)+\s*", body_lines[index + 1])):
+            lines.extend(['<Stack gap="none" className="overflow-x-auto">', ""])
+            table = True
 
         spans = list(INLINE_CODE.finditer(line))
         line = re.sub(r"(\[[^\]]+\]\()([^\s)#]+)(#[^)]*)?(\))",
@@ -71,6 +83,9 @@ def to_mdx(source: Path, output: Path, version: str) -> str:
             cursor = span.end()
         parts.append(re.sub(r"(?<!\\)([{}])", r"\\\1", line[cursor:]).replace("<", "&lt;"))
         lines.append("".join(parts))
+
+    if table:
+        lines.extend(["", "</Stack>"])
 
     header = "\n".join((
         "---",

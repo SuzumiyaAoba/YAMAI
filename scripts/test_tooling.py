@@ -79,6 +79,17 @@ class DocumentConversion(unittest.TestCase):
         self.assertIn('title: "Title"', self.convert('# Title'))
         self.assertIn('title:', self.convert(''))
 
+    def test_table_scroll_preserves_fenced_examples_and_closes_at_eof(self):
+        table = '| A | B |\n|---|---|\n| one | two |'
+        wrapper = '<Stack gap="none" className="overflow-x-auto">\n\n' + table + '\n\n</Stack>'
+        for suffix in ('.md', '.mdx'):
+            with self.subTest(suffix=suffix):
+                text = '# Title\n' + table + '\n\n```md\n' + table + '\n```\n\n' + table
+                result = self.convert(text, suffix)
+                self.assertEqual(result.count(wrapper), 2)
+                self.assertIn('```md\n' + table + '\n```', result)
+                self.assertTrue(result.endswith('</Stack>\n'))
+
 
 if __name__ == '__main__':
     unittest.main()
