@@ -1950,7 +1950,10 @@ def semantic_ledger_trace(trace: Mapping[str, Any], expected_hash: str) -> None:
     starts, selections = {}, {}
     diagnostic_obligations, captured_diagnostics = [], []
     untracked_action_diagnostics = False
+    untracked_actions = []
+    lifecycle_ingress = {}
     pending_transaction = None
+    fatal_at = None
     try:
         for capture_index, step in enumerate(trace["messages"]):
             _require(step["at_ms"] >= now, "invalid_message", "capture clock moved backwards")
@@ -1978,6 +1981,14 @@ def semantic_ledger_trace(trace: Mapping[str, Any], expected_hash: str) -> None:
                     continue  # Fatal closure discards buffered input without applying it.
                 validate("player-application", msg)
                 _require(msg["session_id"] == trace["session_id"] and msg["game_id"] == trace["game_id"], "invalid_message", "input session differs")
+                if kind == "error" and msg["severity"] == "fatal":
+                    # Either endpoint's validated fatal closes the session.
+                    # Preserve the host prefix, request and clock for the
+                    # detached seat; this input is not a host ledger entry.
+                    receiver.fatal_error = deepcopy(msg)
+                    receiver.closed = True
+                    fatal_at = now
+                    continue
                 if kind == "action":
                     rid = msg["request_id"]
                     if receiver.ended:
@@ -1988,15 +1999,18 @@ def semantic_ledger_trace(trace: Mapping[str, Any], expected_hash: str) -> None:
                             # terminal result; absence here does not prove it
                             # was unknown to the host (stale/idempotent input).
                             untracked_action_diagnostics = True
+                            untracked_actions.append({"request_id": rid, "action_id": msg["action_id"], "index": capture_index})
                             continue
                         diagnostic_obligations.append({"request_id": rid, "action_id": msg["action_id"],
                                                        "index": capture_index, "rejected": False})
                         continue  # Diagnostics must not reserve or create a request.
                     request = receiver.requests[rid]
+                    lifecycle_ingress.setdefault(rid, []).append((capture_index, msg["action_id"], now))
                     if rid not in starts or "decision_group_id" in request:
                         # Group lifecycles and snapshot-restored ingress clocks
                         # remain outside this single-request capture check.
                         untracked_action_diagnostics = True
+                        untracked_actions.append({"request_id": rid, "action_id": msg["action_id"], "index": capture_index})
                     selection = selections.get(rid)
                     terminal = receiver.terminal_acks.get(rid)
                     if (rid in starts and "decision_group_id" not in request
@@ -2061,6 +2075,8 @@ def semantic_ledger_trace(trace: Mapping[str, Any], expected_hash: str) -> None:
                             _require(msg["elapsed_ms"] == selection[2], "invalid_message", "captured selection elapsed time differs")
                 outcome = receiver.receive(raw)
                 _require(outcome in {"applied", "duplicate"}, "invalid_message", "capture contains an unapplied host message")
+                if receiver.closed:
+                    fatal_at = now
                 if not duplicate:
                     if kind == "error" and msg["code"] in {"invalid_action", "request_conflict"} and msg["severity"] == "recoverable":
                         if msg["code"] == "request_conflict":
@@ -2115,6 +2131,8 @@ def semantic_ledger_trace(trace: Mapping[str, Any], expected_hash: str) -> None:
                  and not receiver.expected_effects and not receiver.unadopted_reaction
                  and (receiver.welcome["mode"] == "replay" or not receiver.end_game_due)),
                  "invalid_message", "capture ends with an unresolved decision or missing action effects")
+        lifecycle_outputs, lifecycle_ready = {}, {}
+        bound_input_indices = set()
         for lifecycle in trace.get("request_lifecycles", []):
             semantic_lifecycle_trace(lifecycle)
             _require(lifecycle["grace_ms"] == receiver.welcome["rules"]["time_control"]["grace_ms"] and all(lifecycle[k] == receiver.welcome["rules"][k] for k in ("ron_policy", "invalid_action_policy")), "invalid_message", "lifecycle rules differ from negotiation")
@@ -2125,13 +2143,104 @@ def semantic_ledger_trace(trace: Mapping[str, Any], expected_hash: str) -> None:
                 _require(all(_json_equal(actual_request.get(k), value) for k, value in request.items()), "invalid_message", "lifecycle request differs from captured wire")
                 rid = request["request_id"]
                 submitted = [(s["action_id"], s["at_us"] // 1000) for s in lifecycle["steps"] if s["op"] == "submit" and s["request_id"] == rid]
-                captured = [(s["message"]["action_id"], max(0, s["at_ms"] - starts[rid])) for s in trace["messages"] if s["direction"] == "in" and s["message"].get("kind") == "action" and s["message"]["request_id"] == rid]
+                _require(rid in starts, "invalid_message", "lifecycle has no captured request clock")
+                ingress = lifecycle_ingress.get(rid, [])
+                bound_input_indices.update(index for index, _, _ in ingress)
+                if fatal_at is not None and starts[rid] > fatal_at:
+                    # Before group_start input is only buffered (§9.1). A
+                    # fatal first discards it rather than fixing a selection.
+                    ingress = []
+                captured = [(aid, max(0, at_ms - starts[rid])) for _, aid, at_ms in ingress]
                 _require(submitted == captured, "invalid_message", "lifecycle submissions differ from captured actions")
-                captured_acks = [{k:step["message"][k] for k in ("kind", "action_id", "status", "elapsed_ms", "time_bank_ms")} for step in trace["messages"] if step["message"].get("kind") == "ack" and step["message"].get("request_id") == request["request_id"]]
-                _require(_json_equal(captured_acks, lifecycle["expected"]["messages"][request["request_id"]]), "invalid_message", "lifecycle ACK differs from captured wire")
+                expected_outputs = lifecycle["expected"]["messages"][rid]
+                _require(rid not in lifecycle_outputs or _json_equal(lifecycle_outputs[rid], expected_outputs),
+                         "invalid_message", "lifecycle bindings disagree about request outputs")
+                lifecycle_outputs[rid] = expected_outputs
+                # Match generation order as well as values. Millisecond capture
+                # timestamps cannot distinguish sub-ms lifecycle times, so use
+                # floor conversion plus the local ingress capture index.
+                ready, consumed, previous_count, last_input = [], 0, 0, -1
+                for step, observation in zip(lifecycle["steps"], evaluate_request_contract(dict(lifecycle))):
+                    if step["op"] == "submit" and step["request_id"] == rid:
+                        last_input = ingress[consumed][0]
+                        consumed += 1
+                    count = len(observation["messages"][rid])
+                    ready.extend([(starts[rid] + step["at_us"] // 1000, last_input)] * (count - previous_count))
+                    previous_count = count
+                if rid in lifecycle_ready:
+                    ready = [(max(a[0], b[0]), max(a[1], b[1])) for a, b in zip(ready, lifecycle_ready[rid])]
+                lifecycle_ready[rid] = ready
                 cause = ledger[request["caused_by_seq"]]["message"]["event"]
                 for member in lifecycle["requests"]:
                     _check_decision_cause(member, cause)
+        if lifecycle_outputs:
+            # A peer sees each logical output once, even if identical ledger
+            # bytes are replayed. Bind diagnostics as well as ACKs: group
+            # ingress is deliberately not inferred by the generic checker.
+            # Optional diagnostic IDs require non-greedy ownership matching.
+            rids = list(lifecycle_outputs)
+            generic = [o for o in diagnostic_obligations if o["index"] not in bound_input_indices]
+            unchecked = [o for o in untracked_actions if o["index"] not in bound_input_indices]
+            positions = {(tuple(0 for _ in rids), frozenset())}
+            output_seen = set()
+            for index, step in enumerate(trace["messages"]):
+                message = step["message"]
+                if step["direction"] != "out" or "seq" not in message or message["seq"] in output_seen:
+                    continue
+                output_seen.add(message["seq"])
+                ack = message["kind"] == "ack" and message["request_id"] in lifecycle_outputs
+                diagnostic = (message["kind"] == "error" and message["severity"] == "recoverable"
+                              and message["code"] in {"invalid_action", "request_conflict"})
+                if not (ack or diagnostic):
+                    continue
+                following = set()
+                for cursors, used in positions:
+                    for lane, rid in enumerate(rids):
+                        outputs = lifecycle_outputs[rid]
+                        cursor = cursors[lane]
+                        if cursor == len(outputs):
+                            continue
+                        ready_at, input_index = lifecycle_ready[rid][cursor]
+                        if step["at_ms"] < ready_at or index <= input_index:
+                            continue
+                        expected = outputs[cursor]
+                        if ack:
+                            matched = (message["request_id"] == rid and expected["kind"] == "ack"
+                                       and all(_json_equal(message.get(k), value) for k, value in expected.items()))
+                        else:
+                            matched = (expected["kind"] == "error" and message["code"] == expected["code"]
+                                       and ("request_id" not in message or message["request_id"] == rid)
+                                       and ("action_id" not in message or message["action_id"] == expected["action_id"])
+                                       and message.get("original_status") == expected.get("original_status"))
+                        if matched:
+                            next_cursors = list(cursors)
+                            next_cursors[lane] += 1
+                            following.add((tuple(next_cursors), used))
+                    if diagnostic:
+                        for obligation_index, obligation in enumerate(generic):
+                            if (obligation_index not in used and index > obligation["index"]
+                                    and message["code"] == obligation.get("code", "invalid_action")
+                                    and all(k not in message or message[k] == obligation[k]
+                                            for k in ("request_id", "action_id"))):
+                                following.add((cursors, used | {obligation_index}))
+                        if any(index > obligation["index"] and all(k not in message or message[k] == obligation[k]
+                               for k in ("request_id", "action_id")) for obligation in unchecked):
+                            following.add((cursors, used))
+                positions = following
+                _require(bool(positions), "invalid_message", "lifecycle output differs from captured wire")
+            # Fatal closure suppresses only a suffix of each closed session's
+            # output. Internal resolution, chosen actions and clocks remain
+            # checked by the complete lifecycle and captured ingress binding.
+            _require(receiver.closed or any(all(cursors[i] == len(lifecycle_outputs[rid]) for i, rid in enumerate(rids))
+                     and len(used) == len(generic) for cursors, used in positions),
+                     "invalid_message", "capture omits lifecycle output")
+        def project_event(event: dict, full: bool, seat: int | None) -> None:
+            if event["type"] == "tsumo" and not full and event["actor"] != seat:
+                event["pai"] = None
+            if event["type"] == "start_kyoku":
+                event["hands"] = [h if full or actor == seat else {"count": len(h["tiles"]) if "tiles" in h else h["count"]}
+                                  for actor, h in enumerate(event["hands"])]
+
         for record in trace.get("visibility", []):
             for target in record["projections"]:
                 projection = deepcopy(record["source"])
@@ -2139,10 +2248,7 @@ def semantic_ledger_trace(trace: Mapping[str, Any], expected_hash: str) -> None:
                     event = projection["event"]
                     full = target["mode"] == "replay" and target["view"] == "full"
                     seat = target["seat"] if target["mode"] == "play" else target["view"].get("seat") if isinstance(target["view"], dict) else None
-                    if event["type"] == "tsumo" and not full and event["actor"] != seat:
-                        event["pai"] = None
-                    if event["type"] == "start_kyoku":
-                        event["hands"] = [h if full or actor == seat else {"count": len(h["tiles"])} for actor, h in enumerate(event["hands"])]
+                    project_event(event, full, seat)
                     _check_event_visibility(target["message"]["event"], target["mode"], target["view"], target["seat"])
                 elif projection["kind"] == "snapshot":
                     state = projection["state"]
@@ -2158,8 +2264,7 @@ def semantic_ledger_trace(trace: Mapping[str, Any], expected_hash: str) -> None:
                     if kyoku is not None:
                         kyoku["hands"] = [h if full or actor == seat else {"count": len(h["tiles"]) if "tiles" in h else h["count"]} for actor,h in enumerate(kyoku["hands"])]
                         event = kyoku["turn"]["last_event"]
-                        if event["type"] == "tsumo" and not full and event["actor"] != seat:
-                            event["pai"] = None
+                        project_event(event, full, seat)
                         if target["mode"] != "play":
                             kyoku.pop("self_state", None)
                     _check_snapshot(target["message"], rules=receiver.welcome["rules"] if receiver is not None else None)

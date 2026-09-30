@@ -340,7 +340,7 @@ module yamai_protocol {
 
   // Player actions are stored per member.  A submitted action cannot be
   // changed by a later timeout default because default_action only touches
-  // members that are not already terminal.
+  // members that have not already responded.
   action submit_action(seat, action_id) = all {
     state.session == Active,
     state.transport == Connected,

@@ -741,6 +741,89 @@ class GameContractTests(unittest.TestCase):
         after = {k: getattr(state, k) for k in ("self_seat","game_phase","scores","kyotaku","next","round","last_cause")}
         self.assertEqual(before, after)
 
+    def _four_winds_reach_events(self, previous_reaches=0):
+        events = deepcopy(self.vectors['V247_called_reach_still_pays_deposit']['positive']['trace']['input']['events'][:2])
+        events[1]['hands'] = [{'count': 13} for _ in range(4)]
+        scores = [25000] * 4
+        for actor in range(4):
+            events.append({'type': 'tsumo', 'actor': actor, 'pai': None})
+            declares = actor < previous_reaches or actor == 3
+            if declares:
+                events.append({'type': 'reach', 'actor': actor})
+            events.append({'type': 'dahai', 'actor': actor, 'pai': 'N', 'tsumogiri': True})
+            if actor < previous_reaches:
+                scores[actor] -= 1000
+                events.append({'type': 'reach_accepted', 'actor': actor,
+                               'deltas': [-1000 if seat == actor else 0 for seat in range(4)],
+                               'scores': scores.copy(), 'kyotaku': actor + 1})
+        return events
+
+    @staticmethod
+    def _automatic_draw_event(state, reason):
+        result = {'type': 'ryukyoku', 'reason': reason, 'tenpai': None}
+        current = {key: state.round[key] for key in ('bakaze', 'kyoku', 'oya', 'honba', 'extension_round')}
+        return {'type': 'end_kyoku', 'result': result, 'deltas': [0] * 4,
+                'scores': state.scores.copy(),
+                'next': next_kyoku(current, result, state.scores, state.kyotaku, state.rules)}
+
+    def test_automatic_draw_requires_reach_acceptance_in_receiver(self):
+        for previous_reaches in (0, 3):
+            for accept_last in (False, True):
+                with self.subTest(previous_reaches=previous_reaches, accept_last=accept_last):
+                    welcome = deepcopy(self.vectors['V79_spectate_requires_snapshot']['positive']['trace']['welcome'])
+                    welcome['mode'] = 'replay'
+                    receiver = Receiver(welcome, v.strict_load_bytes,
+                                        v._session_schema_validator(v.SchemaSet(), welcome['profile_hash']))
+                    def send(event):
+                        message = {key: welcome[key] for key in ('yamai', 'session_id', 'game_id')}
+                        message.update(kind='event', seq=receiver.applied + 1,
+                                       original_seq=receiver.applied + 1, event=event)
+                        receiver.receive(json.dumps(message).encode())
+                    for event in self._four_winds_reach_events(previous_reaches):
+                        send(event)
+                    if accept_last:
+                        scores = receiver.game.scores.copy()
+                        scores[3] -= 1000
+                        send({'type': 'reach_accepted', 'actor': 3, 'deltas': [0, 0, 0, -1000],
+                              'scores': scores, 'kyotaku': previous_reaches + 1})
+                    reason = 'suucha_riichi' if previous_reaches == 3 and accept_last else 'suufon_renda'
+                    event = self._automatic_draw_event(receiver.game, reason)
+                    if accept_last:
+                        send(event)
+                        self.assertEqual(receiver.game.kyotaku, previous_reaches + 1)
+                        self.assertEqual(receiver.game.scores[3], 24000)
+                    else:
+                        before = deepcopy(vars(receiver.game))
+                        applied, known = receiver.applied, deepcopy(receiver.known)
+                        with self.assertRaisesRegex(SessionError, 'automatic draw before reach acceptance'):
+                            send(event)
+                        self.assertEqual(vars(receiver.game), before)
+                        self.assertEqual((receiver.applied, receiver.known), (applied, known))
+
+    def test_restored_declared_reach_still_requires_acceptance_before_draw(self):
+        source = EventState(self.rules)
+        for event in self._four_winds_reach_events():
+            source.apply(event)
+        kyoku = deepcopy(source.round)
+        kyoku['turn']['last_event'] = deepcopy(source.last_cause)
+        snapshot = {'mode': 'replay', 'seat': None, 'game_phase': 'in_kyoku',
+                    'kyoku': kyoku, 'next_kyoku': None, 'scores': source.scores.copy(), 'kyotaku': 0}
+        state = EventState(self.rules)
+        state.restore(snapshot)
+        before = deepcopy(vars(state))
+        with self.assertRaisesRegex(GameError, 'automatic draw before reach acceptance'):
+            state.apply(self._automatic_draw_event(state, 'suufon_renda'))
+        self.assertEqual(vars(state), before)
+        state.apply({'type': 'reach_accepted', 'actor': 3, 'deltas': [0, 0, 0, -1000],
+                     'scores': [25000, 25000, 25000, 24000], 'kyotaku': 1})
+        state.apply(self._automatic_draw_event(state, 'suufon_renda'))
+        self.assertEqual(state.kyotaku, 1)
+
+    def test_automatic_draw_reach_guard_preserves_other_round_endings(self):
+        for key in ('V246_mixed_four_kans_abort_after_discard', 'V337_sanchaho_precedes_reach_acceptance'):
+            with self.subTest(vector=key):
+                v.semantic_game_trace(deepcopy(self.vectors[key]['positive']['trace']))
+
     def test_inventory_failure_leaves_state_untouched(self):
         source = self._dealt()
         source.apply({"type":"tsumo","actor":0,"pai":None})

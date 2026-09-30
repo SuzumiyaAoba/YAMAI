@@ -1232,6 +1232,8 @@ class EventState:
                         if "tiles" in r["hands"][turn_actor]:
                             require(len({tile_index(t) for t in r["hands"][turn_actor]["tiles"]} & ORPHANS) >= 9, "fewer than nine different orphans")
                 if reason not in {"sanchaho", "kyushukyuhai"}:
+                    require(all(reach["state"] != "declared" for reach in r["reach_status"]),
+                            "automatic draw before reach acceptance")
                     require(self._automatic_draw_reason() == reason, "automatic draw condition or priority differs")
             current = {key:r[key] for key in ("bakaze", "kyoku", "oya", "honba", "extension_round")}
             expected_next = next_kyoku(current, result, event["scores"], deposits, self.rules)

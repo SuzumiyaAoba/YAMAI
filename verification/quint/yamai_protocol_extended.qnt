@@ -312,8 +312,8 @@ module yamai_protocol_extended {
   }
 
   // A disconnect/resume path never discards an open request.  ReplayPending
-  // is entered only after reconnection and remains processable because all
-  // request/ACK/default/resolve actions are guarded until replay completes.
+  // is entered only after reconnection; host-internal clock/default/ACK/resolve
+  // actions continue and append generated messages to the bounded backlog.
   // SnapshotPending additionally records the exact pending member/action
   // maps in the snapshot_saved_* fields above.
   val resume_pending_invariant: bool = and {

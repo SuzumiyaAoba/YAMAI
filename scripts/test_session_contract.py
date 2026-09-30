@@ -3,6 +3,7 @@ from copy import deepcopy
 from decimal import Decimal
 import json
 import unittest
+from unittest.mock import patch
 
 import validate_artifacts as v
 from session_contract import Receiver, SessionError, check_token_trace, classify_player_input, negotiate, replay_plan
@@ -1976,6 +1977,456 @@ class ResourceOutputTimers(unittest.TestCase):
         with self.assertRaises(SessionError) as caught:
             resource_trace(case['negative']['trace'])
         self.assertEqual(caught.exception.code, 'resource_limit')
+
+
+class _LedgerTraceFixture(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.schemas = v.SchemaSet()
+        manifest = v.strict_load(v.ROOT / f'test-vectors/protocol/{v.PROTOCOL}/manifest.json')
+        cls.digest = manifest['profile_hash']
+        cls.vectors = v.strict_load(v.ROOT / manifest['vectors'])
+
+    def receiver(self, welcome):
+        return Receiver(welcome, v.strict_load_bytes, v._session_schema_validator(self.schemas, self.digest))
+
+    @staticmethod
+    def raw(message):
+        return json.dumps(message, ensure_ascii=False, separators=(',', ':')).encode()
+
+    def check_ledger(self, trace):
+        for step in trace['messages']:
+            step['wire'] = self.raw(step['message']).decode()
+        trace['ledger'] = list({
+            step['message']['seq']: {key: deepcopy(step[key]) for key in ('transaction_id', 'operation_id', 'message', 'wire')}
+            | {'seq': step['message']['seq']}
+            for step in trace['messages'] if 'seq' in step['message'] and step['direction'] == 'out'
+        }.values())
+        v.semantic_ledger_trace(trace, self.digest)
+
+
+class LedgerPlayerFatalTests(_LedgerTraceFixture):
+    def player_fatal_ledger(self, *, after_ack=False):
+        trace = deepcopy(self.vectors["V261_session_immutable_wire_ledger"]["positive"]["trace"])
+        trace["messages"] = trace["messages"][:9 if after_ack else 7]
+        welcome = trace["messages"][2]["message"]
+        fatal = {key: welcome[key] for key in ("yamai", "session_id", "game_id")}
+        fatal.update(kind="error", code="invalid_message", severity="fatal", message="Peer protocol violation")
+        trace["messages"].append({"at_ms": 821 if after_ack else 100, "direction": "in",
+                                  "client_id": "peer", "message": fatal})
+        return trace
+
+    def test_ledger_player_fatal_closes_without_changing_game_request_or_clock(self):
+        for after_ack in (False, True):
+            with self.subTest(after_ack=after_ack):
+                trace = self.player_fatal_ledger(after_ack=after_ack)
+                expected = self.receiver(trace["messages"][2]["message"])
+                for step in trace["messages"][3:-1]:
+                    if step["direction"] == "out":
+                        expected.receive(self.raw(step["message"]))
+                receivers = []
+
+                def capture(*args, **kwargs):
+                    receiver = Receiver(*args, **kwargs)
+                    receivers.append(receiver)
+                    return receiver
+
+                with patch.object(v, "Receiver", side_effect=capture):
+                    self.check_ledger(trace)
+                actual = receivers[0]
+                self.assertTrue(actual.closed)
+                self.assertEqual(actual.fatal_error, trace["messages"][-1]["message"])
+                self.assertEqual(vars(actual.game), vars(expected.game))
+                for key, value in vars(expected).items():
+                    if key not in {"game", "decode", "validate", "closed", "fatal_error"}:
+                        self.assertEqual(getattr(actual, key), value, key)
+                resumed = deepcopy(actual.welcome)
+                resumed.update(resumed=True, replay_from_seq=actual.applied + 1,
+                               replay_through_seq=actual.applied)
+                with self.assertRaisesRegex(SessionError, "fatal receiver"):
+                    actual.begin_resume(resumed)
+
+    def test_ledger_player_fatal_discards_repeated_and_buffered_input(self):
+        trace = self.player_fatal_ledger()
+        fatal = deepcopy(trace["messages"][-1])
+        action = deepcopy(self.vectors["V261_session_immutable_wire_ledger"]["positive"]["trace"]["messages"][7])
+        action["message"]["request_id"] = "unknown_after_player_fatal"
+        trace["messages"].extend([fatal, action, deepcopy(action)])
+        self.check_ledger(trace)
+
+    def test_ledger_player_fatal_rejects_postclosure_ack_event_and_retransmission(self):
+        original = self.vectors["V261_session_immutable_wire_ledger"]["positive"]["trace"]
+        for after_ack, output in ((False, original["messages"][8]), (True, original["messages"][9]),
+                                  (False, original["messages"][3]), (False, original["messages"][6])):
+            with self.subTest(kind=output["message"]["kind"], after_ack=after_ack):
+                trace = self.player_fatal_ledger(after_ack=after_ack)
+                after = deepcopy(output)
+                after["at_ms"] = 822
+                trace["messages"].append(after)
+                with self.assertRaises(v.ArtifactError):
+                    self.check_ledger(trace)
+        # A fatal received before ingress cannot be treated as permission to
+        # accept the later user choice and finish its original live transcript.
+        trace = deepcopy(original)
+        trace["messages"].insert(7, self.player_fatal_ledger()["messages"][-1])
+        with self.assertRaises(v.ArtifactError):
+            self.check_ledger(trace)
+
+    def test_ledger_player_fatal_requires_valid_direction_schema_and_identity(self):
+        changes = ({"code": "resume_unavailable"}, {"code": "invalid_action"},
+                   {"seq": 5}, {"session_id": "other"}, {"game_id": "other"},
+                   {"message": ""}, {"severity": "recoverable"})
+        for change in changes:
+            with self.subTest(change=change):
+                trace = self.player_fatal_ledger()
+                trace["messages"][-1]["message"].update(change)
+                receivers = []
+
+                def capture(*args, **kwargs):
+                    receiver = Receiver(*args, **kwargs)
+                    receivers.append(receiver)
+                    return receiver
+
+                with patch.object(v, "Receiver", side_effect=capture):
+                    with self.assertRaises(v.ArtifactError):
+                        self.check_ledger(trace)
+                # Schema rejection may occur before receiver construction.
+                # A parsed error must pass direction and identity validation
+                # before it can change the session's fatal state.
+                for receiver in receivers:
+                    self.assertFalse(receiver.closed)
+                    self.assertIsNone(receiver.fatal_error)
+                    self.assertEqual(receiver.applied, 4)
+                    self.assertEqual(receiver.active_requests, {"r1"})
+                    self.assertEqual(receiver.time_bank_ms, 15000)
+
+
+class LedgerLifecycleBindingTests(_LedgerTraceFixture):
+    def group_trace(self):
+        return deepcopy(self.vectors['V267_session_three_member_group_is_atomic']['positive']['trace'])
+
+    @staticmethod
+    def refresh_lifecycle(trace):
+        lifecycle = trace['request_lifecycles'][0]
+        lifecycle['expected'] = v.evaluate_request_contract(lifecycle)[-1]
+        return lifecycle
+
+    @staticmethod
+    def renumber_outputs(trace):
+        # Use only for fixtures without replayed output; replay tests preserve
+        # both the original sequence and immutable transaction identity.
+        seq = 0
+        for step in trace['messages']:
+            if step['direction'] == 'out' and 'seq' in step['message']:
+                seq += 1
+                step['message']['seq'] = seq
+
+    def fatal_step(self, trace, direction, at_ms):
+        message = {key: trace['messages'][2]['message'][key] for key in ('yamai', 'session_id', 'game_id')}
+        message.update(kind='error', severity='fatal', code='invalid_message', message='Close this peer')
+        step = {'at_ms': at_ms, 'direction': direction, 'client_id': 'peer', 'message': message}
+        if direction == 'out':
+            message['seq'] = 1 + max(s['message'].get('seq', 0) for s in trace['messages'])
+            step.update(transaction_id='fatal_tx', operation_id='fatal_op')
+        return step
+
+    def rejected_group(self):
+        trace = self.group_trace()
+        lifecycle = trace['request_lifecycles'][0]
+        lifecycle['steps'].insert(0, {'op': 'submit', 'at_us': 0, 'request_id': 'r1', 'action_id': 'bad'})
+        self.refresh_lifecycle(trace)
+        action = deepcopy(trace['messages'][8])
+        action['at_ms'] = 7
+        action['message']['action_id'] = 'bad'
+        ack = deepcopy(trace['messages'][9])
+        ack.update(at_ms=7, transaction_id='reject_tx', operation_id='reject_op')
+        ack['message'].update(action_id='bad', status='rejected', elapsed_ms=0)
+        error = deepcopy(ack)
+        error['message'] = {key: ack['message'][key] for key in ('yamai', 'session_id', 'game_id', 'seq')}
+        error['message'].update(kind='error', code='invalid_action', severity='recoverable',
+                                message='Unknown action', request_id='r1', action_id='bad')
+        trace['messages'][8:8] = [action, ack, error]
+        self.renumber_outputs(trace)
+        return trace
+
+    def conflict_group(self, after_terminal):
+        trace = self.group_trace()
+        lifecycle = trace['request_lifecycles'][0]
+        action = deepcopy(trace['messages'][8])
+        action['at_ms'] = 11 if after_terminal else 8
+        action['message']['action_id'] = 'n'
+        error = deepcopy(trace['messages'][9])
+        error.update(at_ms=action['at_ms'], transaction_id='conflict_tx', operation_id='conflict_op')
+        error['message'] = {key: error['message'][key] for key in ('yamai', 'session_id', 'game_id', 'seq')}
+        error['message'].update(kind='error', code='request_conflict', severity='recoverable',
+                                message='Choice already fixed', request_id='r1', action_id='n')
+        submission = {'op': 'submit', 'at_us': 4000 if after_terminal else 1000,
+                      'request_id': 'r1', 'action_id': 'n'}
+        if after_terminal:
+            error['message']['original_status'] = 'superseded'
+            lifecycle['steps'].append(submission)
+            trace['messages'].extend([action, error])
+        else:
+            lifecycle['steps'].insert(1, submission)
+            trace['messages'][9:9] = [action, error]
+        self.refresh_lifecycle(trace)
+        self.renumber_outputs(trace)
+        return trace
+
+    def test_live_group_binds_logical_outputs_once(self):
+        for rejected in (False, True):
+            trace = self.rejected_group() if rejected else self.group_trace()
+            self.check_ledger(trace)
+            for output_index in ((9, 10, 12) if rejected else (9,)):
+                with self.subTest(rejected=rejected, output_index=output_index):
+                    repeated = deepcopy(trace)
+                    replay = deepcopy(repeated['messages'][output_index])
+                    replay['at_ms'] = repeated['messages'][-1]['at_ms']
+                    repeated['messages'].append(replay)
+                    self.check_ledger(repeated)
+
+    def test_live_group_reject_diagnostics_allow_optional_ids(self):
+        for omitted in ((), ('request_id',), ('action_id',), ('request_id', 'action_id')):
+            with self.subTest(omitted=omitted):
+                trace = self.rejected_group()
+                for key in omitted:
+                    trace['messages'][10]['message'].pop(key)
+                self.check_ledger(trace)
+
+    def test_live_group_rejects_wrong_missing_extra_and_reordered_diagnostics(self):
+        mutations = ({'action_id': 'WRONG'}, {'request_id': 'WRONG'}, {'code': 'request_conflict'})
+        for change in mutations:
+            with self.subTest(change=change):
+                trace = self.rejected_group()
+                trace['messages'][10]['message'].update(change)
+                with self.assertRaises(v.ArtifactError):
+                    self.check_ledger(trace)
+        for operation in ('missing', 'extra', 'reordered'):
+            with self.subTest(operation=operation):
+                trace = self.rejected_group()
+                if operation == 'missing':
+                    trace['messages'].pop(10)
+                elif operation == 'extra':
+                    trace['messages'].insert(11, deepcopy(trace['messages'][10]))
+                else:
+                    trace['messages'][9], trace['messages'][10] = trace['messages'][10], trace['messages'][9]
+                self.renumber_outputs(trace)
+                with self.assertRaises(v.ArtifactError):
+                    self.check_ledger(trace)
+
+    def test_lifecycle_outputs_cannot_precede_local_input_or_group_resolution(self):
+        for omitted in (False, True):
+            with self.subTest(omitted=omitted):
+                trace = self.rejected_group()
+                if omitted:
+                    trace['messages'][10]['message'].pop('request_id')
+                    trace['messages'][10]['message'].pop('action_id')
+                trace['messages'][8:11] = [trace['messages'][9], trace['messages'][10], trace['messages'][8]]
+                with self.assertRaises(v.ArtifactError):
+                    self.check_ledger(trace)
+        trace = self.group_trace()
+        # The selected seat's elapsed clock is unchanged, but the barrier must
+        # wait for the later hidden survivors before producing its ACK.
+        for step in trace['request_lifecycles'][0]['steps'][1:]:
+            step['at_us'] = 2999
+        self.refresh_lifecycle(trace)
+        self.check_ledger(trace)  # at_ms=9 can represent 2.999ms after group start.
+        trace['request_lifecycles'][0]['steps'][-1]['at_us'] = 3000
+        self.refresh_lifecycle(trace)
+        with self.assertRaises(v.ArtifactError):
+            self.check_ledger(trace)  # ACK at_ms=9 precedes resolution at_ms=10.
+
+    def test_group_conflicts_preserve_pre_and_postterminal_order_and_status(self):
+        for after_terminal in (False, True):
+            trace = self.conflict_group(after_terminal)
+            self.check_ledger(trace)
+            error_index = -1 if after_terminal else 10
+            for change in ({'action_id': 'bad'}, {'original_status': 'accepted'}):
+                with self.subTest(after_terminal=after_terminal, change=change):
+                    invalid = deepcopy(trace)
+                    invalid['messages'][error_index]['message'].update(change)
+                    with self.assertRaises(v.ArtifactError):
+                        self.check_ledger(invalid)
+
+    def test_fatal_preserves_selected_or_unselected_seat_and_later_survivors(self):
+        for direction in ('in', 'out'):
+            for selected in (False, True):
+                with self.subTest(direction=direction, selected=selected):
+                    trace = self.group_trace()
+                    lifecycle = trace['request_lifecycles'][0]
+                    if not selected:
+                        lifecycle['steps'].pop(0)
+                    for step in lifecycle['steps'][1 if selected else 0:]:
+                        step['at_us'] = 2000 if step['op'] == 'submit' else 3000
+                    self.refresh_lifecycle(trace)
+                    trace['messages'] = trace['messages'][:9 if selected else 8]
+                    trace['messages'].append(self.fatal_step(trace, direction, 8 if selected else 7))
+                    expected = self.receiver(trace['messages'][2]['message'])
+                    for step in trace['messages'][3:-1]:
+                        if step['direction'] == 'out':
+                            expected.receive(self.raw(step['message']))
+                    receivers = []
+
+                    def capture(*args, **kwargs):
+                        receiver = Receiver(*args, **kwargs)
+                        receivers.append(receiver)
+                        return receiver
+
+                    with patch.object(v, 'Receiver', side_effect=capture):
+                        self.check_ledger(trace)
+                    receiver = receivers[0]
+                    self.assertTrue(receiver.closed)
+                    self.assertEqual(vars(receiver.game), vars(expected.game))
+                    self.assertEqual(receiver.requests, expected.requests)
+                    self.assertEqual(receiver.active_requests, {'r1'})
+                    self.assertEqual(receiver.terminal_acks, {})
+                    self.assertEqual(receiver.time_bank_ms, 1)
+                    state = lifecycle['expected']['requests']['r1']
+                    self.assertEqual((state['action_id'], state['source'], state['elapsed_ms']),
+                                     ('h', 'user', 1) if selected else ('n', 'default', 3))
+                    self.assertEqual(state['time_bank_ms'], 1 if selected else 0)
+                    for rid in ('r2', 'r3'):
+                        self.assertEqual(lifecycle['expected']['requests'][rid]['elapsed_ms'], 2)
+                    buffered = deepcopy(self.group_trace()['messages'][8])
+                    buffered['at_ms'] = 9
+                    buffered['message']['action_id'] = 'n'
+                    trace['messages'].append(buffered)
+                    self.check_ledger(trace)
+                    lifecycle['steps'].insert(1 if selected else 0,
+                        {'op': 'submit', 'at_us': 2000, 'request_id': 'r1', 'action_id': 'n'})
+                    self.refresh_lifecycle(trace)
+                    with self.assertRaises(v.ArtifactError):
+                        self.check_ledger(trace)
+
+    def test_fatal_suppresses_only_unemitted_output_suffix(self):
+        for direction in ('in', 'out'):
+            for prefix in (9, 10, 11):
+                with self.subTest(direction=direction, prefix=prefix):
+                    trace = self.rejected_group()
+                    # Retain the rejected attempt and zero, one or both of its
+                    # outputs, then resolve the other seats after fatal closure.
+                    lifecycle = trace['request_lifecycles'][0]
+                    lifecycle['steps'].pop(1)  # The later r1=h input was not received.
+                    for step in lifecycle['steps'][1:]:
+                        step['at_us'] = 2000 if step['op'] == 'submit' else 3000
+                    self.refresh_lifecycle(trace)
+                    trace['messages'] = trace['messages'][:prefix]
+                    trace['messages'].append(self.fatal_step(trace, direction, 7))
+                    self.check_ledger(trace)
+                    if prefix == 11:
+                        trace['messages'][10]['message']['action_id'] = 'WRONG'
+                        with self.assertRaises(v.ArtifactError):
+                            self.check_ledger(trace)
+        trace = self.rejected_group()
+        trace['messages'].pop(9)  # Keep the error but omit the preceding rejected ACK.
+        trace['messages'] = trace['messages'][:10]
+        self.renumber_outputs(trace)
+        trace['messages'].append(self.fatal_step(trace, 'in', 7))
+        lifecycle = trace['request_lifecycles'][0]
+        lifecycle['steps'].pop(1)
+        for step in lifecycle['steps'][1:]:
+            step['at_us'] = 3000
+        self.refresh_lifecycle(trace)
+        with self.assertRaises(v.ArtifactError):
+            self.check_ledger(trace)
+
+    def test_guessed_request_id_before_issue_stays_a_generic_diagnostic(self):
+        trace = self.group_trace()
+        action = deepcopy(trace['messages'][8])
+        action['at_ms'] = 6
+        action['message']['action_id'] = 'bad'
+        error = deepcopy(self.rejected_group()['messages'][10])
+        error['at_ms'] = 6
+        trace['messages'][7:7] = [action, error]
+        self.renumber_outputs(trace)
+        self.check_ledger(trace)
+        trace['messages'].pop(8)
+        self.renumber_outputs(trace)
+        with self.assertRaises(v.ArtifactError):
+            self.check_ledger(trace)
+
+    def test_optional_diagnostics_match_generic_and_lifecycle_inputs_jointly(self):
+        for final_rid in ('r1', 'unknown'):
+            with self.subTest(final_rid=final_rid):
+                trace = self.rejected_group()
+                unknown = deepcopy(trace['messages'][8])
+                unknown['message']['request_id'] = 'unknown'
+                trace['messages'].insert(8, unknown)
+                explicit = deepcopy(trace['messages'][11])
+                explicit['message']['request_id'] = final_rid
+                for key in ('request_id', 'action_id'):
+                    trace['messages'][11]['message'].pop(key)
+                trace['messages'].insert(12, explicit)
+                self.renumber_outputs(trace)
+                self.check_ledger(trace)
+                # One response cannot satisfy both the unknown request and
+                # the lifecycle's rejected-attempt diagnostic.
+                trace['messages'].pop(12)
+                self.renumber_outputs(trace)
+                with self.assertRaises(v.ArtifactError):
+                    self.check_ledger(trace)
+
+    def test_live_capture_still_requires_exact_lifecycle_ack(self):
+        trace = self.group_trace()
+        trace['messages'] = trace['messages'][:9]
+        trace['allow_open_requests'] = True
+        with self.assertRaisesRegex(v.ArtifactError, 'omits lifecycle output'):
+            self.check_ledger(trace)
+        for change in ({'elapsed_ms': 0}, {'action_id': 'n', 'status': 'passed'},
+                       {'status': 'accepted'}, {'time_bank_ms': 0}):
+            with self.subTest(change=change):
+                trace = self.group_trace()
+                trace['messages'][9]['message'].update(change)
+                with self.assertRaises(v.ArtifactError):
+                    self.check_ledger(trace)
+
+    def test_fatal_discards_only_not_yet_effective_group_buffered_input(self):
+        for direction in ('in', 'out'):
+            for at_ms in (9, 10, 11):
+                with self.subTest(direction=direction, at_ms=at_ms):
+                    trace = self.group_trace()
+                    trace['messages'][7]['group_start'] = 10
+                    trace['messages'] = trace['messages'][:9]
+                    trace['messages'].append(self.fatal_step(trace, direction, at_ms))
+                    lifecycle = trace['request_lifecycles'][0]
+                    selected = at_ms >= 10
+                    if selected:
+                        lifecycle['steps'][0]['at_us'] = 0
+                    else:
+                        lifecycle['steps'].pop(0)
+                    for step in lifecycle['steps'][1 if selected else 0:]:
+                        step['at_us'] = 2000 if step['op'] == 'submit' else 3000
+                    self.refresh_lifecycle(trace)
+                    self.check_ledger(trace)
+                    if not selected:
+                        lifecycle['steps'].insert(0, {'op': 'submit', 'at_us': 0,
+                                                     'request_id': 'r1', 'action_id': 'h'})
+                        self.refresh_lifecycle(trace)
+                        with self.assertRaises(v.ArtifactError):
+                            self.check_ledger(trace)
+
+    def test_postgame_input_is_not_a_lifecycle_submission(self):
+        trace = deepcopy(self.vectors['V261_session_immutable_wire_ledger']['positive']['trace'])
+        request = {key: value for key, value in trace['messages'][6]['message'].items()
+                   if key not in ('yamai', 'kind', 'session_id', 'game_id', 'seq')}
+        rules = trace['messages'][2]['message']['rules']
+        lifecycle = {'trace_type': 'request_lifecycle', 'grace_ms': rules['time_control']['grace_ms'],
+                     'invalid_action_policy': rules['invalid_action_policy'], 'ron_policy': rules['ron_policy'],
+                     'requests': [request], 'steps': [
+                         {'op': 'submit', 'at_us': 812000, 'request_id': 'r1', 'action_id': 'a1'},
+                         {'op': 'resolve', 'at_us': 812000}]}
+        trace['request_lifecycles'] = [lifecycle]
+        self.refresh_lifecycle(trace)
+        self.check_ledger(trace)
+        action = deepcopy(trace['messages'][7])
+        action['at_ms'] = 824
+        action['message']['action_id'] = 'postgame'
+        trace['messages'].append(action)
+        self.check_ledger(trace)
+        lifecycle['steps'].append({'op': 'submit', 'at_us': 817000, 'request_id': 'r1', 'action_id': 'postgame'})
+        self.refresh_lifecycle(trace)
+        with self.assertRaises(v.ArtifactError):
+            self.check_ledger(trace)
 
 
 if __name__ == '__main__':

@@ -67,6 +67,86 @@ class ProtocolRegressionTests(unittest.TestCase):
         trace["messages"][7:7] = [bad, rejected, error]
         return trace
 
+    def test_snapshot_round_start_projects_nested_hands_for_every_observer_view(self):
+        base = copy.deepcopy(VECTORS["V265_session_snapshot_recursive_projection"]["positive"]["trace"])
+        source = base["visibility"][0]["source"]
+        source.update(seq=3, replaces_through_seq=2)
+        source["state"]["original_seq"] = 2
+        kyoku = source["state"]["kyoku"]
+        kyoku["hands"][0]["tiles"].remove("9s")
+        start = copy.deepcopy(next(step["message"]["event"]
+            for step in VECTORS["V104_wire_complete_game"]["positive"]["trace"]["steps"]
+            if step["message"].get("event", {}).get("type") == "start_kyoku"))
+        start["hands"] = copy.deepcopy(kyoku["hands"])
+        kyoku["wall_remaining"] = 70
+        kyoku["turn"].update(phase="awaiting_draw", last_event_seq=2, last_event=start)
+        views = [("spectate", "public"), ("replay", "public"), ("replay", "full")]
+        views += [("replay", {"seat": seat}) for seat in range(4)]
+        for mode, view in views:
+            with self.subTest(mode=mode, view=view):
+                trace = copy.deepcopy(base)
+                target = copy.deepcopy(source)
+                state = target["state"]
+                state.update(mode=mode, view=view)
+                if mode != "replay":
+                    state.pop("original_seq")
+                seat = view.get("seat") if isinstance(view, dict) else None
+                full = view == "full"
+                for container in (state["kyoku"], state["kyoku"]["turn"]["last_event"]):
+                    container["hands"] = [copy.deepcopy(hand) if full or actor == seat else {"count": 13}
+                                          for actor, hand in enumerate(source["state"]["kyoku"]["hands"])]
+                trace["visibility"][0]["projections"] = [dict(mode=mode, view=view, seat=None, message=target)]
+                self.check_ledger(trace)
+
+                # A leak in last_event remains fatal even when current hands
+                # have the right projection; full replay must retain its tiles.
+                hidden = next((actor for actor in range(4) if actor != seat), 0)
+                nested = state["kyoku"]["turn"]["last_event"]["hands"]
+                nested[hidden] = {"count": 13} if full else copy.deepcopy(source["state"]["kyoku"]["hands"][hidden])
+                with self.assertRaises(validator.ArtifactError):
+                    self.check_ledger(trace)
+
+    def test_event_projection_preserves_public_results_for_every_observer_view(self):
+        base = VECTORS["V265_session_snapshot_recursive_projection"]["positive"]["trace"]
+        hands = copy.deepcopy(base["visibility"][0]["source"]["state"]["kyoku"]["hands"])
+        hands[0]["tiles"].remove("9s")
+        events = [copy.deepcopy(step["message"])
+                  for step in VECTORS["V104_wire_complete_game"]["positive"]["trace"]["steps"]
+                  if step["message"].get("event", {}).get("type") in {"start_kyoku", "tsumo", "end_kyoku"}]
+        next(msg["event"] for msg in events if msg["event"]["type"] == "start_kyoku")["hands"] = hands
+        views = [("spectate", "public"), ("replay", "public"), ("replay", "full")]
+        views += [("replay", {"seat": seat}) for seat in range(4)]
+        for mode, view in views:
+            for message in events:
+                with self.subTest(mode=mode, view=view, event=message["event"]["type"]):
+                    trace = copy.deepcopy(base)
+                    source = copy.deepcopy(message)
+                    if mode == "replay":
+                        source["original_seq"] = source["seq"]
+                    target = copy.deepcopy(source)
+                    event = target["event"]
+                    seat = view.get("seat") if isinstance(view, dict) else None
+                    full = view == "full"
+                    if event["type"] == "start_kyoku":
+                        event["hands"] = [hand if full or actor == seat else {"count": 13}
+                                          for actor, hand in enumerate(event["hands"])]
+                    elif event["type"] == "tsumo" and not full and event["actor"] != seat:
+                        event["pai"] = None
+                    # end_kyoku, including the winning tile, scoring and ura
+                    # declaration, must remain identical in every projection.
+                    trace["visibility"] = [dict(source=source, projections=[
+                        dict(mode=mode, view=view, seat=None, message=target)])]
+                    self.check_ledger(trace)
+                    if event["type"] == "tsumo":
+                        event["pai"] = "9s" if event["pai"] is None else None
+                    elif event["type"] == "start_kyoku":
+                        hidden = next(actor for actor in range(4) if actor != seat)
+                        event["hands"][hidden] = {"count": 13} if full else copy.deepcopy(hands[hidden])
+                    else:
+                        event["result"]["wins"][0]["ura_dora_markers"] = ["1m"]
+                    with self.assertRaises(validator.ArtifactError):
+                        self.check_ledger(trace)
+
     @staticmethod
     def resequence_ledger(trace):
         seq = 0
