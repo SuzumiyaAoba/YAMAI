@@ -12,6 +12,7 @@ python3 scripts/test_validator.py
 python3 scripts/test_scoring_reference.py
 python3 scripts/test_session_contract.py
 python3 scripts/test_game_contract.py
+python3 scripts/test_resource_contract.py
 python3 scripts/test_tooling.py
 python3 tests/test_regressions.py
 python3 scripts/score_oracle.py
@@ -38,6 +39,7 @@ nix build path:.#checks.aarch64-darwin.artifact-validator --no-link --print-out-
 | [validate_artifacts.py](../scripts/validate_artifacts.py) | JSON、Schema の参照と対応 keyword、registry、版、profile hash、本文 JSON 例、公式ベクトル |
 | [check_jsonschema.py](../scripts/check_jsonschema.py) | 独立した Draft 2020-12 実装によるメタ Schema・正例・指定された負例の検査。全参照をローカルで解決する |
 | [request_contract.py](../scripts/request_contract.py) | 全3 member の選択、競合解決、ACK、期限、再送、取消し |
+| [resource_contract.py](../scripts/resource_contract.py) | session単位の累積control/ledger/replay予算、超過前の原子的拒否。実装全体のmemoryやschedulerの証明ではない |
 | [session_contract.py](../scripts/session_contract.py) | 交渉、token、seq、再送、snapshot、transport の再利用、資源上限と時計 |
 | [game_contract.py](../scripts/game_contract.py) | 完全な判断局面の合法候補、受信 event の牌数・牌山・鳴き・槓・リーチ・責任払い・精算・次局 |
 | [scoring_reference.py](../scripts/scoring_reference.py) | 手牌の全分解からの役・符・bonus・点数・支払い・供託・確定点数の再計算 |
@@ -132,3 +134,9 @@ private actionの候補検査は、名前付き引数・配列順・入れ子obj
 公式ベクトルの `schema_negative: true` は、独立した JSON Schema 検査でも拒否すべき入力を指定する。残りの意味的な不正入力は、状態検査や採点検査で拒否を確認する。完結した wire trace では、見送りや不採用の ACK に対応する結果も検査する。
 
 検査の成功は各検査層の範囲内の結果である。適合表明は [仕様書第17節](../docs/yamai-protocol.md#17-適合性) に従い、独立実装間の相互運用性は別途検証する。
+
+## 資源・transport境界の追加検査
+
+`python3 scripts/test_resource_contract.py` は有限予算のちょうどの上限と超過、別IDの後着attempt、無応答の重複input、累積replayの消費と原子性を検査する。counterはsessionが所有し、queue排出やsnapshot、再接続で新しいSessionBudgetを生成してはならない。参考値はサービス設定の出発点であり、wireの受信上限の追加ではない。
+
+`test_session_contract.py` は送信圧迫状態の微量drain、予約された結果の配送期限、およびWebSocketからJSONLへの復旧時に元payloadを変更せずsnapshotまたは拒否へfallbackする境界を検査する。replay_plan traceの省略可能なtarget_transportはwebsocket（既定）またはjsonlを指定する。`snapshot=True` は、呼出し側が交渉と内容を検証したsnapshotを提供できることを表し、helper自体によるsnapshot生成・妥当性証明ではない。

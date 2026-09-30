@@ -892,7 +892,7 @@ def check_release_manifest(manifest: Dict[str, Any], p: Dict[str, Any], r: Dict[
     if not isinstance(validator, Mapping) or validator.get("path") != "scripts/validate_artifacts.py" or validator.get("command") != "python3 scripts/validate_artifacts.py":
         raise ArtifactError("release_error", "release validator metadata mismatch")
     _repo_file(validator.get("path"), "validator.path")
-    if validator.get("support_files") != ["scripts/request_contract.py", "scripts/scoring_reference.py", "scripts/session_contract.py", "scripts/game_contract.py", "scripts/test_scoring_reference.py", "scripts/test_session_contract.py", "scripts/test_game_contract.py", "scripts/test_validator.py", "scripts/check_jsonschema.py", "scripts/score_oracle.py", "scripts/render_docs.py", "scripts/test_tooling.py", "tests/test_regressions.py"]:
+    if validator.get("support_files") != ["scripts/request_contract.py", "scripts/scoring_reference.py", "scripts/session_contract.py", "scripts/game_contract.py", "scripts/resource_contract.py", "scripts/test_scoring_reference.py", "scripts/test_session_contract.py", "scripts/test_game_contract.py", "scripts/test_resource_contract.py", "scripts/test_validator.py", "scripts/check_jsonschema.py", "scripts/score_oracle.py", "scripts/render_docs.py", "scripts/test_tooling.py", "tests/test_regressions.py"]:
         raise ArtifactError("release_error", "release validator support files mismatch")
     _repo_file_list(validator.get("support_files"), "validator.support_files")
 
@@ -1863,7 +1863,7 @@ def semantic_session_trace(trace: Mapping[str, Any], expected_hash: str) -> None
                     message = strict_load_bytes(raw, max_bytes=1048576)
                     validate("host-application", message)
                     _require(message["seq"] == seq, "invalid_message", "retained history sequence differs")
-            plan = replay_plan(history, trace["expected_seq"], trace["received_seq"], snapshot=trace.get("snapshot", False))
+            plan = replay_plan(history, trace["expected_seq"], trace["received_seq"], snapshot=trace.get("snapshot", False), target_transport=trace.get("target_transport", "websocket"))
             for raw in trace.get("append_after_plan", []):
                 history.append(raw.encode("utf-8"))
             actual = {key: [p.decode("utf-8") for p in value] if key == "payloads" else value for key, value in plan.items()}

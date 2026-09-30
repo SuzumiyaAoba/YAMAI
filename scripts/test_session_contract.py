@@ -166,6 +166,42 @@ class SessionInvariants(unittest.TestCase):
             replay_plan(history, 2, 4, snapshot=False)
         self.assertEqual(error.exception.code, 'resume_unavailable')
 
+    def test_cross_transport_replay_keeps_compatible_payload_bytes(self):
+        payloads = [b'{"seq":1}', b'{ "seq" : 2, "x_test_note":"escaped\\nline\\rreturn" }\t ',
+                    b'{"seq":3}']
+        for transport in ('jsonl', 'websocket'):
+            plan = replay_plan(payloads, 2, 3, target_transport=transport)
+            self.assertEqual(plan, {'strategy': 'replay', 'from': 2, 'through': 3,
+                                    'payloads': payloads[1:]})
+            self.assertIs(plan['payloads'][0], payloads[1])
+            if transport == 'jsonl':
+                self.assertEqual(len(v.parse_jsonl_chunks([b'\n'.join(plan['payloads']) + b'\n'])), 2)
+
+    def test_cross_transport_replay_requires_snapshot_for_incompatible_jsonl(self):
+        for incompatible in (b' {"seq":2}', b'\t{"seq":2}', b'{\n"seq":2\n}',
+                             b'{\r"seq":2}', b'{"seq":2}\n', b'{"seq":2}\r'):
+            with self.subTest(payload=incompatible):
+                self.assertEqual(v.strict_load_bytes(incompatible), {'seq': 2})
+                history = [b'{"seq":1}', incompatible, b'{"seq":3}']
+                original = history.copy()
+                plan = replay_plan(history, 2, 3, target_transport='websocket')
+                self.assertEqual(plan['payloads'], history[1:])
+                with self.assertRaises(SessionError) as error:
+                    replay_plan(history, 2, 3, target_transport='jsonl')
+                self.assertEqual(error.exception.code, 'resume_unavailable')
+                self.assertEqual(replay_plan(history, 2, 3, snapshot=True, target_transport='jsonl'),
+                                 {'strategy': 'snapshot', 'replaces_through_seq': 3, 'seq': 4})
+                self.assertEqual(history, original)
+
+    def test_cross_transport_replay_checks_only_required_retained_range(self):
+        history = [b' {"seq":1}', b'{"seq":2}', b'{"seq":3}']
+        self.assertEqual(replay_plan(history, 2, 3, target_transport='jsonl')['strategy'], 'replay')
+        history[2] = None
+        self.assertEqual(replay_plan(history, 2, 3, snapshot=True, target_transport='jsonl')['strategy'], 'snapshot')
+        with self.assertRaises(SessionError) as error:
+            replay_plan(history, 2, 3, snapshot=True, target_transport='unknown')
+        self.assertEqual(error.exception.code, 'invalid_message')
+
     def test_future_fatal_error_preserves_active_request_and_bank(self):
         trace = self.trace('wire_complete_game')
         receiver = self.receiver(trace['welcome'])
@@ -1647,6 +1683,94 @@ class SessionInvariants(unittest.TestCase):
                 mutate(snapshot)
                 with self.assertRaisesRegex(SessionError, pattern):
                     receiver.receive(self.raw(snapshot))
+
+
+class ResourceOutputTimers(unittest.TestCase):
+    @staticmethod
+    def run_trace(steps, **initial):
+        from session_contract import resource_trace
+        return resource_trace({'steps': steps, **initial})
+
+    def assert_limit(self, steps, **initial):
+        with self.assertRaises(SessionError) as caught:
+            self.run_trace(steps, **initial)
+        self.assertEqual(caught.exception.code, 'resource_limit')
+
+    def test_partial_drain_cannot_refresh_initial_full_queue(self):
+        for initial, drain in (({'backlog_bytes': 8388608, 'backlog_messages': 1},
+                                {'bytes': 1, 'messages': 0}),
+                               ({'backlog_bytes': 1024, 'backlog_messages': 1024},
+                                {'bytes': 1, 'messages': 1})):
+            with self.subTest(initial=initial):
+                self.assert_limit([{'op': 'drain', 'at_ms': 59999, **drain},
+                                   {'op': 'tick', 'at_ms': 60000}], **initial)
+
+    def test_pressure_deadline_precedes_drain_at_exact_boundary(self):
+        self.assert_limit([{'op': 'drain', 'at_ms': 60000, 'bytes': 8388608, 'messages': 1}],
+                          backlog_bytes=8388608, backlog_messages=1)
+
+    def test_both_bytes_and_messages_must_discharge(self):
+        for drain in ({'bytes': 8388608, 'messages': 0}, {'bytes': 0, 'messages': 1}):
+            with self.subTest(drain=drain):
+                self.assert_limit([{'op': 'drain', 'at_ms': 1, **drain},
+                                   {'op': 'tick', 'at_ms': 60000}],
+                                  backlog_bytes=8388608, backlog_messages=1)
+
+    def test_blocked_output_remains_required_after_queue_drains(self):
+        steps = [{'op': 'enqueue', 'at_ms': 10, 'bytes': 9},
+                 {'op': 'drain', 'at_ms': 20, 'bytes': 8388600, 'messages': 1}]
+        self.assert_limit(steps + [{'op': 'tick', 'at_ms': 60010}],
+                          backlog_bytes=8388600, backlog_messages=1)
+        completed = steps + [{'op': 'enqueue', 'at_ms': 21, 'bytes': 9},
+                             {'op': 'drain', 'at_ms': 22, 'bytes': 9, 'messages': 1},
+                             {'op': 'tick', 'at_ms': 60010}]
+        self.assertEqual(self.run_trace(completed, backlog_bytes=8388600, backlog_messages=1)[-1]['outcome'], 'ok')
+        self.assert_limit(steps + [{'op': 'enqueue', 'at_ms': 59999, 'bytes': 9},
+                                   {'op': 'drain', 'at_ms': 60000, 'bytes': 1, 'messages': 0},
+                                   {'op': 'tick', 'at_ms': 60010}],
+                          backlog_bytes=8388600, backlog_messages=1)
+
+    def test_blocked_output_cannot_be_replaced_with_another_size(self):
+        with self.assertRaises(SessionError) as caught:
+            self.run_trace([{'op': 'enqueue', 'at_ms': 0, 'bytes': 9},
+                            {'op': 'drain', 'at_ms': 1, 'bytes': 8388600, 'messages': 1},
+                            {'op': 'enqueue', 'at_ms': 2, 'bytes': 1}],
+                           backlog_bytes=8388600, backlog_messages=1)
+        self.assertEqual(caught.exception.code, 'invalid_message')
+
+    def test_completed_pressure_cohort_does_not_age_later_output(self):
+        steps = [{'op': 'drain', 'at_ms': 1, 'bytes': 1, 'messages': 0},
+                 {'op': 'enqueue', 'at_ms': 2, 'bytes': 1},
+                 {'op': 'drain', 'at_ms': 3, 'bytes': 8388607, 'messages': 1},
+                 {'op': 'tick', 'at_ms': 60000}]
+        self.assertEqual(self.run_trace(steps, backlog_bytes=8388608, backlog_messages=1)[-1]['outcome'], 'ok')
+
+    def test_unpressured_initial_backlog_has_no_write_timer(self):
+        self.assertEqual(self.run_trace([{'op': 'tick', 'at_ms': 120000}],
+                                        backlog_bytes=8388607, backlog_messages=1023)[-1]['outcome'], 'ok')
+
+    def test_reservation_timer_starts_at_resolution_not_open(self):
+        steps = [{'op': 'open_request', 'at_ms': 0, 'reserved_bytes': 100, 'reserved_messages': 1},
+                 {'op': 'tick', 'at_ms': 1800000},
+                 {'op': 'terminalize', 'at_ms': 1800000}]
+        self.assertEqual(self.run_trace(steps + [{'op': 'tick', 'at_ms': 1859999}])[-1]['outcome'], 'ok')
+        self.assert_limit(steps + [{'op': 'tick', 'at_ms': 1860000}])
+        self.assert_limit(steps + [{'op': 'enqueue', 'at_ms': 1859998, 'bytes': 100, 'uses_reservation': True},
+                                   {'op': 'drain', 'at_ms': 1859999, 'bytes': 1, 'messages': 0},
+                                   {'op': 'tick', 'at_ms': 1860000}])
+        delivered = steps + [{'op': 'enqueue', 'at_ms': 1800001, 'bytes': 100, 'uses_reservation': True},
+                             {'op': 'drain', 'at_ms': 1800002, 'bytes': 100, 'messages': 1},
+                             {'op': 'tick', 'at_ms': 1860000}]
+        self.assertEqual(self.run_trace(delivered)[-1]['outcome'], 'ok')
+
+    def test_reserved_results_keep_existing_backpressure_boundary(self):
+        vectors = v.strict_load(v.ROOT / f'test-vectors/protocol/{v.PROTOCOL}/vectors.json')
+        case = vectors['V120_reserved_output_survives_backpressure']
+        from session_contract import resource_trace
+        self.assertEqual(resource_trace(case['positive']['trace']), case['positive']['trace']['expected'])
+        with self.assertRaises(SessionError) as caught:
+            resource_trace(case['negative']['trace'])
+        self.assertEqual(caught.exception.code, 'resource_limit')
 
 
 if __name__ == '__main__':

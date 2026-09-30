@@ -1601,6 +1601,8 @@ JSON 構文違反、message Schema 違反または `session_id` 不一致は、�
 
 受信者も、未終端requestを取消す `stale` は `chombo` policyだけで受理し、その結果を `penalty` の `end_kyoku` と照合する（MUST）。取消した候補を打牌・副露・和了として適用してはならない。passed・defaulted・supersededで解決済みの反応を、取消しの代わりとしてpenaltyへ置換してはならない（MUST NOT）。既存終端に対する後着通知の `stale` はこの取消しと区別し、元の結果を再適用しない。
 
+`chombo` は競技規則による局取消しであり、悪意あるpeerに対する資源制御ではない。特に `penalty_points == 0` は合法だが、OPENの反応窓で故意の不正入力を行い、他seatの未確定選択を無償で取り消せる。不特定または相互に信頼しないplayerの対戦サービスは `reject` または `default` を選択すべきである（SHOULD）。`chombo` を採用する場合は、反復違反に対する参加停止等の運用方針をサービスprofileで明示すべきである（SHOULD）。正の罰点だけで妨害を防げるとはみなさず、§15の資源超過をchomboへ変換しない。相手の未確定選択は通常のwireから公開されないため、この注意は他seatの和了を事前に観測できることを意味しない。
+
 ## 9. `ack` と timeout
 
 ```json
@@ -1655,14 +1657,14 @@ time_bank_ms = B - consumed_ms
 
 ### 9.2 再送・後着actionの判定順
 
-Schemaとsession/game IDを検証してから、次の順に処理する（MUST）。`SELECTED` は終端ACKがまだなくても最初の選択を保持する。
+Schemaとsession/game IDを検証し、第15節のsession資源予算へのadmissionを通過してから、次の順に処理する（MUST）。`SELECTED` は終端ACKがまだなくても最初の選択を保持する。
 
 1. 当該sessionのseatへ発行していない `request_id` は第8.5節のrecoverable `invalid_action` errorとし、ACKを生成しない。他seatのIDがgroup member一覧から既知でも、そのseatの選択を変更してはならない（MUST NOT）。
 2. 取消されておらず明示actionで選択済みなら、同じ `action_id` は無応答の冪等な再送として扱う。異なるIDはrecoverable `request_conflict` とする。元の選択を維持し、不正action policyを再適用しない。errorには受信した `request_id` と `action_id` を含め、元の終端statusが存在するときだけ `original_status` を含める。
 3. 自動選択または取消し済みなら、後着actionを状態へ適用せず `stale` ACKを新しいseqで返す。未配信の終端ACKがある場合は、そのACKと結果event列の後へ通知を並べる。`elapsed_ms` と `time_bank_ms` は元の終端ACKと同じとする。同じ後着 `(request_id, action_id)` への `stale` は最初の1回だけ生成し、同一再送では追加messageを生成しない。
 4. それ以外の `OPEN` requestは、まず期限を検査する。期限到達なら既定選択を固定し、後着の処理を行う。期限前なら、候補内IDを `SELECTED` に固定し、候補外IDを第8.5節で処理する。`reject` policyによる不正選択は固定されず、その後の正しいactionを元の期限まで受け付ける。
 
-resumeまたはsequence-gapのreplayでは、生成済みACKを元のseqとwire内容で再送する。元の終端ACK、後着の通知、明示選択か自動選択か、計時結果およびID対応を少なくとも同gameの `end_game` と保留中の後着通知のcommitまで保持する（MUST）。有効なresume tokenが残る場合は第13節の回復にも必要な履歴を保持する。
+resumeまたはsequence-gapのreplayでは、生成済みACKを元のseqとwire内容で再送する。元の終端ACK、後着の通知、明示選択か自動選択か、計時結果およびID対応を少なくとも同gameの `end_game` と保留中の後着通知のcommitまで保持する（MUST）。有効なresume tokenが残る場合は第13節の回復にも必要な履歴を保持する。第15節の資源予算超過で当該sessionをfatal終了させた場合だけ、このsessionの復旧用履歴・attempt保持義務を終了できる。接続を切るだけ、またはsnapshotを適用するだけではこの例外にならない。
 
 受信者は観測済みの後着 `(request_id, action_id)` も保持し、同じ組のstale通知を別の新しいseqで受理してはならない（MUST NOT）。同一seq・同一byteの再送は通常どおり無視し、同じrequestでも異なる後着action_idは別attemptとする。requestを終端化する取消しstaleは後着通知とは別である。resumeやsnapshotで、既に観測したattemptを消去して再通知を許可しない。snapshotで元requestを失った場合も、置換後に観測した後着通知の重複は検査する（MUST）。
 
@@ -1913,6 +1915,8 @@ expires_in_msは正の期間であり、ホストの単調時計で確定した�
 再開時は、期限処理と既に閉じたgroupの解決を行ってから、その時点の最大seqをwelcomeの必須 `replay_through_seq` に固定する（MUST）。値は0以上で、last_seqがこれを超える要求は `resume_unavailable` とする。replay_from_seqはlast_seq+1である。両値で空であることも表現できる（from=through+1）。新規sessionのwelcomeには両memberを含めない。
 
 履歴を再送する場合はfromからthroughまでの全messageを元のseqとbyte内容で送信し、その後で初めてthroughより新しいmessageへ進む（MUST）。再送範囲を実行中に伸ばしてはならない（MUST NOT）。範囲送信中もhost内部の時計と対局処理を継続し、新しい結果を順序付き履歴へ追記する。再送できない範囲があれば、交渉済みsnapshotでthrough以上を置換するか、fatal resume_unavailableとする。
+
+再送可能性には、新しいtransport上で元のpayload byte列をそのままframe化できることも含む。WebSocket上の有効なJSONに先頭空白またはraw CR/LFが含まれる場合、第4.2節のJSONLへ同じbyte列を再送できない。transportを変更する再開では、必要な区間全体を事前に検査し、互換でなければ新transport向けに生成した有効な交渉済みsnapshotで代替するか、`resume_unavailable` で拒否する（MUST）。空白除去、改行変更、再直列化で既存ledger entryを変換してはならない（MUST NOT）。JSONLでも表現可能なpayloadを最初から生成する実装はこの制限を回避できるが、WebSocketの受信文法をJSONLへ狭める必要はない。
 
 この全messageには、過去の回復で作成したsnapshotと、終局前に受け付けてend_game後へ記録した後着stale通知も含む。連続した履歴中のsnapshotは第13.3節に従ってその時点のprefixへ適用し、replay_through_seqまでの再送を継続する。古いsnapshotの置換範囲やremaining_msを今回の再開時刻へ書き換えてはならない（MUST NOT）。
 
@@ -2381,7 +2385,17 @@ event数はstart_game・start_kyoku・end_kyoku・end_gameと拡張eventを含�
 
 不完全なJSONL行またはWebSocket messageの最初のbyteを受信してから60,000ms未満にmessageが完成しなければ、fatal resource_limitとしてtransportを閉じる（MUST）。期限ちょうどはtimeoutを優先する。途中byteの追加で期限をresetしてはならない（MUST NOT）。hello待ちは接続開始、join待ちはhelloの送信キュー記録完了、クライアントのwelcome待ちはjoinの送信キュー記録完了を起点に同じ60,000msとする。通常のapplication messageを待つidle時間とは区別する。
 
-送信者はbacklog上限を超えてenqueueせず、backpressureを適用して順序とseqを維持する（MUST）。新しいrequestを発行する前に、そのrequest・終端ACK・結果event列を記録する空間を確保し、既存requestのtimeoutと解決をbackpressureで止めてはならない（MUST NOT）。送信キューと再送履歴は異なる資源である。満杯から60,000ms経過してもpeerがdrainしない場合は、送信可能なら `resource_limit` を通知してtransportを閉じる。切断後もgameの内部処理を続け、履歴を保持できなくなったsessionは再開時に `resume_unavailable` とする（MUST）。ログ出力はprotocol transportと分離し、標準入出力transportでは診断をstderrへ出す（MUST）。
+送信者はbacklog上限を超えてenqueueせず、backpressureを適用して順序とseqを維持する（MUST）。新しいrequestを発行する前に、そのrequest・終端ACK・結果event列を記録する空間を確保し、既存requestのtimeoutと解決をbackpressureで止めてはならない（MUST NOT）。送信キューと再送履歴は異なる資源である。送信queueが満杯になるか、容量不足でenqueueを拒否した最初の時刻から、60,000msの固定配送窓を開始する（MUST）。その時点でqueueにある出力と、拒否して保留した出力が配送義務集合となる。byteの一部または一部messageだけのdrainで起点を更新してはならない（MUST NOT）。拒否した出力の再enqueueにも元の起点を引き継ぎ、別の出力へ置き換えて義務を消してはならない。requestの容量予約だけでは時計を開始しないが、requestを終端化して配送すべき予約結果が生じた時点では、まだ窓がなければ同じ固定窓を開始し、残る予約結果と既存queueを義務集合へ含める。既に窓があれば起点を延長せず予約結果を追加する。義務集合の全byte・全messageが配送され、拒否した保留出力と未enqueueの予約結果もなくなった場合だけ窓を終了できる。後から追加された無関係な非圧迫出力が残るだけなら窓を終了してよい。期限ちょうどを含め、窓の開始から60,000msまでに義務が残れば、送信可能なら `resource_limit` を通知してtransportを閉じる（MUST）。この制約は全ての通常出力の絶対滞留上限ではなく、圧迫がなく予約結果も発生していないqueueに一律の配送期限を課すものではない。配送窓の超過は通常の通信断ではなくfatalな資源終了として第15.1節を適用し、通知を配送できなくても当該sessionのtokenを失効させ、履歴やsnapshotが存在しても同じsessionを再開しない（MUST）。通常の通信断だけなら第13節の復旧を許可し、履歴も有効なsnapshotも提供できない場合に `resume_unavailable` とする。どちらの場合も稼働しているhostのgame内部処理と既存時計は継続する（MUST）。ログ出力はprotocol transportと分離し、標準入出力transportでは診断をstderrへ出す（MUST）。
+
+### 15.1 Session単位の累積予算
+
+送信queueがdrainされても、既知attempt集合・wire ledger・再送処理の総量は減るとは限らない。実装はsessionに結び付いた受信control message数とpayload byte数、新規ledger payload byte数、および再送payload byte数について、それぞれ有限の正の上限を持ち、サービスprofileまたは運用設定に公開しなければならない（MUST）。参考既定値は順に100,000 message、64 MiB、64 MiB、256 MiBとする。これは新しいwire交渉memberや全実装共通の受信上限ではなく、実装の容量に応じて明示するsession予算である。MiBは1,048,576 byteとする。
+
+受信controlにはaction、request、ack、error、snapshot、既存sessionのresume/replay要求を含め、重複再送・未知request・候補外actionも1受信ごとに数える。未認証の別sessionへの自己申告だけで、そのsessionの予算を消費させてはならない（MUST NOT）。byte数はUTF-8 JSON payloadそのものを数え、transport headerやJSONLの終端CR/LFを除く。ledger予算はgame eventを含む新しいimmutable entryを1回だけ数え、再送予算は同じentryでも配送を再び予定するたびに数える。snapshot生成は新しいledger entryであり、古いentryを捨てても既に消費した累積予算を返却しない。queue排出、snapshot、同じsession_idでの再接続・token rotationによって、これらのcounterをresetしてはならない（MUST NOT）。通常の新しいsessionにだけ新予算を与える。別途、同時session数・接続頻度・実際のobject管理領域等にはサービス側の有限上限が必要であり、このpayload会計だけを実装全体のmemory上限の証明とみなさない。
+
+上限ちょうどまで許可し、それを超える次の処理は、attempt登録・新しいseq割当て・応答生成・配送予約の前に原子的に拒否する（MUST）。複数entryを作るtransactionはまとめて必要量を確保する。第12節第1–4層で既に確定したfatalなframe/構文/Schema/session違反の分類を変更しないが、通常のstale/rejected/request_conflict等を生成する義務より資源予算のadmissionを優先する。超過時は当該sessionをfatal `resource_limit` とし、入力の処理を停止し、tokenを失効させる（MUST）。この終了通知に限り累積予算とは別に最大1 messageを予約してよいが（MAY）、1 MiBと送信backlog上限を超えてはならず、送信不能なら通知なしでtransportを閉じる。終了通知のために別のerrorを生成するループを作らない。
+
+fatal終了したsessionは再開できず、その復旧ledger・attempt保持義務を終了できる。既にcommitした対局状態を巻き戻したり、他seatの予算を消費させたり、資源超過を和了・chombo・局取消しに変換してはならない（MUST NOT）。hostが稼働する限り、既存requestの時計・既定選択・group解決は継続し、参加を続ける他sessionへの結果を記録する（MUST）。終了sessionへの新規配送だけを打ち切り、そのsessionのquotaに依存してgame全体を停止しない。session内部解決のためにまだ必要な最小stateは、当該request/groupが解決するまで保持する。
 
 ## 16. 成果物と版の一致
 

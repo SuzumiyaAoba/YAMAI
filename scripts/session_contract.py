@@ -663,10 +663,23 @@ class Receiver:
         return "applied"
 
 
-def replay_plan(history: list[bytes], expected: int, received: int, *, snapshot: bool = False) -> dict:
+def replay_payload_compatible(payload: bytes, target_transport: str) -> bool:
+    """Check framing compatibility of an already validated ledger payload.
+
+    Ledger payloads exclude transport delimiters. In particular, raw CR/LF in
+    a WebSocket payload cannot be removed or reinterpreted as JSONL delimiters.
+    """
+    require(target_transport in {"jsonl", "websocket"}, "invalid_message", "unknown replay target transport")
+    return target_transport == "websocket" or (payload.startswith(b"{") and b"\r" not in payload and b"\n" not in payload)
+
+
+def replay_plan(history: list[bytes | None], expected: int, received: int, *, snapshot: bool = False,
+                target_transport: str = "websocket") -> dict:
     require(1 <= expected < received <= len(history), "invalid_message", "gap request lies outside emitted history")
-    if any(payload is None for payload in history[expected-1:]):
-        require(snapshot, "resume_unavailable", "history is not retained")
+    require(target_transport in {"jsonl", "websocket"}, "invalid_message", "unknown replay target transport")
+    if any(payload is None or not replay_payload_compatible(payload, target_transport)
+           for payload in history[expected-1:]):
+        require(snapshot, "resume_unavailable", "history is not retained or cannot be replayed on the target transport")
         return {"strategy": "snapshot", "replaces_through_seq": len(history), "seq": len(history)+1}
     return {"strategy": "replay", "from": expected, "through": len(history), "payloads": history[expected-1:].copy()}
 
@@ -696,7 +709,13 @@ def classify_player_input(message: dict, context: dict, validate: Callable[[str,
 
 
 def resource_trace(trace: dict) -> list[dict]:
-    """Resource timers use a monotonic, integer-ms test clock."""
+    """Resource timers use a monotonic, integer-ms test clock.
+
+    A pressure episode tracks the FIFO output already queued when enqueue
+    blocks or the queue fills. Partial drains cannot refresh its deadline.
+    A blocked nonreserved enqueue is retried by the next successful matching
+    nonreserved enqueue; reserved results may still use their secured space.
+    """
     pending_frame = None
     frame_bytes = 0
     waiting_join = trace.get("join_wait_started_ms")
@@ -706,7 +725,21 @@ def resource_trace(trace: dict) -> list[dict]:
     backlog_messages = trace.get("backlog_messages", 0)
     require(type(backlog_bytes) is int and type(backlog_messages) is int and backlog_bytes >= 0 and backlog_messages >= 0, "invalid_message", "invalid initial backlog")
     require(backlog_bytes <= 8388608 and backlog_messages <= 1024, "resource_limit", "initial backlog exceeds limits")
-    stalled_since = 0 if backlog_bytes == 8388608 or backlog_messages == 1024 else None
+    queued = ([{"bytes": backlog_bytes, "messages": backlog_messages, "pressured": False}]
+              if backlog_bytes or backlog_messages else [])
+    stalled_since = None
+    blocked_bytes = None
+    result_due = False
+
+    def start_pressure(at_ms: int) -> None:
+        nonlocal stalled_since
+        if stalled_since is None:
+            stalled_since = at_ms
+            for output in queued:
+                output["pressured"] = True
+
+    if backlog_bytes == 8388608 or backlog_messages == 1024:
+        start_pressure(0)
     unresolved = 0
     reserved_bytes = 0
     reserved_messages = 0
@@ -743,11 +776,17 @@ def resource_trace(trace: dict) -> list[dict]:
             uses_reservation = step.get("uses_reservation", False)
             if uses_reservation:
                 require(reserved_messages > 0 and 0 <= step["bytes"] <= reserved_bytes, "invalid_message", "message exceeds its reservation")
+            elif blocked_bytes is not None:
+                require(step["bytes"] == blocked_bytes, "invalid_message", "blocked output must be retried before another unreserved output")
             unavailable = backlog_bytes + step["bytes"] + (0 if uses_reservation else reserved_bytes) > 8388608 or backlog_messages + 1 + (0 if uses_reservation else reserved_messages) > 1024
             if unavailable:
-                stalled_since = now if stalled_since is None else stalled_since
+                start_pressure(now)
+                if not uses_reservation:
+                    blocked_bytes = step["bytes"]
                 result.append({"at_ms":now,"outcome":"backpressure","unresolved":unresolved})
                 continue
+            pressured = result_due if uses_reservation else blocked_bytes is not None
+            queued.append({"bytes": step["bytes"], "messages": 1, "pressured": pressured})
             backlog_bytes += step["bytes"]
             backlog_messages += 1
             if uses_reservation:
@@ -755,14 +794,28 @@ def resource_trace(trace: dict) -> list[dict]:
                 reserved_messages -= 1
                 if reserved_messages == 0:
                     reserved_bytes = 0
+                    result_due = False
+            else:
+                blocked_bytes = None
             if backlog_bytes == 8388608 or backlog_messages == 1024:
-                stalled_since = now if stalled_since is None else stalled_since
+                start_pressure(now)
         elif op == "drain":
             require(step["bytes"] <= backlog_bytes and step["messages"] <= backlog_messages, "invalid_message", "drained more than queued")
             backlog_bytes -= step["bytes"]
             backlog_messages -= step["messages"]
-            if step["bytes"] or step["messages"]:
-                stalled_since = now if backlog_bytes == 8388608 or backlog_messages == 1024 else None
+            # Initial traces provide only aggregate backlog counts. Drain each
+            # dimension FIFO and retire a cohort only when both are discharged.
+            for field in ("bytes", "messages"):
+                remaining = step[field]
+                for output in queued:
+                    amount = min(remaining, output[field])
+                    output[field] -= amount
+                    remaining -= amount
+            queued = [output for output in queued if output["bytes"] or output["messages"]]
+            if blocked_bytes is None and not result_due and not any(output["pressured"] for output in queued):
+                stalled_since = None
+                if backlog_bytes == 8388608 or backlog_messages == 1024:
+                    start_pressure(now)
         elif op == "open_request":
             require(unresolved == 0 and reserved_messages == 0, "resource_limit", "duplicate unresolved request or undelivered result at one seat")
             require(backlog_bytes + step["reserved_bytes"] <= 8388608 and backlog_messages + step["reserved_messages"] <= 1024, "resource_limit", "request output cannot be reserved")
@@ -771,6 +824,9 @@ def resource_trace(trace: dict) -> list[dict]:
         elif op == "terminalize":
             require(unresolved == 1, "invalid_message", "no open request")
             unresolved = 0
+            if reserved_messages:
+                start_pressure(now)
+                result_due = True
         elif op == "event":
             require(event_count < 100000, "resource_limit", "game event count exceeded")
             event_count += 1
