@@ -53,6 +53,44 @@ class SessionInvariants(unittest.TestCase):
                         receiver.begin_resume(welcome)
                     self.assertEqual(error.exception.code, 'resume_unavailable')
 
+    def test_live_group_deadline_includes_negotiated_grace_before_gap(self):
+        trace = deepcopy(self.vectors['V272_ankan_never_requires_reactions']['positive']['trace'])
+        request = trace['steps'][4]['message']
+        floor = (trace['welcome']['rules']['time_control']['grace_ms']
+                 + request['timeout_ms'] + request['time_bank_ms'])
+        for offset in (0, 2):
+            for deadline in (floor, floor - 1, floor - 3000):
+                with self.subTest(offset=offset, deadline=deadline):
+                    receiver = self.receiver(trace['welcome'])
+                    for step in trace['steps'][:4]:
+                        receiver.receive(self.raw(step['message']))
+                    before = deepcopy(vars(receiver.game))
+                    candidate = {**request, 'seq': request['seq'] + offset,
+                                 'decision_group_deadline_ms': deadline}
+                    if deadline == floor:
+                        expected = 'applied' if offset == 0 else 'sequence_gap'
+                        self.assertEqual(receiver.receive(self.raw(candidate)), expected)
+                    else:
+                        with self.assertRaises(SessionError) as error:
+                            receiver.receive(self.raw(candidate))
+                        self.assertEqual(error.exception.code, 'invalid_message')
+                        self.assertEqual(receiver.applied, request['seq'] - 1)
+                        self.assertEqual(vars(receiver.game), before)
+                        self.assertEqual(receiver.active_requests, set())
+                        self.assertTrue(receiver.closed)
+
+    def test_session_validator_checks_grace_for_live_and_pending_requests(self):
+        trace = deepcopy(self.vectors['V272_ankan_never_requires_reactions']['positive']['trace'])
+        request = trace['steps'][4]['message']
+        validate = v._session_schema_validator(self.schemas, self.digest, rules=trace['welcome']['rules'])
+        floor = (trace['welcome']['rules']['time_control']['grace_ms']
+                 + request['timeout_ms'] + request['time_bank_ms'])
+        for kind in ('host-application', 'pending-request'):
+            validate(kind, {**request, 'decision_group_deadline_ms': floor})
+            with self.subTest(kind=kind), self.assertRaises(SessionError) as error:
+                validate(kind, {**request, 'decision_group_deadline_ms': floor - 1})
+            self.assertEqual(error.exception.code, 'invalid_message')
+
     def test_future_fatal_error_preserves_validation_priority(self):
         welcome = self.trace('wire_complete_game')['welcome']
         fatal = {key: welcome[key] for key in ('yamai', 'session_id', 'game_id')}

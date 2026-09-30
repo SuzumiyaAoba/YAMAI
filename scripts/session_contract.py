@@ -384,6 +384,13 @@ class Receiver:
         mode = self.welcome["mode"]
         require(mode == "play" or kind not in {"request", "ack"}, "invalid_message",
                 "observer received a request or ACK")
+        if kind == "request" and "decision_group_id" in message:
+            # Negotiated grace is known even when intervening events are lost.
+            # Enforce it before classifying a future request as a sequence gap.
+            deadline = (self.welcome["rules"]["time_control"]["grace_ms"]
+                        + message["timeout_ms"] + message["time_bank_ms"])
+            require(message["decision_group_deadline_ms"] >= deadline, "invalid_message",
+                    "decision group deadline is shorter than the individual deadline")
         if kind == "event":
             self.validate("visible-event", {"event": message["event"], "mode": mode,
                                             "view": self.welcome["view"], "seat": self.welcome["seat"]})

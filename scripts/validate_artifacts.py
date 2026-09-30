@@ -111,7 +111,10 @@ def _walk_json(value: Any, depth: int = 0, path: str = "$") -> None:
             raise ArtifactError("invalid_json", "integer outside IEEE-754 safe range at " + path)
         return
     if isinstance(value, (float, Decimal)):
-        if not math.isfinite(value):
+        # Decimal may represent a finite fraction outside binary64's range.
+        # Converting it through math.isfinite would turn that value into inf.
+        finite = value.is_finite() if isinstance(value, Decimal) else math.isfinite(value)
+        if not finite:
             raise ArtifactError("invalid_json", "non-finite number at " + path)
         return
     if isinstance(value, str):
@@ -178,6 +181,42 @@ def strict_load(path: Path) -> Any:
     except ValueError:
         source = str(resolved)
     return strict_load_bytes(path.read_bytes(), source=source)
+
+
+def _is_multiple_of(value: Any, divisor: Any) -> bool:
+    """Exact decimal divisibility without context rounding or exponent expansion."""
+    def decimal(number: Any) -> Decimal:
+        return number if isinstance(number, Decimal) else Decimal(str(number)) if isinstance(number, float) else Decimal(number)
+
+    if isinstance(divisor, bool) or not isinstance(divisor, (int, float, Decimal)):
+        raise ArtifactError("schema_error", "multipleOf must be a positive number")
+    denominator = decimal(divisor)
+    if not denominator.is_finite() or denominator <= 0:
+        raise ArtifactError("schema_error", "multipleOf must be a positive number")
+    numerator = decimal(value)
+    if not numerator.is_finite():
+        return False
+    if numerator.is_zero():
+        return True
+
+    def parts(number: Decimal) -> Tuple[int, int]:
+        _, digits, exponent = number.as_tuple()
+        end = len(digits)
+        while digits[end - 1] == 0:
+            end -= 1
+            exponent += 1
+        # Decimal-to-int conversion has no string-to-int digit-limit artifact.
+        coefficient = int(Decimal((0, digits[:end], 0)))
+        return coefficient, exponent
+
+    a, a_exponent = parts(numerator)
+    b, b_exponent = parts(denominator)
+    difference = a_exponent - b_exponent
+    if difference < 0:
+        # The normalized numerator lacks a factor of ten; an extra factor of
+        # ten in the denominator therefore cannot divide it.
+        return False
+    return ((a % b) * pow(10, difference, b)) % b == 0
 
 
 def _json_type(value: Any, name: str) -> bool:
@@ -365,7 +404,7 @@ class SchemaSet:
                 raise ArtifactError("invalid_message", f"minimum mismatch at {path}")
             if "maximum" in schema and value > schema["maximum"]:
                 raise ArtifactError("invalid_message", f"maximum mismatch at {path}")
-            if "multipleOf" in schema and value % schema["multipleOf"] != 0:
+            if "multipleOf" in schema and not _is_multiple_of(value, schema["multipleOf"]):
                 raise ArtifactError("invalid_message", f"multipleOf mismatch at {path}")
         if isinstance(value, str):
             if "minLength" in schema and len(value) < schema["minLength"]:
@@ -1001,7 +1040,8 @@ def _check_request(message: Mapping[str, Any], *, grace_ms: int | None = None, e
         _require(action_id not in action_ids, "invalid_message", "action_id is not unique")
         action_ids.add(action_id)
         _check_action_object(candidate.get("action"), expected_actor=seat, extension_types=extension_contexts)
-        choice = canonical_action(candidate["action"])
+        choice = canonical_action(candidate["action"],
+                                  private_payload=candidate["action"]["type"] in extension_contexts)
         _require(choice not in choices, "invalid_message", "same choice is listed under more than one action ID")
         choices.add(choice)
     _require(message.get("default_action_id") in action_ids, "invalid_message", "default_action_id is not a legal action")
@@ -1766,7 +1806,8 @@ def _session_schema_validator(schemas: SchemaSet, expected_hash: str, definition
                 _check_decision_cause(message["request"], message["cause"])
                 return
             if kind == "pending-request":
-                _check_request(message, extension_contexts=extension_contexts)
+                _check_request(message, grace_ms=rules["time_control"]["grace_ms"] if rules is not None else None,
+                               extension_contexts=extension_contexts)
                 return
             if kind == "visible-event":
                 _check_event_visibility(message["event"], message["mode"], message["view"], message["seat"])
@@ -1784,7 +1825,8 @@ def _session_schema_validator(schemas: SchemaSet, expected_hash: str, definition
             else:
                 schemas.validate(message, {"$ref": urn + kind})
             if message.get("kind") == "request":
-                _check_request(message, extension_contexts=extension_contexts)
+                _check_request(message, grace_ms=rules["time_control"]["grace_ms"] if rules is not None else None,
+                               extension_contexts=extension_contexts)
             elif message.get("kind") == "snapshot":
                 _check_snapshot(message, extension_contexts, rules=rules)
             else:
@@ -1904,10 +1946,12 @@ def semantic_ledger_trace(trace: Mapping[str, Any], expected_hash: str) -> None:
         ledger[seq], previous = entry, seq
     hello = join = receiver = None
     now, seen = -1, set()
-    starts, first_actions = {}, {}
+    starts, selections = {}, {}
+    diagnostic_obligations, captured_diagnostics = [], []
+    untracked_action_diagnostics = False
     pending_transaction = None
     try:
-        for step in trace["messages"]:
+        for capture_index, step in enumerate(trace["messages"]):
             _require(step["at_ms"] >= now, "invalid_message", "capture clock moved backwards")
             now = step["at_ms"]
             _require(step["client_id"] == client["client_id"], "invalid_message", "message belongs to another capture")
@@ -1933,8 +1977,40 @@ def semantic_ledger_trace(trace: Mapping[str, Any], expected_hash: str) -> None:
                 _require(msg["session_id"] == trace["session_id"] and msg["game_id"] == trace["game_id"], "invalid_message", "input session differs")
                 if kind == "action":
                     rid = msg["request_id"]
-                    _require(rid in receiver.requests, "invalid_action", "action references an unknown request")
-                    first_actions.setdefault(rid, (msg["action_id"], now))
+                    if receiver.ended:
+                        continue  # Well-formed post-game input has no response.
+                    if rid not in receiver.requests:
+                        if receiver.floor > 0:
+                            # Replaced history may contain this request's
+                            # terminal result; absence here does not prove it
+                            # was unknown to the host (stale/idempotent input).
+                            untracked_action_diagnostics = True
+                            continue
+                        diagnostic_obligations.append({"request_id": rid, "action_id": msg["action_id"],
+                                                       "index": capture_index, "rejected": False})
+                        continue  # Diagnostics must not reserve or create a request.
+                    request = receiver.requests[rid]
+                    if rid not in starts or "decision_group_id" in request:
+                        # Group lifecycles and snapshot-restored ingress clocks
+                        # remain outside this single-request capture check.
+                        untracked_action_diagnostics = True
+                    if rid in starts and rid in receiver.active_requests and rid not in selections and "decision_group_id" not in request:
+                        grace = receiver.welcome["rules"]["time_control"]["grace_ms"]
+                        deadline = grace + request["timeout_ms"] + request["time_bank_ms"]
+                        elapsed = max(0, now - starts[rid])
+                        if elapsed >= deadline:
+                            selections[rid] = (request["default_action_id"], "default", deadline)
+                        elif msg["action_id"] in {c["action_id"] for c in request["legal_actions"]}:
+                            selections[rid] = (msg["action_id"], "user", elapsed)
+                        elif receiver.welcome["rules"]["invalid_action_policy"] == "default":
+                            selections[rid] = (request["default_action_id"], "default", elapsed)
+                        elif receiver.welcome["rules"]["invalid_action_policy"] == "chombo":
+                            selections[rid] = (request["default_action_id"], "cancelled", elapsed)
+                        else:
+                            diagnostic_obligations.append({"request_id": rid, "action_id": msg["action_id"],
+                                                           "index": capture_index, "rejected": True,
+                                                           "elapsed_ms": elapsed})
+                        # A rejected attempt does not freeze the choice or clock.
             else:
                 _require(receiver is not None, "invalid_message", "application message before welcome")
                 seq = msg["seq"]
@@ -1952,22 +2028,66 @@ def semantic_ledger_trace(trace: Mapping[str, Any], expected_hash: str) -> None:
                     if "decision_group_id" not in request:
                         grace = receiver.welcome["rules"]["time_control"]["grace_ms"]
                         deadline = grace + request["timeout_ms"] + request["time_bank_ms"]
-                        action = first_actions.get(msg["request_id"])
-                        if msg["status"] == "accepted":
-                            _require(action is not None and action[0] == msg["action_id"], "invalid_message", "ACK differs from captured choice")
-                            elapsed = action[1] - starts[msg["request_id"]]
-                            _require(0 <= elapsed < deadline and msg["elapsed_ms"] == elapsed, "invalid_message", "captured action deadline or elapsed time differs")
-                        elif msg["status"] == "defaulted" and action is None:
-                            _require(now >= starts[msg["request_id"]] + deadline and msg["elapsed_ms"] == deadline, "invalid_message", "timeout precedes its original deadline")
+                        selection = selections.get(msg["request_id"])
+                        if msg["status"] == "rejected" and receiver.welcome["rules"]["invalid_action_policy"] == "reject":
+                            obligation = next((o for o in diagnostic_obligations if o["rejected"]
+                                               and o["request_id"] == msg["request_id"]
+                                               and o["action_id"] == msg["action_id"]
+                                               and o["elapsed_ms"] == msg["elapsed_ms"]), None)
+                            _require(obligation is not None, "invalid_message", "rejected ACK has no matching captured attempt clock")
+                            obligation["rejected"] = False
+                        if msg["status"] in {"accepted", "defaulted"}:
+                            if selection is None:
+                                _require(msg["status"] == "defaulted" and now >= starts[msg["request_id"]] + deadline,
+                                         "invalid_message", "timeout precedes its original deadline or no user choice was captured")
+                                selection = (request["default_action_id"], "default", deadline)
+                                selections[msg["request_id"]] = selection
+                            expected_status = "accepted" if selection[1] == "user" else "defaulted"
+                            _require(selection[1] != "cancelled" and msg["status"] == expected_status and msg["action_id"] == selection[0],
+                                     "invalid_message", "ACK differs from captured selection")
+                            _require(msg["elapsed_ms"] == selection[2], "invalid_message", "captured selection elapsed time differs")
                 outcome = receiver.receive(raw)
                 _require(outcome in {"applied", "duplicate"}, "invalid_message", "capture contains an unapplied host message")
                 if not duplicate:
+                    if kind == "error" and msg["code"] == "invalid_action" and msg["severity"] == "recoverable":
+                        captured_diagnostics.append((capture_index, msg))
                     if terminalizing:
                         pending_transaction = (step["transaction_id"], step["operation_id"])
                     elif kind == "event" and msg["event"]["type"] in {"dahai", "tsumo", "end_kyoku", "end_game"}:
                         pending_transaction = None
                 seen.add(seq)
         _require(receiver is not None and set(ledger) == seen, "invalid_message", "capture omits ledger messages")
+        _require(not any(o["rejected"] for o in diagnostic_obligations), "invalid_message", "capture omits a required rejected ACK")
+        if not untracked_action_diagnostics:
+            _require(len(captured_diagnostics) == len(diagnostic_obligations), "invalid_message",
+                     "capture emits an extra recoverable invalid_action diagnostic")
+        # Diagnostic IDs are optional. Match responses one-to-one without
+        # greedily assigning an ID-less error to the wrong outstanding input.
+        matches = {}
+        for root in range(len(diagnostic_obligations)):
+            pending, parents, visited_errors = [root], {}, set()
+            found = False
+            while pending and not found:
+                need = pending.pop()
+                obligation = diagnostic_obligations[need]
+                for error_index, (position, error) in enumerate(captured_diagnostics):
+                    if error_index in visited_errors or position <= obligation["index"] or any(
+                            key in error and error[key] != obligation[key] for key in ("request_id", "action_id")):
+                        continue
+                    visited_errors.add(error_index)
+                    if error_index not in matches:
+                        while True:
+                            matches[error_index] = need
+                            if need == root:
+                                break
+                            need, error_index = parents[need]
+                        found = True
+                        break
+                    displaced = matches[error_index]
+                    if displaced != root and displaced not in parents:
+                        parents[displaced] = (need, error_index)
+                        pending.append(displaced)
+            _require(found, "invalid_message", "capture omits a matching recoverable invalid_action diagnostic")
         _require(trace.get("allow_open_requests", False) or (not receiver.active_requests and not receiver.awaiting_request
                  and not receiver.expected_effects and not receiver.unadopted_reaction),
                  "invalid_message", "capture ends with an unresolved decision or missing action effects")

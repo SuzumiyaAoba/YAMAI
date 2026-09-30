@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from collections import Counter
 from copy import deepcopy
+from decimal import Decimal
 from itertools import combinations
 import json
 from typing import Any
@@ -137,8 +138,13 @@ def kuikae(kind: str, pai: str, consumed: list[str]) -> set[int]:
     return forbidden
 
 
-def canonical_action(action: dict) -> str:
-    """Ignore annotation fields and consumed order; bind optional none actor."""
+def canonical_action(action: dict, *, private_payload: bool = False) -> str:
+    """Compare core choices, or conservatively preserve a private payload.
+
+    Private member semantics belong to the negotiated owner. In that mode,
+    annotation equivalence is deferred to the owner's semantic validator;
+    neither namespaced members nor core-looking nested data are projected.
+    """
     def project(value: Any) -> Any:
         if isinstance(value, dict):
             out = {k: project(v) for k, v in value.items() if not k.startswith("x_")}
@@ -150,7 +156,28 @@ def canonical_action(action: dict) -> str:
         if isinstance(value, list):
             return [project(x) for x in value]
         return value
-    return json.dumps(project(action), sort_keys=True, separators=(",", ":"))
+    def encode(value: Any) -> str:
+        if isinstance(value, (int, float, Decimal)) and not isinstance(value, bool):
+            # Use decimal coefficient/exponent tuples rather than normalize():
+            # normalize() rounds through the current Decimal context. Emitting
+            # a JSON number token also keeps numbers distinct from strings.
+            number = value if isinstance(value, Decimal) else Decimal(str(value))
+            require(number.is_finite(), "non-finite action number")
+            sign, coefficient, exponent = number.as_tuple()
+            digits = list(coefficient)
+            if not any(digits):
+                return "0"
+            while digits[-1] == 0:
+                digits.pop()
+                exponent += 1
+            return ("-" if sign else "") + "".join(map(str, digits)) + ("e" + str(exponent) if exponent else "")
+        if isinstance(value, dict):
+            return "{" + ",".join(json.dumps(key) + ":" + encode(value[key]) for key in sorted(value)) + "}"
+        if isinstance(value, list):
+            return "[" + ",".join(encode(item) for item in value) + "]"
+        return json.dumps(value, allow_nan=False, separators=(",", ":"))
+
+    return encode(action if private_payload else project(action))
 
 
 def scoring_melds(row: list[dict]) -> list[dict]:
@@ -288,6 +315,34 @@ def check_hora_visible_tiles(win: dict, kyoku: dict) -> None:
     hand = kyoku.get("hands", [{}] * 4)[actor]
     known.update(tile_index(tile) for tile in hand.get("tiles", []))
     require(known <= allowed_yaku_tiles(ids), "yaku conflicts with a disclosed tile")
+    # With four fixed melds the only concealed group is the pair, whose
+    # tile kind is disclosed by the winning tile. Otherwise absence is
+    # knowable only when this view exposes the complete concealed hand.
+    complete_kinds = len(melds) == 4 or "tiles" in hand
+    if complete_kinds:
+        has_honors = any(tile >= 27 for tile in known)
+        has_numbers = any(tile < 27 for tile in known)
+        require("chanta" not in ids or has_honors,
+                "mixed outside hand lacks an honor tile")
+        require("honitsu" not in ids or (has_honors and has_numbers),
+                "half flush must contain both number and honor tiles")
+    if len(melds) == 4:
+        sequences = {min(tile_index(t) for t in meld["tiles"])
+                     for meld in melds if meld["kind"] == "chi"}
+        require("sanshoku_doujun" not in ids or any(
+                    all(suit * 9 + number in sequences for suit in range(3))
+                    for number in range(7)),
+                "three-color sequences are absent from the four public melds")
+        require("ikkitsuukan" not in ids or any(
+                    all(suit * 9 + number in sequences for number in (0, 3, 6))
+                    for suit in range(3)),
+                "full straight is absent from the four public melds")
+        triplet_kinds = {tile_index(meld["tiles"][0])
+                         for meld in melds if meld["kind"] != "chi"}
+        require("sanshoku_doukou" not in ids or any(
+                    all(suit * 9 + number in triplet_kinds for suit in range(3))
+                    for number in range(9)),
+                "three-color triplets are absent from the four public melds")
     if ids & {"honitsu", "chinitsu", "chuuren_poutou"}:
         require(len({tile // 9 for tile in known if tile < 27}) <= 1,
                 "one-suit yaku contains disclosed tiles of different suits")

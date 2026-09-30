@@ -2,6 +2,7 @@
 import json
 import unittest
 from copy import deepcopy
+from decimal import Decimal, localcontext
 
 import validate_artifacts as v
 from game_contract import EventState, GameError, canonical_action, check_hora_payments, legal_actions, next_kyoku
@@ -21,6 +22,91 @@ class GameContractTests(unittest.TestCase):
         p["hand"]["concealed_tiles"].reverse()
         self.assertEqual(actual, {canonical_action(a) for a in legal_actions(p, self.rules)})
         self.assertEqual(actual, {canonical_action(a) for a in trace["expected"]})
+
+    def test_canonical_action_preserves_exact_decimal_values(self):
+        for spellings in (("0.5", "0.50", "5e-1"), ("1", "1.00", "10e-1"),
+                          ("0", "-0.000", "0e1000"), ("100", "1e2", "100.00")):
+            keys = {canonical_action({'weight': Decimal(raw)}) for raw in spellings}
+            self.assertEqual(len(keys), 1)
+        self.assertEqual(canonical_action({'weight': 100}),
+                         canonical_action({'weight': Decimal('1e2')}))
+        self.assertNotEqual(canonical_action({'weight': Decimal('0.5')}),
+                            canonical_action({'weight': '5e-1'}))
+        self.assertNotEqual(canonical_action({'weight': 1}), canonical_action({'weight': True}))
+        with localcontext() as context:
+            context.prec = 3
+            left = Decimal('0.1234567890123456789012345678901')
+            right = Decimal('0.1234567890123456789012345678902')
+            self.assertNotEqual(canonical_action({'weight': left}), canonical_action({'weight': right}))
+            self.assertEqual(canonical_action({'weight': left}),
+                             canonical_action({'weight': Decimal(str(left) + '00')}))
+        for raw in ('1e-999999', '1' + '0' * 309 + '.5'):
+            key = canonical_action({'weight': Decimal(raw)})
+            self.assertEqual(json.loads(key, parse_float=Decimal)['weight'], Decimal(raw))
+
+    def test_private_action_accepts_fractional_numeric_argument(self):
+        trace = deepcopy(self.vectors['V131_private_action_preserves_owner_binding']['positive']['trace'])
+        descriptor = trace['definitions'][0]['action_types']['x-acme-policy']
+        descriptor['schema']['properties']['weight']['type'] = 'number'
+        check = v._session_schema_validator(v.SchemaSet(), 'unused', trace['definitions'],
+                                           trace['enabled_capabilities'])
+        for raw in ('0.5', '0.50', '5e-1'):
+            message = deepcopy(trace['message'])
+            # Exercise the strict wire reader, which preserves fractions as Decimal.
+            message['legal_actions'][-1]['action']['weight'] = 0.5
+            wire = json.dumps(message).replace('"weight": 0.5', '"weight": ' + raw).encode()
+            decoded = v.strict_load_bytes(wire)
+            check('host-application', decoded)
+            duplicate = deepcopy(decoded['legal_actions'][-1])
+            duplicate['action_id'] = 'duplicate'
+            duplicate['action']['weight'] = Decimal('0.500')
+            decoded['legal_actions'].append(duplicate)
+            with self.assertRaises(SessionError) as caught:
+                check('host-application', decoded)
+            self.assertEqual(caught.exception.code, 'invalid_message')
+
+    def test_private_action_preserves_owned_namespaced_arguments(self):
+        trace = deepcopy(self.vectors['V131_private_action_preserves_owner_binding']['positive']['trace'])
+        body = trace['definitions'][0]['action_types']['x-acme-policy']['schema']
+        body['required'].remove('weight')
+        body['required'].append('x_acme_weight')
+        body['properties']['x_acme_weight'] = body['properties'].pop('weight')
+        candidate = trace['message']['legal_actions'][-1]
+        candidate['action']['x_acme_weight'] = candidate['action'].pop('weight')
+        second = deepcopy(candidate)
+        second['action_id'] = 'custom2'
+        second['action']['x_acme_weight'] = 2
+        trace['message']['legal_actions'].append(second)
+        check = v._session_schema_validator(v.SchemaSet(), 'unused', trace['definitions'],
+                                           trace['enabled_capabilities'])
+        check('host-application', trace['message'])
+        second['action']['x_acme_weight'] = 1
+        with self.assertRaises(SessionError) as caught:
+            check('host-application', trace['message'])
+        self.assertEqual(caught.exception.code, 'invalid_message')
+
+    def test_private_payload_bypasses_every_core_projection(self):
+        private = {'type': 'x-acme-policy', 'actor': 0,
+                   'consumed': ['1m', '2m'], 'nested': {'type': 'none', 'actor': 1},
+                   'x_acme_weight': 1}
+        for change in ('ordered_consumed', 'nested_none_actor', 'owned_member'):
+            modified = deepcopy(private)
+            if change == 'ordered_consumed':
+                modified['consumed'].reverse()
+            elif change == 'nested_none_actor':
+                modified['nested']['actor'] = 2
+            else:
+                modified['x_acme_weight'] = 2
+            with self.subTest(change=change):
+                self.assertNotEqual(canonical_action(private, private_payload=True),
+                                    canonical_action(modified, private_payload=True))
+                # The default retains the existing core-specific normalization.
+                self.assertEqual(canonical_action(private), canonical_action(modified))
+        core = {'type': 'pon', 'actor': 0, 'consumed': ['1m', '2m']}
+        annotated = dict(core, x_acme_note={'type': 'none', 'actor': 3})
+        self.assertEqual(canonical_action(core), canonical_action(annotated))
+        self.assertEqual(canonical_action({'weight': Decimal('0.50')}, private_payload=True),
+                         canonical_action({'weight': Decimal('5e-1')}, private_payload=True))
 
     def test_rotated_seats_preserve_relative_call_choices(self):
         p = deepcopy(self.vectors["V192_red_called_tile_and_compound_discard"]["positive"]["trace"]["input"])
@@ -366,6 +452,126 @@ class GameContractTests(unittest.TestCase):
                         snapshot["seat"] = 0
                     with self.assertRaisesRegex(Exception, "last committed event"):
                         self._dealt().restore(snapshot)
+
+    def test_public_complete_shape_rejects_missing_required_tile_classes(self):
+        from game_contract import check_hora_visible_tiles
+
+        def public_hand(groups, pai, role, concealed=None):
+            melds = [{"type": "chi", "actor": 1, "target": 0,
+                      "pai": group[0], "consumed": group[1:]} for group in groups]
+            win = {"actor": 1, "target": 0, "pai": pai, "fu": 30,
+                   "yakus": [{"id": role, "value": 1, "unit": "han"}]}
+            hand = {"count": 13 - 3 * len(groups)} if concealed is None else {"tiles": concealed}
+            kyoku = {"melds": [[], melds, [], []], "hands": [{}, hand, {}, {}],
+                     "oya": 0, "bakaze": "E"}
+            return win, kyoku
+
+        groups = [["1m", "2m", "3m"], ["7m", "8m", "9m"],
+                  ["1p", "2p", "3p"], ["7p", "8p", "9p"]]
+        for role, suited_groups in (("chanta", groups), ("honitsu", groups[:2] * 2)):
+            with self.subTest(role=role):
+                win, kyoku = public_hand(suited_groups, "9m", role)
+                with self.assertRaises(GameError):
+                    check_hora_visible_tiles(win, kyoku)
+                # An honor pair makes both claimed tile-class conditions valid.
+                win["pai"] = "N"
+                check_hora_visible_tiles(win, kyoku)
+                # Three public melds do not disclose the remaining meld/pair.
+                win, kyoku = public_hand(suited_groups[:3], "9m", role)
+                check_hora_visible_tiles(win, kyoku)
+                # A fully visible number-only concealed part proves absence.
+                kyoku["hands"][1] = {"tiles": ["7m", "8m", "9m", "9m"]}
+                with self.assertRaises(GameError):
+                    check_hora_visible_tiles(win, kyoku)
+
+        win, kyoku = public_hand([], "N", "honitsu", concealed=["E"] * 3 + ["S"] * 3 + ["W"] * 3 + ["P"] * 3 + ["N"])
+        with self.assertRaises(GameError):
+            check_hora_visible_tiles(win, kyoku)
+
+    def test_public_sequence_patterns_match_four_fixed_melds(self):
+        from game_contract import check_hora_visible_tiles
+
+        patterns = {
+            "sanshoku_doujun": [["1m", "2m", "3m"], ["1p", "2p", "3p"],
+                                ["1s", "2s", "3s"], ["7m", "8m", "9m"]],
+            "ikkitsuukan": [["1m", "2m", "3m"], ["4m", "5mr", "6m"],
+                            ["7m", "8m", "9m"], ["1p", "2p", "3p"]],
+        }
+        for role, groups in patterns.items():
+            with self.subTest(role=role):
+                melds = [{"type": "chi", "actor": 1, "target": 0,
+                          "pai": group[0], "consumed": group[1:]} for group in groups]
+                win = {"actor": 1, "target": 0, "pai": "9s", "fu": 30,
+                       "yakus": [{"id": role, "value": 1, "unit": "han"}]}
+                kyoku = {"melds": [[], melds, [], []], "oya": 0, "bakaze": "E"}
+                check_hora_visible_tiles(win, kyoku)
+                melds[1] = {"type": "chi", "actor": 1, "target": 0,
+                            "pai": "2p", "consumed": ["3p", "4p"]}
+                with self.assertRaises(GameError):
+                    check_hora_visible_tiles(win, kyoku)
+                # One unresolved hidden meld may supply the missing sequence.
+                melds.pop(1)
+                check_hora_visible_tiles(win, kyoku)
+
+    def test_public_three_color_triplets_match_four_fixed_melds(self):
+        from game_contract import check_hora_visible_tiles
+
+        melds = [{"type": "pon", "actor": 1, "target": 0,
+                  "pai": tile, "consumed": [tile, tile]}
+                 for tile in ("1m", "1p", "1s", "4m")]
+        win = {"actor": 1, "target": 0, "pai": "9s", "fu": 40,
+               "yakus": [{"id": "sanshoku_doukou", "value": 2, "unit": "han"}]}
+        kyoku = {"melds": [[], melds, [], []], "oya": 0, "bakaze": "E"}
+        check_hora_visible_tiles(win, kyoku)
+        melds[1] = {"type": "daiminkan", "actor": 1, "target": 0,
+                    "pai": "1p", "consumed": ["1p"] * 3}
+        win["fu"] = 50
+        check_hora_visible_tiles(win, kyoku)
+        melds[1] = {"type": "pon", "actor": 1, "target": 0,
+                    "pai": "2p", "consumed": ["2p", "2p"]}
+        win["fu"] = 40
+        with self.assertRaises(GameError):
+            check_hora_visible_tiles(win, kyoku)
+        melds.pop(1)
+        check_hora_visible_tiles(win, kyoku)
+
+    def test_end_kyoku_rejects_chanta_on_four_number_sequences(self):
+        state = EventState(self.rules)
+        state.apply({"type": "start_game", "scores": [25000] * 4, "rules": self.rules})
+        state.apply({"type": "start_kyoku", "bakaze": "E", "kyoku": 1, "oya": 0,
+                     "honba": 0, "kyotaku": 0, "extension_round": 0, "scores": [25000] * 4,
+                     "dora_marker": "C", "hands": [{"count": 13} for _ in range(4)]})
+        def draw_discard(actor, tile):
+            state.apply({"type": "tsumo", "actor": actor, "pai": None})
+            state.apply({"type": "dahai", "actor": actor, "pai": tile, "tsumogiri": True})
+        groups = [["1m", "2m", "3m"], ["7m", "8m", "9m"],
+                  ["1p", "2p", "3p"], ["7p", "8p", "9p"]]
+        for group, discard in zip(groups, ["2s", "3s", "4s", "5s"]):
+            draw_discard(0, group[0])
+            state.apply({"type": "chi", "actor": 1, "target": 0,
+                         "pai": group[0], "consumed": group[1:]})
+            state.apply({"type": "dahai", "actor": 1, "pai": discard, "tsumogiri": False})
+            draw_discard(2, "E")
+            draw_discard(3, "S")
+        draw_discard(0, "9s")
+        win = {"actor": 1, "target": 0, "pai": "9s", "fu": 30, "han": 1,
+               "yakus": [{"id": "chanta", "value": 1, "unit": "han"}],
+               "bonuses": [], "pao": [], "ura_dora_markers": [],
+               "hand_points": 1000, "deltas": [-1000, 1000, 0, 0]}
+        event = {"type": "end_kyoku", "result": {"type": "hora", "wins": [win]},
+                 "deltas": win["deltas"], "scores": [24000, 26000, 25000, 25000],
+                 "next": {"type": "rotate", "bakaze": "E", "kyoku": 2, "oya": 1,
+                          "honba": 0, "kyotaku": 0, "extension_round": 0}}
+        for role in ("chanta", "sanshoku_doujun", "ikkitsuukan"):
+            win["yakus"] = [{"id": role, "value": 1, "unit": "han"}]
+            with self.subTest(role=role), self.assertRaises(GameError):
+                state.apply(event)
+        # The same actual hand is a two-han junchan, worth 2000 by child ron.
+        win.update(han=2, yakus=[{"id": "junchan", "value": 2, "unit": "han"}],
+                   hand_points=2000, deltas=[-2000, 2000, 0, 0])
+        event.update(deltas=win["deltas"], scores=[23000, 27000, 25000, 25000])
+        state.apply(event)
+        self.assertEqual(state.scores, [23000, 27000, 25000, 25000])
 
     def test_failed_restore_leaves_state_untouched(self):
         source = self._dealt()

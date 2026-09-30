@@ -1,8 +1,10 @@
 """Regression checks for the artifact checker; run with Python's unittest."""
 
 import unittest
+import random
 from copy import deepcopy
-from decimal import Decimal
+from decimal import Decimal, localcontext
+from fractions import Fraction
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -79,6 +81,68 @@ class ValidatorBoundaries(unittest.TestCase):
                 value = v.strict_load_bytes(b'{"seq":' + raw + b'}')
                 self.assertEqual(type(value['seq']), int)
                 self.assertEqual(value['seq'], 1)
+
+    def test_json_finite_fraction_annotations_preserve_decimal_range(self):
+        schema = {'$ref': f'urn:yamai:schema:protocol:{v.PROTOCOL}:action'}
+        schemas = v.SchemaSet()
+        prefix = (b'{"yamai":"1.0-draft.1","kind":"action","session_id":"s",'
+                  b'"game_id":"g","request_id":"r","action_id":"a","x_test_note":')
+        huge = b'1' + b'0' * 309 + b'.5'
+        for raw in (huge, b'-' + huge, b'1e-1000', b'-1e-1000', b'0.5'):
+            with self.subTest(raw=raw):
+                message = v.strict_load_bytes(prefix + raw + b'}')
+                number = message['x_test_note']
+                self.assertIsInstance(number, Decimal)
+                self.assertTrue(number.is_finite())
+                self.assertEqual(number, Decimal(raw.decode('ascii')))
+                schemas.validate(message, schema)
+
+    def test_json_fraction_range_does_not_relax_integer_or_finite_checks(self):
+        for raw in (b'9007199254740992.0', b'-9007199254740992e0',
+                    b'1e309', b'-1e309', b'NaN', b'Infinity', b'-Infinity'):
+            with self.subTest(raw=raw):
+                self.assert_error('invalid_json', v.strict_load_bytes,
+                                  b'{"x_test_note":' + raw + b'}')
+        for value in (float('nan'), float('inf'), float('-inf'),
+                      Decimal('NaN'), Decimal('Infinity'), Decimal('-Infinity')):
+            with self.subTest(value=value):
+                self.assert_error('invalid_json', v._walk_json, value)
+
+    def test_multiple_of_is_exact_for_decimal_boundaries(self):
+        schemas = v.SchemaSet()
+        huge = '1' + '0' * 309 + '.5'
+        cases = [('0.5', '1e-29', True), (huge, '0.5', True),
+                 ('-' + huge, '0.5', True), (huge, '0.2', False),
+                 ('0.50000000000000000000000000001', '0.5', False),
+                 ('0.3', '0.1', True), ('0.31', '0.1', False),
+                 ('0.5', '1e-999999999', True), ('0.5', '3e-999999999', False),
+                 ('1e-999999999', '0.5', False), ('0', '1e-999999999', True),
+                 ('100', '20', True), ('100', '30', False)]
+        for raw, multiple, valid in cases:
+            with self.subTest(raw=raw, multiple=multiple):
+                value = v.strict_load_bytes(raw.encode('ascii'))
+                schema = v.strict_load_bytes(('{"type":"number","multipleOf":' + multiple + '}').encode('ascii'))
+                if valid:
+                    schemas.validate(value, schema)
+                else:
+                    self.assert_error('invalid_message', schemas.validate, value, schema)
+        # A long coefficient must not depend on Python's int(string) digit cap.
+        coefficient = '1' * 5000 + '.5'
+        schemas.validate(v.strict_load_bytes(coefficient.encode('ascii')),
+                         {'type': 'number', 'multipleOf': Decimal('0.5')})
+
+    def test_multiple_of_matches_independent_fraction_oracle(self):
+        rng = random.Random(25733)
+        with localcontext() as context:
+            context.prec = 2
+            for _ in range(500):
+                numerator = Decimal((rng.randrange(2), tuple(map(int, str(rng.randrange(100000)))),
+                                     rng.randrange(-30, 31)))
+                divisor = Decimal((0, tuple(map(int, str(rng.randrange(1, 100000)))),
+                                   rng.randrange(-30, 31)))
+                expected = (Fraction(numerator) / Fraction(divisor)).denominator == 1
+                self.assertEqual(v._is_multiple_of(numerator, divisor), expected,
+                                 (numerator, divisor))
 
     def test_id_schema_matches_the_entire_decoded_string(self):
         schemas = v.SchemaSet()

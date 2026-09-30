@@ -38,6 +38,249 @@ class ProtocolRegressionTests(unittest.TestCase):
     def raw(message):
         return json.dumps(message, separators=(",", ":"), ensure_ascii=False).encode()
 
+    def check_ledger(self, trace):
+        for step in trace["messages"]:
+            step["wire"] = self.raw(step["message"]).decode()
+        trace["ledger"] = list({
+            step["message"]["seq"]: {key: copy.deepcopy(step[key]) for key in ("transaction_id", "operation_id", "message", "wire")}
+            | {"seq": step["message"]["seq"]}
+            for step in trace["messages"] if "seq" in step["message"]
+        }.values())
+        welcome = next(s["message"] for s in trace["messages"] if s["message"]["kind"] == "welcome")
+        validator.semantic_ledger_trace(trace, welcome["profile_hash"])
+
+    def retry_ledger(self):
+        trace = copy.deepcopy(VECTORS["V261_session_immutable_wire_ledger"]["positive"]["trace"])
+        bad = copy.deepcopy(trace["messages"][7])
+        bad["at_ms"] = 100
+        bad["message"]["action_id"] = "bad"
+        rejected = copy.deepcopy(trace["messages"][8])
+        rejected.update(at_ms=101, transaction_id="reject", operation_id="reject")
+        rejected["message"].update(action_id="bad", status="rejected", elapsed_ms=93)
+        error = copy.deepcopy(rejected)
+        error["at_ms"] = 102
+        error["message"] = {key: rejected["message"][key] for key in ("yamai", "session_id", "game_id")}
+        error["message"].update(kind="error", seq=6, code="invalid_action", severity="recoverable",
+                                message="Illegal candidate", request_id="r1", action_id="bad")
+        for step in trace["messages"][8:]:
+            step["message"]["seq"] += 2
+        trace["messages"][7:7] = [bad, rejected, error]
+        return trace
+
+    @staticmethod
+    def resequence_ledger(trace):
+        seq = 0
+        for step in trace["messages"]:
+            if "seq" in step["message"]:
+                seq += 1
+                step["message"]["seq"] = seq
+
+    def unknown_request_ledger(self):
+        trace = self.retry_ledger()
+        del trace["messages"][8]  # An unknown request gets an error, not an ACK.
+        trace["messages"][7]["message"]["request_id"] = "unknown"
+        trace["messages"][8]["message"]["request_id"] = "unknown"
+        self.resequence_ledger(trace)
+        return trace
+
+    def test_ledger_unknown_request_recovery_and_optional_diagnostic_ids(self):
+        for omitted in ((), ("request_id",), ("action_id",), ("request_id", "action_id")):
+            trace = self.unknown_request_ledger()
+            for key in omitted:
+                trace["messages"][8]["message"].pop(key)
+            self.check_ledger(trace)
+
+    def test_ledger_unknown_request_requires_correct_error_without_ack(self):
+        for variant in ("missing", "code", "request_id", "action_id", "ack"):
+            with self.subTest(variant=variant):
+                trace = self.unknown_request_ledger()
+                error = trace["messages"][8]["message"]
+                if variant == "missing":
+                    del trace["messages"][8]
+                    self.resequence_ledger(trace)
+                elif variant == "code":
+                    error["code"] = "invalid_message"
+                elif variant in {"request_id", "action_id"}:
+                    error[variant] = "wrong"
+                else:
+                    trace["messages"][8]["message"] = {
+                        **{key: error[key] for key in ("yamai", "session_id", "game_id", "seq", "request_id", "action_id")},
+                        "kind": "ack", "status": "stale", "elapsed_ms": 0, "time_bank_ms": 15000}
+                with self.assertRaises(validator.ArtifactError):
+                    self.check_ledger(trace)
+
+    def test_ledger_reject_policy_requires_both_diagnostics(self):
+        for removed in ((8,), (9,), (8, 9)):
+            trace = self.retry_ledger()
+            for index in sorted(removed, reverse=True):
+                del trace["messages"][index]
+            self.resequence_ledger(trace)
+            with self.assertRaises(validator.ArtifactError):
+                self.check_ledger(trace)
+
+    def test_ledger_unknown_input_does_not_reserve_future_request_id(self):
+        trace = self.unknown_request_ledger()
+        incoming, error = trace["messages"][7:9]
+        incoming["message"]["request_id"] = error["message"]["request_id"] = "r1"
+        incoming["at_ms"], error["at_ms"] = 6, 6
+        del trace["messages"][7:9]
+        trace["messages"][6:6] = [incoming, error]
+        self.resequence_ledger(trace)
+        self.check_ledger(trace)
+
+    def test_ledger_diagnostic_can_follow_completed_action_transaction(self):
+        trace = self.unknown_request_ledger()
+        error = trace["messages"].pop(8)
+        error["at_ms"] = 821
+        # Error is buffered until after the accepted action's discard event.
+        trace["messages"].insert(11, error)
+        self.resequence_ledger(trace)
+        self.check_ledger(trace)
+
+    def test_ledger_post_game_unknown_action_is_silent(self):
+        trace = copy.deepcopy(VECTORS["V261_session_immutable_wire_ledger"]["positive"]["trace"])
+        incoming = copy.deepcopy(trace["messages"][7])
+        incoming["at_ms"] = 824
+        incoming["message"]["request_id"] = "unknown"
+        trace["messages"].append(incoming)
+        self.check_ledger(trace)
+
+    def test_ledger_optional_ids_match_without_greedy_assignment(self):
+        trace = self.unknown_request_ledger()
+        second_input = copy.deepcopy(trace["messages"][7])
+        second_input["message"]["request_id"] = "unknown2"
+        exact_error = copy.deepcopy(trace["messages"][8])
+        exact_error["at_ms"] = 103
+        trace["messages"][8]["message"].pop("request_id")
+        trace["messages"][8]["message"].pop("action_id")
+        trace["messages"].insert(8, second_input)
+        trace["messages"].insert(10, exact_error)
+        self.resequence_ledger(trace)
+        self.check_ledger(trace)
+        # Replaying the first error cannot satisfy the second obligation.
+        trace["messages"][10] = copy.deepcopy(trace["messages"][9])
+        for step in trace["messages"][11:]:
+            if "seq" in step["message"]:
+                step["message"]["seq"] -= 1
+        with self.assertRaises(validator.ArtifactError):
+            self.check_ledger(trace)
+
+    def test_ledger_rejected_ack_replay_does_not_consume_obligation_twice(self):
+        trace = self.retry_ledger()
+        trace["messages"].insert(9, copy.deepcopy(trace["messages"][8]))
+        self.check_ledger(trace)
+
+    def test_ledger_unknown_request_error_must_not_be_regenerated(self):
+        trace = self.unknown_request_ledger()
+        trace["messages"].insert(9, copy.deepcopy(trace["messages"][8]))
+        self.check_ledger(trace)  # Same sequence and bytes is only replay.
+        self.resequence_ledger(trace)
+        with self.assertRaises(validator.ArtifactError):
+            self.check_ledger(trace)
+
+    def snapshot_ledger(self, *, resumed):
+        trace = copy.deepcopy(VECTORS["V261_session_immutable_wire_ledger"]["positive"]["trace"])
+        if resumed:
+            negotiation = copy.deepcopy(VECTORS["V85_resume_token_rotation"]["positive"]["trace"])
+            negotiation["join"]["resume"]["last_seq"] = 0
+            negotiation["welcome"].update(replay_from_seq=1, replay_through_seq=4)
+            negotiation["context"]["resume_state"]["highest_seq"] = 4
+            trace["context"] = negotiation["context"]
+            trace["messages"] = trace["messages"][:3]
+            for step, kind in zip(trace["messages"], ("hello", "join", "welcome")):
+                step["message"] = negotiation[kind]
+        else:
+            trace["messages"] = trace["messages"][:7]
+        trace["allow_open_requests"] = True
+        snapshot = {"at_ms": 8, "direction": "out", "client_id": "peer",
+                    "transaction_id": "snapshot", "operation_id": "snapshot",
+                    "message": copy.deepcopy(VECTORS["V18_snapshot_state"]["positive"])}
+        trace["messages"].append(snapshot)
+        return trace
+
+    def test_ledger_snapshot_covered_old_request_can_be_stale_or_idempotent(self):
+        for response in ("stale", "silent"):
+            trace = self.snapshot_ledger(resumed=True)
+            incoming = copy.deepcopy(VECTORS["V261_session_immutable_wire_ledger"]["positive"]["trace"]["messages"][7])
+            incoming.update(at_ms=9)
+            incoming["message"]["request_id"] = "old_r"
+            trace["messages"].append(incoming)
+            if response == "stale":
+                ack = {key: incoming["message"][key] for key in ("yamai", "session_id", "game_id", "request_id", "action_id")}
+                ack.update(kind="ack", seq=6, status="stale", elapsed_ms=0, time_bank_ms=15000)
+                step = {"at_ms": 10, "direction": "out", "client_id": "peer",
+                        "transaction_id": "stale", "operation_id": "stale", "message": ack}
+                trace["messages"].append(step)
+            retry = copy.deepcopy(incoming)
+            retry["at_ms"] = 11
+            trace["messages"].append(retry)
+            self.check_ledger(trace)
+
+    def test_ledger_snapshot_does_not_erase_prior_unknown_input_obligation(self):
+        trace = self.snapshot_ledger(resumed=False)
+        incoming = copy.deepcopy(VECTORS["V261_session_immutable_wire_ledger"]["positive"]["trace"]["messages"][7])
+        incoming["at_ms"] = 7
+        incoming["message"]["request_id"] = "unknown"
+        trace["messages"].insert(7, incoming)
+        with self.assertRaises(validator.ArtifactError):
+            self.check_ledger(trace)
+        error = {key: incoming["message"][key] for key in ("yamai", "session_id", "game_id", "request_id", "action_id")}
+        error.update(kind="error", seq=6, code="invalid_action", severity="recoverable", message="Unknown request")
+        trace["messages"].append({"at_ms": 9, "direction": "out", "client_id": "peer",
+                                  "transaction_id": "diagnostic", "operation_id": "diagnostic", "message": error})
+        self.check_ledger(trace)
+
+    def test_ledger_rejected_attempt_does_not_freeze_selection(self):
+        trace = self.retry_ledger()
+        self.check_ledger(trace)
+        ack = trace["messages"][11]["message"]
+        ack["elapsed_ms"] = 93
+        with self.assertRaises(validator.ArtifactError):
+            self.check_ledger(trace)
+
+    def test_ledger_on_time_user_selection_cannot_be_defaulted(self):
+        trace = copy.deepcopy(VECTORS["V261_session_immutable_wire_ledger"]["positive"]["trace"])
+        trace["messages"][8]["message"].update(status="defaulted", elapsed_ms=21000, time_bank_ms=0)
+        with self.assertRaises(validator.ArtifactError):
+            self.check_ledger(trace)
+
+    def test_ledger_rejected_attempt_does_not_waive_timeout(self):
+        trace = self.retry_ledger()
+        del trace["messages"][10]  # No valid retry; leave the rejected attempt.
+        trace["messages"][10]["message"].update(status="defaulted", elapsed_ms=21000, time_bank_ms=0)
+        with self.assertRaises(validator.ArtifactError):
+            self.check_ledger(trace)
+        for step in trace["messages"][10:]:
+            step["at_ms"] += 21000
+        self.check_ledger(trace)
+
+    def test_ledger_invalid_action_default_uses_ingress_clock(self):
+        trace = copy.deepcopy(VECTORS["V261_session_immutable_wire_ledger"]["positive"]["trace"])
+        for step in trace["messages"]:
+            message = step["message"]
+            if message["kind"] == "welcome":
+                message["rules"]["invalid_action_policy"] = "default"
+            elif message.get("event", {}).get("type") == "start_game":
+                message["event"]["rules"]["invalid_action_policy"] = "default"
+        trace["messages"][7]["message"]["action_id"] = "bad"
+        ack = trace["messages"][8]["message"]
+        ack["status"] = "defaulted"
+        self.check_ledger(trace)
+        ack["elapsed_ms"] += 1
+        with self.assertRaises(validator.ArtifactError):
+            self.check_ledger(trace)
+
+    def test_ledger_chombo_does_not_allow_reject_policy_retry(self):
+        trace = self.retry_ledger()
+        for step in trace["messages"]:
+            message = step["message"]
+            if message["kind"] == "welcome":
+                message["rules"]["invalid_action_policy"] = "chombo"
+            elif message.get("event", {}).get("type") == "start_game":
+                message["event"]["rules"]["invalid_action_policy"] = "chombo"
+        with self.assertRaises(validator.ArtifactError):
+            self.check_ledger(trace)
+
     def test_initial_kyoku_requires_game_but_no_previous_kyoku(self):
         trace = VECTORS["V104_wire_complete_game"]["positive"]["trace"]
         start_game, start_kyoku = [s["message"]["event"] for s in trace["steps"][:2]]
