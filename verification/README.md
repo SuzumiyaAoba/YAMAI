@@ -98,6 +98,8 @@ V411–V417は、初期化・mode別のエラー優先順・後着通知・観�
 
 V418–V422は項目11・16・30を補完する。V418はホストが信頼境界内と判断した局所接続でのresumeを許可し、同じ条件をjoinの拡張memberで自己申告しても許可しない。traceの `secure_transport` と `trusted_local_transport` は検査用のホスト側入力であり、wire memberではない。回帰検査では拒否時のtoken・期限・接続所有権の保持も確認する。V419–V420は未来seqの配牌・自摸にも交渉済みviewを適用し、投影違反をsequence_gapより先に拒否する。V421–V422はplayer actionへのseq/original_seq付加をfatalとして検査し、action_idだけの不正に許可されるrecoverableとの区別を確認する。回帰検査は全8通りのmode/view、終局後、null・型不正も含む。
 
+Receiverとvalidatorの回帰テストは項目15・16・30を補完する。Receiverは、欠番後の検証済みfatal errorを終了診断として受理し、適用済みprefix・未解決request・時計を変更せず、buffer済みmessageも停止する。Receiver回帰では全8通りのmode/view、通常の連続fatal、recoverable error、ID・方向・Schema違反、保持済みseqの衝突、snapshot置換済み範囲を区別する。履歴を失っても正準snapshotによるresumeが可能な経路と、代替がない拒否経路も確認する。validatorはaction_idを許可する診断codeだけへ制限し、一般のrequest_idとrequest_conflict専用のoriginal_statusを区別する。
+
 完全候補の照合では期待集合の一部だけを検査せず、順序とconsumedの並びを除いた集合全体を比較する。現行coreの候補数には余裕がある。自摸番は打牌15以下・リーチ15以下・暗槓3以下・加槓4以下・和了1・九種九牌1の合計39以下、反応はchiの3順子×4赤牌消費パターン×13打牌、ponの3消費パターン×13打牌、daiminkan4消費パターン、hora/none各1の合計201以下という保守的上限があり、512を超えない。実際の牌枚数・喰い替えはこれをさらに制限する。私的拡張は独自の上限・fixtureと第14節の契約を必要とする。
 
 ## 検証の範囲

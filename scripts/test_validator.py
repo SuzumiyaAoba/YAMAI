@@ -15,6 +15,64 @@ class ValidatorBoundaries(unittest.TestCase):
             operation(*args, **kwargs)
         self.assertEqual(caught.exception.code, code)
 
+    def test_error_action_id_is_limited_to_action_diagnostics(self):
+        schemas = v.SchemaSet()
+        error_schema = schemas.schemas[f'urn:yamai:schema:protocol:{v.PROTOCOL}:error']
+        schema = {'$ref': error_schema['$id'] + '#/$defs/base'}
+        for code in error_schema['$defs']['base']['properties']['code']['enum']:
+            message = {'kind': 'error', 'code': code, 'message': 'diagnostic',
+                       'severity': 'recoverable' if code in (
+                           'sequence_gap', 'invalid_action', 'request_conflict') else 'fatal',
+                       'request_id': 'r1', 'action_id': 'a1'}
+            if code == 'sequence_gap':
+                message.update(expected_seq=1, received_seq=2)
+            with self.subTest(code=code):
+                if code in ('invalid_action', 'invalid_message', 'request_conflict'):
+                    schemas.validate(message, schema)
+                else:
+                    self.assert_error('invalid_message', schemas.validate, message, schema)
+                    del message['action_id']
+                    # request_id remains valid for every request-related error code.
+                    schemas.validate(message, schema)
+
+    def test_error_optional_action_diagnostics_keep_id_validation(self):
+        schemas = v.SchemaSet()
+        schema = {'$ref': f'urn:yamai:schema:protocol:{v.PROTOCOL}:error#/$defs/hostApplication'}
+        for code, severity in (('invalid_action', 'recoverable'),
+                               ('invalid_message', 'recoverable'), ('invalid_message', 'fatal')):
+            message = {'yamai': v.PROTOCOL, 'kind': 'error', 'session_id': 's1',
+                       'game_id': 'g1', 'seq': 1, 'code': code, 'severity': severity,
+                       'message': 'diagnostic', 'request_id': 'r1'}
+            schemas.validate(message, schema)
+            for action_id in ('a1', '', None, 1, 'bad id'):
+                candidate = dict(message, action_id=action_id)
+                with self.subTest(code=code, severity=severity, action_id=action_id):
+                    if action_id == 'a1':
+                        schemas.validate(candidate, schema)
+                    else:
+                        self.assert_error('invalid_message', schemas.validate, candidate, schema)
+
+    def test_error_dedicated_members_remain_code_specific(self):
+        schemas = v.SchemaSet()
+        schema = {'$ref': f'urn:yamai:schema:protocol:{v.PROTOCOL}:error#/$defs/base'}
+        message = {'kind': 'error', 'code': 'request_conflict', 'severity': 'recoverable',
+                   'message': 'diagnostic', 'request_id': 'r1', 'action_id': 'a1'}
+        schemas.validate(message, schema)
+        schemas.validate(dict(message, original_status='accepted'), schema)
+        for member in ('request_id', 'action_id'):
+            candidate = deepcopy(message)
+            del candidate[member]
+            with self.subTest(missing=member):
+                self.assert_error('invalid_message', schemas.validate, candidate, schema)
+        for code in ('invalid_action', 'invalid_message'):
+            candidate = dict(message, code=code)
+            schemas.validate(candidate, schema)
+            for member, value in (('original_status', 'accepted'),
+                                  ('expected_seq', 1), ('received_seq', 2)):
+                with self.subTest(code=code, forbidden=member):
+                    self.assert_error('invalid_message', schemas.validate,
+                                      dict(candidate, **{member: value}), schema)
+
     def test_json_integer_spellings(self):
         for raw in (b'1', b'1.0', b'1e0'):
             with self.subTest(raw=raw):

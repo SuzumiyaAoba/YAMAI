@@ -4,7 +4,7 @@ import json
 import unittest
 
 import validate_artifacts as v
-from session_contract import Receiver, SessionError, check_token_trace, classify_player_input, negotiate
+from session_contract import Receiver, SessionError, check_token_trace, classify_player_input, negotiate, replay_plan
 from scoring_reference import basic_points, normal_payments, NORMAL_YAKU_HAN
 
 
@@ -25,6 +25,125 @@ class SessionInvariants(unittest.TestCase):
     @staticmethod
     def raw(message):
         return json.dumps(message, ensure_ascii=False, separators=(',',':')).encode()
+
+    def test_future_fatal_error_closes_without_applying_missing_prefix(self):
+        for suffix in ('visibility_play_self', 'visibility_spectate_public',
+                       'visibility_replay_public', 'visibility_replay_full',
+                       'visibility_replay_seat_0', 'visibility_replay_seat_1',
+                       'visibility_replay_seat_2', 'visibility_replay_seat_3'):
+            case = next(c for key, c in self.vectors.items() if key.endswith('_' + suffix))
+            welcome = deepcopy(case['positive']['trace']['welcome'])
+            for code in ('resume_unavailable', 'internal_error', 'resource_limit'):
+                with self.subTest(view=suffix, code=code):
+                    receiver = self.receiver(welcome, last_seq=1)
+                    before = deepcopy({k: value for k, value in vars(receiver).items()
+                                       if k not in {'welcome', 'decode', 'validate', 'game'}})
+                    game_before = deepcopy(vars(receiver.game))
+                    fatal = {key: welcome[key] for key in ('yamai', 'session_id', 'game_id')}
+                    fatal.update(kind='error', seq=4, code=code, severity='fatal', message='Recovery failed')
+                    self.assertEqual(receiver.receive(self.raw(fatal)), 'fatal')
+                    self.assertTrue(receiver.closed)
+                    self.assertEqual(receiver.fatal_error, fatal)
+                    self.assertEqual(vars(receiver.game), game_before)
+                    for key, value in before.items():
+                        if key not in {'closed', 'fatal_error'}:
+                            self.assertEqual(getattr(receiver, key), value, key)
+                    self.assertEqual(receiver.receive(self.raw(fatal)), 'closed')
+                    with self.assertRaises(SessionError) as error:
+                        receiver.begin_resume(welcome)
+                    self.assertEqual(error.exception.code, 'resume_unavailable')
+
+    def test_future_fatal_error_preserves_validation_priority(self):
+        welcome = self.trace('wire_complete_game')['welcome']
+        fatal = {key: welcome[key] for key in ('yamai', 'session_id', 'game_id')}
+        fatal.update(kind='error', seq=4, code='resume_unavailable', severity='fatal', message='Recovery failed')
+        for changes in ({'session_id': 'wrong'}, {'game_id': 'wrong'}, {'yamai': 'wrong'},
+                        {'seq': 0}, {'code': 'sequence_conflict'}, {'code': 'unknown_error'},
+                        {'original_seq': 1}, {'extra': True}, {'message': ''}):
+            with self.subTest(changes=changes):
+                receiver = self.receiver(welcome, last_seq=1)
+                with self.assertRaises(SessionError) as error:
+                    receiver.receive(self.raw({**fatal, **changes}))
+                self.assertEqual(error.exception.code, 'invalid_message')
+                self.assertTrue(receiver.closed)
+                self.assertIsNone(receiver.fatal_error)
+                self.assertEqual(receiver.applied, 1)
+                self.assertEqual(receiver.known, {})
+        receiver = self.receiver(welcome, last_seq=1)
+        recoverable = {**fatal, 'code': 'invalid_action', 'severity': 'recoverable'}
+        self.assertEqual(receiver.receive(self.raw(recoverable)), 'sequence_gap')
+        self.assertFalse(receiver.closed)
+        self.assertIsNone(receiver.fatal_error)
+
+    def test_fatal_error_does_not_bypass_known_bytes_or_snapshot_floor(self):
+        trace = self.trace('wire_complete_game')
+        welcome = trace['welcome']
+        receiver = self.receiver(welcome)
+        start = trace['steps'][0]['message']
+        receiver.receive(self.raw(start))
+        fatal = {key: welcome[key] for key in ('yamai', 'session_id', 'game_id')}
+        fatal.update(kind='error', seq=1, code='resume_unavailable', severity='fatal', message='Recovery failed')
+        with self.assertRaises(SessionError) as error:
+            receiver.receive(self.raw(fatal))
+        self.assertEqual(error.exception.code, 'sequence_conflict')
+        self.assertIsNone(receiver.fatal_error)
+        receiver = self.receiver(welcome, last_seq=3)
+        receiver.floor = 3
+        self.assertEqual(receiver.receive(self.raw(fatal)), 'duplicate')
+        self.assertFalse(receiver.closed)
+        self.assertIsNone(receiver.fatal_error)
+
+    def test_contiguous_fatal_error_records_diagnosis_and_prefix(self):
+        welcome = self.trace('wire_complete_game')['welcome']
+        receiver = self.receiver(welcome)
+        fatal = {key: welcome[key] for key in ('yamai', 'session_id', 'game_id')}
+        fatal.update(kind='error', seq=1, code='internal_error', severity='fatal', message='Initialization failed')
+        raw = self.raw(fatal)
+        self.assertEqual(receiver.receive(raw), 'applied')
+        self.assertEqual(receiver.applied, 1)
+        self.assertEqual(receiver.known[1], raw)
+        self.assertEqual(receiver.fatal_error, fatal)
+        self.assertTrue(receiver.closed)
+
+    def test_resume_missing_history_uses_retained_snapshot(self):
+        trace = self.trace('wire_complete_game')
+        welcome = trace['welcome']
+        first = trace['steps'][0]['message']
+        receiver = self.receiver(welcome)
+        receiver.receive(self.raw(first))
+        resumed = deepcopy(welcome)
+        resumed.update(resumed=True, replay_from_seq=2, replay_through_seq=4)
+        resumed['resume']['token'] = 'rt_' + 'Z' * 22
+        receiver.begin_resume(resumed)
+        history = [self.raw(first), None, None, None]
+        self.assertEqual(replay_plan(history, 2, 4, snapshot=True), {'strategy': 'snapshot', 'replaces_through_seq': 4, 'seq': 5})
+        snapshot = deepcopy(self.vectors['V18_snapshot_state']['positive'])
+        self.assertEqual(receiver.receive(self.raw(snapshot)), 'applied')
+        self.assertEqual(receiver.applied, 5)
+        self.assertEqual(receiver.floor, 4)
+        self.assertEqual(receiver.active_requests, {'r1'})
+        self.assertEqual(receiver.welcome['session_id'], welcome['session_id'])
+        self.assertIsNone(receiver.recovery)
+        with self.assertRaises(SessionError) as error:
+            replay_plan(history, 2, 4, snapshot=False)
+        self.assertEqual(error.exception.code, 'resume_unavailable')
+
+    def test_future_fatal_error_preserves_active_request_and_bank(self):
+        trace = self.trace('wire_complete_game')
+        receiver = self.receiver(trace['welcome'])
+        for step in trace['steps'][:4]:
+            receiver.receive(self.raw(step['message']))
+        before = deepcopy({key: value for key, value in vars(receiver).items()
+                           if key not in {'welcome', 'decode', 'validate', 'game'}})
+        game_before = deepcopy(vars(receiver.game))
+        fatal = {key: trace['welcome'][key] for key in ('yamai', 'session_id', 'game_id')}
+        fatal.update(kind='error', seq=9, code='resume_unavailable', severity='fatal', message='Recovery failed')
+        self.assertEqual(receiver.receive(self.raw(fatal)), 'fatal')
+        self.assertEqual(receiver.active_requests, {'r1'})
+        self.assertEqual(vars(receiver.game), game_before)
+        for key, value in before.items():
+            if key not in {'closed', 'fatal_error'}:
+                self.assertEqual(getattr(receiver, key), value, key)
 
     def test_extension_activation_does_not_leak_between_sessions(self):
         trace = self.trace('private_event_requires_negotiation')

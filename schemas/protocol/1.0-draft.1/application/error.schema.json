@@ -175,6 +175,24 @@
         },
         {
           "if": {
+            "required": [
+              "action_id"
+            ]
+          },
+          "then": {
+            "properties": {
+              "code": {
+                "enum": [
+                  "invalid_message",
+                  "invalid_action",
+                  "request_conflict"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
             "properties": {
               "code": {
                 "const": "request_conflict"

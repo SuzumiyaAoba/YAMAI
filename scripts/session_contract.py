@@ -194,6 +194,7 @@ class Receiver:
         self.started = bool(last_seq)
         self.ended = False
         self.closed = False
+        self.fatal_error: dict | None = None
         self.request_ids: set[str] = set()
         self.active_requests: set[str] = set()
         self.awaiting_request = False
@@ -386,6 +387,13 @@ class Receiver:
         if kind == "event":
             self.validate("visible-event", {"event": message["event"], "mode": mode,
                                             "view": self.welcome["view"], "seat": self.welcome["seat"]})
+        if kind == "error" and message["severity"] == "fatal" and seq > self.applied + 1:
+            # A validated terminal diagnosis may bypass a missing prefix, but
+            # cannot fill it or mutate game/request/clock/ledger state. Identity,
+            # duplicate/conflict, direction and schema checks still precede it.
+            self.fatal_error = deepcopy(message)
+            self.closed = True
+            return "fatal"
         if kind == "snapshot":
             require("snapshot" in self.welcome["capabilities"], "invalid_message", "snapshot capability is not enabled")
             contiguous = seq == self.applied + 1
@@ -634,6 +642,7 @@ class Receiver:
                         if self.game.round is not None and "self_state" in self.game.round:
                             self.game.round["self_state"]["time_bank_ms"] = remaining
             elif kind == "error" and message["severity"] == "fatal":
+                self.fatal_error = deepcopy(message)
                 self.closed = True
         recovery_through = max(self.gap_received, self.through if self.resume_snapshot_allowed else 0)
         if self.recovery in {"resume", "gap"} and seq >= recovery_through:

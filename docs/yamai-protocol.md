@@ -174,7 +174,7 @@ transaction内のackとeventの間に別transactionのhost messageを挿入し�
 |---|---|---|---|
 | `hello` | 新しい transport/session が接続され、まだ `hello` を送っていない | Host が negotiation context を作成して `hello` を **最初の application message として送信**し、Player の `join` を待つ。Player は `hello` を送信してはならない | `invalid_frame`/`invalid_json`/`invalid_message`、対応版がない場合は`unsupported_version`。transport層の`unsupported_frame`と汎用の`internal_error`も交渉中に使用し得る |
 | `join` | `hello`受信後、未確定session。version/profile/hash/capability/limit/mode/view/targetが一致 | seatを予約または割当て、session/game contextを作り、`welcome`（seqなし）を一度だけ送る | `invalid_frame`/`invalid_json`/`invalid_message`、`unsupported_version`、`unsupported_profile`、`profile_mismatch`、`unsupported_view`、`unsupported_capability`、`unsupported_limit`、`resource_limit`（requested seat不可）、`resume_unavailable`。`unsupported_frame`・`internal_error`も交渉中に使用し得る |
-| `welcome` | 有効な`join`を受理済み。まだapplication messageを送っていない | sessionをACTIVEにする。新規gameはstart_game(seq=1)、途中観戦は初期snapshot、resumeは保持済みgameと有限replay範囲を復元する | hostがこの前提を満たさない出力は`invalid_message`（受信側はfatal） |
+| `welcome` | 有効な`join`を受理済み。このtransportの交渉でまだwelcomeまたは交渉後のenveloped application messageを送っていない | sessionをACTIVEにする。新規gameはstart_game(seq=1)、途中観戦は初期snapshot、resumeは保持済みgameと有限replay範囲を復元する | hostがこの前提を満たさない出力は`invalid_message`（受信側はfatal） |
 | `event` | session ACTIVE、eventの前後条件（第10.4節）を満たす。seqと再送の判定は第5・13節に従う | event payloadを正準stateへ適用し、ledgerへ登録する | `sequence_gap`、`sequence_conflict`、状態・Schema違反は`invalid_message` |
 | `request` | session ACTIVE、gameが継続中、原因eventが適用済み、active request数/seat/group制約を満たす | requestをactiveへ登録し時計を開始またはgroupへ予約し、ledgerへ登録する | `resource_limit`、`invalid_message`、原因seq不明なら`invalid_message` |
 | `action` | Player → Host の application envelope（`yamai`/`kind`/`session_id`/`game_id`/`request_id`/`action_id`）。対象requestがactiveまたはterminal historyにあり、action_idがcandidateに対応 | attemptを記録。単独ならackと適用event、groupならlinearizationまでack/eventを保留 | 未知requestは`invalid_action`。候補不一致は`OPEN` requestに限り`invalid_action`、終端済みrequestは第9.2節の冪等再送・`request_conflict`・`stale`に従う。Schema/ID/session違反は第12節の`invalid_message` |
@@ -295,13 +295,13 @@ ID以外の交渉用文字列・配列にも、次の閉じた上限を適用す
 
 byte-for-byteの比較対象はUTF-8 JSON payloadであり、JSONLの行末CR/LF、WebSocketのframe header・mask・fragment境界を含まない。payload内の空白、member順、escape表記は比較対象であり、再送でJSONを再直列化して変更してはならない（MUST NOT）。
 
-プレイヤーは**連続して完全に適用した最大seq**を保持し、期待値をその値+1とする（MUST）。第12節の第1～5層を通過した新しいmessageのうち、期待値より大きいseqを持つものを破棄し、expected_seqとreceived_seqを持つrecoverable sequence_gapを送る。ただし第13.3節で許可されたsnapshotの飛越しは同節に従う。破棄した番号へ適用位置を進めてはならない（MUST NOT）。ホストの同じseqの再送は元のpayloadとbyte-for-byteで同一とし、同一の再送を再適用してはならない。保持している同じseqの内容が異なれば、payload Schemaより先にfatal sequence_conflictとする。snapshotで置換した未保持の過去範囲も第12節の第1～4層を適用する。
+プレイヤーは**連続して完全に適用した最大seq**を保持し、期待値をその値+1とする（MUST）。第12節の第1～5層を通過した新しいmessageのうち、期待値より大きいseqを持つものを破棄し、expected_seqとreceived_seqを持つrecoverable sequence_gapを送る。ただし第13.3節で許可されたsnapshotの飛越しは同節に従い、検証済みfatal errorの終了通知は第12節の例外に従う。破棄した番号へ適用位置を進めてはならない（MUST NOT）。ホストの同じseqの再送は元のpayloadとbyte-for-byteで同一とし、同一の再送を再適用してはならない。保持している同じseqの内容が異なれば、payload Schemaより先にfatal sequence_conflictとする。snapshotで置換した未保持の過去範囲も第12節の第1～4層を適用する。
 
 `sequence_gap` を受信したホストは、`expected_seq` から送信済みの最新 `seq` までの全messageを元の番号と内容で再送しなければならない（MUST）。一部だけを再送してはならない（MUST NOT）。再送できず `snapshot` capability が有効なら、第13.3節のsnapshotを送信できる（MAY）。いずれも不可能な場合、ホストはfatal `resume_unavailable`でsessionを終了しなければならない（MUST）。
 
 `seq` は「受信できたmessage数」ではなく、hostがこのsessionへcommitしたapplication messageの永続的なledger番号である。hostは送信前に次の不変条件を満たすledger entryを作成し、entryとwire bytesの永続化に成功してからtransportへ渡さなければならない（MUST）。transportへのdelivery確認を待ってseqを割り当てたり、切断を理由に未送信entryを削除したりしてはならない（MUST NOT）。
 
-受信側は `applied_seq` と、検証済みの `wire_bytes` を少なくとも最後の連続prefixについて保持する。`seq == applied_seq + 1` のmessageだけを構文・Schema・状態遷移検証後に適用し、適用成功後に `applied_seq` を進める。`seq <= applied_seq` は同じ `wire_bytes` ならduplicateとして無視できるが、byte-for-byteで異なる場合は `sequence_conflict` としなければならない。`seq > applied_seq + 1` はmessageを一切適用せず、第12節の検査層を通過した場合に限り `sequence_gap(expected_seq = applied_seq + 1, received_seq = seq)`を返す。error送信によってapplied prefixを先へ進めてはならない。
+受信側は `applied_seq` と、検証済みの `wire_bytes` を少なくとも最後の連続prefixについて保持する。`seq == applied_seq + 1` のmessageだけを構文・Schema・状態遷移検証後に適用し、適用成功後に `applied_seq` を進める。`seq <= applied_seq` は同じ `wire_bytes` ならduplicateとして無視できるが、byte-for-byteで異なる場合は `sequence_conflict` としなければならない。`seq > applied_seq + 1` は第12節の検証済みfatal errorの終了通知を除きmessageを一切適用せず、同節の検査層を通過した場合に限り `sequence_gap(expected_seq = applied_seq + 1, received_seq = seq)`を返す。error送信によってapplied prefixを先へ進めてはならない。
 
 hostは同一 `seq` の再送、resume replayおよびrange replayに、ledger entryのwire bytesをそのまま使用しなければならない。JSON objectをparseして再serializeしたもの、別のviewへ再投影したもの、または同じsemantic payloadを異なるmember順で組み立てたものは同一messageとみなさない（MUST NOT）。
 
@@ -329,7 +329,7 @@ hostは同一 `seq` の再送、resume replayおよびrange replayに、ledger e
 
 ### 6.1 `hello`
 
-接続を確立した Host が最初の YAMAI application message として `hello` を送信する。Player は `hello` を送信してはならず（MUST NOT）、`hello` 受信前には交渉用のfatal `error` 以外を送信してはならない（MUST NOT）。`join` は有効な `hello` を受信した後にだけ送信する（MUST）。Host は同一sessionへ `hello` を二度送ってはならず、再交渉は新しいsessionで行う。同じtransportの再利用は第6.4節・Appendix Aに従う。
+接続を確立した Host が最初の YAMAI application message として `hello` を送信する。Player は `hello` を送信してはならず（MUST NOT）、`hello` 受信前には交渉用のfatal `error` 以外を送信してはならない（MUST NOT）。`join` は有効な `hello` を受信した後にだけ送信する（MUST）。Host は同一transportの一回の交渉で `hello` を二度送ってはならない（MUST NOT）。既存sessionを再開する場合も、新しいtransportで `hello → join → welcome` を実行し、成功時は同じsession_idを保持する。交渉済みのmode/view・rules・capabilityを変更する再交渉には新しいsessionを使用する。同じtransportの再利用は第6.4節・Appendix Aに従う。
 
 ```json
 {
@@ -595,7 +595,7 @@ welcomeのplayersはseat 0～3の順に並べる。新規playとreplayのwelcome
 
 ### 6.4 交渉の検査順と境界
 
-ホストはhello→join→welcome/errorの順を守り、交渉中にapplication messageを送らない。join.roomは新規playだけで使用し、resumeやspectate/replayのtargetと併記しない（MUST）。構造上有効なmode/viewの組をホストが提供しない場合はunsupported_viewとして拒否する（MUST）。unsupported_profileはprofile名が未対応の場合に限る。mode/viewの型や組合せ自体が不正な場合はinvalid_messageとし、この二つと区別する。
+ホストは新規接続とresumeの両方でhello→join→welcome/errorの順を守り、交渉中に交渉後用のenveloped application messageを送らない。join.roomは新規playだけで使用し、resumeやspectate/replayのtargetと併記しない（MUST）。構造上有効なmode/viewの組をホストが提供しない場合はunsupported_viewとして拒否する（MUST）。unsupported_profileはprofile名が未対応の場合に限る。mode/viewの型や組合せ自体が不正な場合はinvalid_messageとし、この二つと区別する。
 
 拒否理由は次の順に決める（MUST）。
 
@@ -1851,6 +1851,8 @@ mode を途中で変更してはならない（MUST NOT）。完全情報 replay
 
 `severity == "recoverable"` の error は、関連する不正 message を状態へ適用せず、session を継続できることを表す。`severity == "fatal"` の error を送信した endpoint は、当該 error の送信完了後に新しい application message を送信してはならず（MUST NOT）、transport を終了しなければならない（MUST）。
 
+第1～5層の検査を全て通過した新しいHost→Playerのfatal errorは、seqが連続していなくても終了通知として受理する（MUST）。欠番によりresume_unavailable等の終了理由を失わせないための例外であり、sequence_gapを返さず、理由を診断として保持してsessionを終了する。欠けたgame状態、request、時計、ledgerの連続適用位置を補完・変更せず、applied_seqも進めない（MUST NOT）。同一seqの比較と置換済み範囲の無視は第4層を優先し、direction・session/game ID・Schema違反をこの例外で許可してはならない。連続seqのfatal errorは通常のledger entryとして適用して終了する。受信後はbuffer済みmessageも適用せず、同じsessionのresumeを行わない。
+
 fatalを確定したendpointは以後の入力適用を直ちに停止し、送信可能な場合だけerrorを通知する。errorの送信完了を無期限に待って切断を遅らせてはならない（MUST NOT）。transportが既に壊れている場合やWebSocket自体の失敗処理では、第4.3節と第15節の終了条件を優先する。errorの不達はfatal sessionやtokenを復活させる理由にならない。
 
 `invalid_message` は、プレイヤーからホストへの `action` が第8.2節の必須member `yamai`、`kind`、`session_id`、`game_id` および既知のrequest_idを正しい型で持ち、`action_id` またはその他のaction固有memberだけがSchema違反である場合に限りrecoverableとする。既知の解決済みrequestへのwell-formedなactionはSchema違反ではなく、第9.2節の冪等性・conflict・後着規則で処理しなければならない（MUST）。それ以外のHost → Player message、交渉message、ID不一致または状態変更messageのSchema違反はfatalとする（MUST）。
@@ -1866,7 +1868,7 @@ Host→Player専用のenvelope memberである `seq` または `original_seq` �
 | 3 | direction、kind、version、session_id、game_id、envelopeの構造 | `invalid_message`、fatal（actionの限定例外は下記） |
 | 4 | 保持済みhost seqのwire bytes比較、snapshot置換済み範囲の後着判定 | 不一致はfatal `sequence_conflict`。同一byteまたは未保持の置換済み範囲なら無応答で無視 |
 | 5 | 方向別message Schema、registry値、mode/viewおよびprofile/rule | `invalid_message`、fatal（actionの限定例外は上記） |
-| 6 | 新しいhost seqの連続性と許可されたsnapshot置換 | recoverable `sequence_gap` / fatal `invalid_message` |
+| 6 | 新しいhost seqの連続性、許可されたsnapshot置換および上記fatal終了通知の例外 | recoverable `sequence_gap` / fatal `invalid_message` |
 | 7 | session/game phase、`original_seq`、caused_by_seq、request/group前提 | `invalid_message`、fatal |
 | 8 | request_id/action_idの対応、期限、冪等性および優先順位 | `invalid_action`/`request_conflict`、recoverable |
 
@@ -1882,7 +1884,7 @@ action固有memberのSchema違反には上記の限定的なrecoverable `invalid
 
 交渉前のerrorはfatalだけを許可し、request/actionやseqの競合を報告しない。交渉後の`invalid_action`、`request_conflict`、`resume_unavailable`はHost→Player、`sequence_gap`、`sequence_conflict`、`unsupported_rules`はPlayer→Hostとする。invalid_frame、invalid_json、unsupported_frame、invalid_message、resource_limit、internal_errorは状況に従ってどちらも送れる（MUST）。方向別のSchemaで検査し、Playerから送るinvalid_messageは常にfatalとする。未知のerror codeはinvalid_messageとして拒否する。
 
-sequence_gapには正のexpected_seqと、それより大きいreceived_seqを必須とする。request_conflictにはrequest_id/action_idを必須とし、終端状態を既に確定している場合だけoriginal_statusを付ける。その他のerrorへこれら専用のmemberを流用してはならない（MUST NOT）。
+`sequence_gap` には正の `expected_seq` と、それより大きい `received_seq` を必須とし、これら二つのmemberを他のerrorへ含めてはならない（MUST NOT）。`request_id` はrequestに関連する任意のerrorで使用できる診断memberであり、`request_conflict` 専用ではない。`action_id` は `invalid_action`、`invalid_message`、`request_conflict` に限り、診断対象のaction IDがIDのSchemaに適合する場合に含めてよい（MAY）。欠落または不正なaction IDを推測・補正して含めてはならず、これら以外のcodeに `action_id` を含めてはならない（MUST NOT）。`request_conflict` には `request_id` と `action_id` を必須とし、元の終端状態を既に確定している場合だけ `original_status` を付ける。`original_status` を他のerrorへ含めてはならない（MUST NOT）。
 
 applicationの検査は、frame/JSON、envelopeの型と現在のversion/session/game ID、保持済みseqのbyte同一性、方向別Schema、seqの連続性、現在状態の意味検査の順とする（MUST）。欠落中の未来messageへ現在状態の遷移を先に適用しない。不正messageの一部を適用してからerrorを返してはならない（MUST NOT）。errorのenvelopeには確立済みsessionのIDを使い、不正入力のIDを反射しない。
 
@@ -1902,7 +1904,7 @@ fatalなprotocol違反を確定したsessionは復旧対象から外し、token�
 
 再開成功の確定点は、ホストが全検証を終え、有効なwelcomeを新しい接続の送信キューへ記録し終えた時点とする。同じtokenの競合を直列化し、この時点で旧tokenと旧接続からの新規入力を無効化する（MUST）。それより前に拒否したjoinはtokenを消費しない。welcomeを受信できず切断した場合も確定済みのrotateを取り消さず、旧tokenで再開できると保証しない。クライアントが有効なwelcomeを受信した後にルールを拒否する場合も、ホストの成功確定より後である。
 
-expires_in_msは正の期間であり、ホストの単調時計で確定した有効期間内、すなわち `now < expires_at` の場合だけ有効とする。期限ちょうど、使用済み、fatal session、履歴を失ったsessionはresume_unavailableとする（MUST）。tokenそのものをsession IDとして解釈しない。
+expires_in_msは正の期間であり、ホストの単調時計で確定した有効期間内、すなわち `now < expires_at` の場合だけ有効とする。期限ちょうど、使用済み、fatal session、または必要な履歴を再送できず第13.3節の有効なsnapshotによる代替復旧も提供できないsessionはresume_unavailableとする（MUST）。必要なledger区間を失った場合も、保持する正準状態から交渉済みsnapshotを生成できれば、第13.2・13.3節に従って再開できる（MAY）。tokenそのものをsession IDとして解釈しない。
 
 ### 13.2 履歴の再送による再開
 
@@ -2567,7 +2569,7 @@ stateDiagram-v2
   READY --> ENDED: end_game commit
 ```
 
-`ENDED` ではgame状態を凍結し、同一gameへ新しいevent/requestを追加してはならない（MUST NOT）。sessionのledgerには、第9.2節の終局前に受け付けた保留stale通知、第12節に従うerror、および第13節の回復用snapshotだけを例外的に追加できる。終局後の正しいactionは第9.2節に従って破棄するが、壊れたmessageの検証・error処理は省略しない。既存entryは不変のまま再送する。保留通知のcommitと送信キューへの記録を終えてから次sessionへ進む。新しいhelloは新しいsession_idを生成するため、過去sessionのseqを再利用しない（MUST）。
+`ENDED` ではgame状態を凍結し、同一gameへ新しいevent/requestを追加してはならない（MUST NOT）。sessionのledgerには、第9.2節の終局前に受け付けた保留stale通知、第12節に従うerror、および第13節の回復用snapshotだけを例外的に追加できる。終局後の正しいactionは第9.2節に従って破棄するが、壊れたmessageの検証・error処理は省略しない。既存entryは不変のまま再送する。保留通知のcommitと送信キューへの記録を終えてから次sessionへ進む。次sessionを開始するhelloは新しいsession_idを生成するため、過去sessionのseqを再利用しない（MUST）。既存sessionのresumeで送るhelloはこの新規開始とは異なり、第6.3・13節に従って同じsession_idとledgerを保持する。
 
 未解決 `request` は session の部分状態である。`end_kyoku` または `end_game` を送信する前に、関連するすべての request を `accepted`、`passed`、`superseded`、`defaulted` または `stale` のいずれかで解決しなければならない（MUST）。`rejected` は診断ACKであり、これだけでrequestを終端化してはならない。`chombo` ではoffender自身を含む全ての未解決requestを、全てstaleとして取消しを記録してからpenaltyを確定する。
 
