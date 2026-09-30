@@ -64,6 +64,8 @@
     "path": "scripts/validate_artifacts.py",
     "support_files": [
       "scripts/request_contract.py",
+      "scripts/detached_contract.py",
+      "scripts/test_detached_contract.py",
       "scripts/scoring_reference.py",
       "scripts/session_contract.py",
       "scripts/game_contract.py",
@@ -123,7 +125,8 @@
       "verification/quint/yamai_protocol_extended.qnt",
       "verification/quint/yamai_request_liveness.qnt",
       "verification/quint/yamai_resume_delivery.qnt",
-      "verification/quint/yamai_session_ledgers.qnt"
+      "verification/quint/yamai_session_ledgers.qnt",
+      "verification/quint/yamai_detached_seats.qnt"
     ],
     "documentation": "verification/README.md",
     "scope": "bounded control-flow models; no implementation refinement or model composition proof"

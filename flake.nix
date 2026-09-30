@@ -100,6 +100,7 @@
             python3 scripts/test_scoring_reference.py > "$out/scoring-regression.log" 2>&1
             python3 scripts/test_session_contract.py > "$out/session-regression.log" 2>&1
             python3 scripts/test_game_contract.py > "$out/game-regression.log" 2>&1
+            python3 scripts/test_detached_contract.py > "$out/detached-regression.log" 2>&1
             python3 scripts/test_resource_contract.py > "$out/resource-regression.log" 2>&1
             python3 scripts/test_tooling.py > "$out/tooling-regression.log" 2>&1
             python3 tests/test_regressions.py > "$out/specification-regression.log" 2>&1
@@ -666,6 +667,36 @@
               exit 1
             fi
           '';
+          detachedSeatCheck = pkgs.runCommand "yamai-quint-detached-seats" {
+            src = ./.;
+            toolchainDependency = toolchainCheck;
+            nativeBuildInputs = checkerPackages pkgs;
+          } ''
+            set -eu
+            mkdir "$out"
+            test -d "$toolchainDependency"
+            cp "$src/verification/quint/yamai_detached_seats.qnt" "$TMPDIR/"
+            cd "$TMPDIR"
+            model="yamai_detached_seats.qnt"
+            quint parse "$model" > "$out/quint-parse.log" 2>&1
+            quint typecheck "$model" > "$out/quint-typecheck.log" 2>&1
+            quint verify --backend tlc --invariants protocol_invariant \
+              --verbosity 1 "$model" > "$out/quint-verify.log" 2>&1
+            quint verify --backend tlc --temporal detached_seat_does_not_block_progress \
+              --verbosity 1 "$model" > "$out/quint-temporal.log" 2>&1
+            quint test "$model" > "$out/quint-tests.log" 2>&1
+            quint test --backend rust "$model" > "$out/quint-rust-tests.log" 2>&1
+            witnesses="witness_closed_prestart witness_closed_open witness_closed_selected witness_future_group witness_two_future_decisions"
+            quint run --backend rust --invariants protocol_invariant --witnesses $witnesses \
+              --max-steps 70 --max-samples 1000 --seed 20261001 \
+              --verbosity 1 "$model" > "$out/quint-witness.log" 2>&1
+            for witness in $witnesses; do
+              if ! grep -Eq "^$witness was witnessed in [1-9][0-9]* trace" "$out/quint-witness.log"; then
+                cat "$out/quint-witness.log" >&2
+                exit 1
+              fi
+            done
+          '';
         in
         {
           quint-toolchain = toolchainCheck;
@@ -685,6 +716,7 @@
           quint-resume-delivery-temporal = resumeDeliveryTemporalCheck;
           quint-resume-delivery-witnesses = resumeDeliveryWitnessCheck;
           quint-session-ledgers = sessionLedgerCheck;
+          quint-detached-seats = detachedSeatCheck;
         }
       );
     };

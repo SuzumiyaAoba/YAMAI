@@ -892,7 +892,7 @@ def check_release_manifest(manifest: Dict[str, Any], p: Dict[str, Any], r: Dict[
     if not isinstance(validator, Mapping) or validator.get("path") != "scripts/validate_artifacts.py" or validator.get("command") != "python3 scripts/validate_artifacts.py":
         raise ArtifactError("release_error", "release validator metadata mismatch")
     _repo_file(validator.get("path"), "validator.path")
-    if validator.get("support_files") != ["scripts/request_contract.py", "scripts/scoring_reference.py", "scripts/session_contract.py", "scripts/game_contract.py", "scripts/resource_contract.py", "scripts/test_scoring_reference.py", "scripts/test_session_contract.py", "scripts/test_game_contract.py", "scripts/test_resource_contract.py", "scripts/test_validator.py", "scripts/check_jsonschema.py", "scripts/score_oracle.py", "scripts/render_docs.py", "scripts/test_tooling.py", "tests/test_regressions.py"]:
+    if validator.get("support_files") != ["scripts/request_contract.py", "scripts/detached_contract.py", "scripts/test_detached_contract.py", "scripts/scoring_reference.py", "scripts/session_contract.py", "scripts/game_contract.py", "scripts/resource_contract.py", "scripts/test_scoring_reference.py", "scripts/test_session_contract.py", "scripts/test_game_contract.py", "scripts/test_resource_contract.py", "scripts/test_validator.py", "scripts/check_jsonschema.py", "scripts/score_oracle.py", "scripts/render_docs.py", "scripts/test_tooling.py", "tests/test_regressions.py"]:
         raise ArtifactError("release_error", "release validator support files mismatch")
     _repo_file_list(validator.get("support_files"), "validator.support_files")
 

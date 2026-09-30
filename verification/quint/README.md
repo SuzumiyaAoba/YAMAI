@@ -1,8 +1,8 @@
 # YAMAI の Quint 検証モデル
 
-このディレクトリはYAMAI 仕様書 `1.0-draft.1` の制御フローを有限状態へ射影した5モデルを収録する。JSON parser、麻雀の合法手・点数エンジン、認証実装を置き換えるものではない。実際のwireと採点の検査範囲は[検証ガイド](../README.md)および公式vectorを併せて確認する。
+このディレクトリはYAMAI 仕様書 `1.0-draft.1` の制御フローを有限状態へ射影した6モデルを収録する。JSON parser、麻雀の合法手・点数エンジン、認証実装を置き換えるものではない。実際のwireと採点の検査範囲は[検証ガイド](../README.md)および公式vectorを併せて確認する。
 
-## 5モデルの範囲
+## 6モデルの範囲
 
 | モデル | 検証する対象 | 有限境界と解釈 |
 |---|---|---|
@@ -11,6 +11,7 @@
 | [yamai_request_liveness.qnt](yamai_request_liveness.qnt) | 1人の自摸判断または**3人全員**の反応group、個別期限、3種類のron policy、ACK順序、原子的な結果公開 | 1 decision/run、放銃者0、他家1～3、各peerの相対seq 0～3、期限0～2、接続は常時安定 |
 | [yamai_resume_delivery.qnt](yamai_resume_delivery.qnt) | 1peerの履歴・受信位置、有限replay範囲、追加backlog、snapshot、切断中の内部処理、一度だけの適用 | 最大6message、1decision、切断1回、gap1回、snapshot1回。他のgroup memberはothers_readyで要約する。履歴はmessage種別の固定tagを保持する |
 | [yamai_session_ledgers.qnt](yamai_session_ledgers.qnt) | 個別sessionのseq、取消し後の後着診断、終局前に受け付けて終局後に記録する通知、先頭位置での再開、初回観戦snapshot、replayの番号一致 | 2peerのledger、seq上限8と6、1局・1取消し。3人目の反応者と牌山・時計・payloadを省略する。内部状態Cancelledはwireの終端staleに対応する |
+| [yamai_detached_seats.qnt](yamai_detached_seats.qnt) | fatal終了seatの恒久無効化、選択/時計の保存、以後の自動defaultと存続seatの進行 | 4seat、3decision（反応2回と単独自摸番1回）、game-scoped bank。小さい整数のG/T/B、内部準備/外部記録のbarrierを射影する。牌・JSON・実際のtoken暗号・kyoku単位の補充は省略 |
 
 基本モデルと拡張モデルの2反応者は実対局の2人groupを許可する意味ではない。実対局ではYAMAI 仕様書に従って3人全員へ要求する。3人目の応答・期限も変動する場合と三家和はrequest_livenessで検査する。baseline/extendedのseqをそのまま4本のwireへ割り当ててはならない。peerごとのseqはrequest_liveness、実際にどこまで届いたかはresume_deliveryが扱う。
 
@@ -47,6 +48,7 @@ nix build path:.#checks.aarch64-darwin.quint-model-extended-witnesses --no-link
 nix build path:.#checks.aarch64-darwin.quint-request-liveness-witnesses --no-link
 nix build path:.#checks.aarch64-darwin.quint-resume-delivery-witnesses --no-link
 nix build path:.#checks.aarch64-darwin.quint-session-ledgers --no-link
+nix build path:.#checks.aarch64-darwin.quint-detached-seats --no-link
 ```
 
 個別の安全性検査と具体的操作列は次のように実行する。他モデルもファイル名を置き換える。
@@ -69,6 +71,7 @@ TLC backendはq_init/q_stepの有限到達状態を検査する。CLIのmax-step
 | baseline | host_seq_bounded、ended_state_is_quiescent、group_resolves_under_weak_fairness、timeout_closes_under_weak_fairness、resume_returns_under_weak_fairness |
 | request | stable_connection_is_preserved、group_resolves_under_stable_connection、timeout_closes_under_stable_connection、late_ack_survives_default_under_stable_connection |
 | delivery | internal_terminalization_under_fairness、gap_replay_under_eventual_stable_connection、pending_delivery_under_eventual_stable_connection |
+| detached | detached_seat_does_not_block_progress |
 
 hostの内部進行は公平なschedulerを、期限の進行は公平なtickを前提とする。deliveryの配送保証はさらに `eventually(always(transport == Connected))` を仮定する。恒久切断、host停止、時計停止、scheduler starvationでの配送は主張しない。host処理とpeer配送は別の義務であり、切断中も前者は進む。
 
@@ -76,7 +79,7 @@ TLCだけで前提状態の到達性は保証されないため、witnessと具�
 
 ## 検証の限界
 
-5モデルを合成する形式的なrefinement/composition theoremは定義していない。モデル同士の名前が似ていることから、相互の性質を自動的に導いてはならない。各モデルの有限境界と前提の下での結果として扱う。
+6モデルを合成する形式的なrefinement/composition theoremは定義していない。モデル同士の名前が似ていることから、相互の性質を自動的に導いてはならない。各モデルの有限境界と前提の下での結果として扱う。
 
 実際のJSON/UTF-8/frame、byte-for-byteの全履歴、暗号学的token、認証・認可、全visibility、実時間・ネットワークlatency、host crash、複数game、無限の切断再接続、全てのエラー・冪等性・chombo、牌の所有と合法手は完全にはモデル化していない。baseline/extendedの点数は25点×4人、供託1点の保存則だけであり、役・符・本場・責任払いの計算はscoring_referenceと公式fixtureで検査する。
 
@@ -85,3 +88,9 @@ TLCだけで前提状態の到達性は保証されないため、witnessと具�
 ## 並列実行時の検証サーバー
 
 Nix環境のquint wrapperは、verify/compileごとに未使用のloopback portを選び、Apalacheのserver-endpointを分離する。複数の検査が同じサーバーを共有することを防ぐためであり、明示した `--server-endpoint` は尊重する。
+
+## DETACHED seatの有限検査
+
+`yamai_detached_seats` は、準備前・OPEN・SELECTEDでのfatal閉鎖を扱い、閉鎖時の選択/時計/ledgerを保存する。次の反応groupと自摸番の2判断が通常期限のdefaultで解決されることを安全性・時間的性質・10個の具体的runで確認する。prepare/start/tick/default/resolve/next_decisionが弱公平に進むことと、存続sessionに必要な出力容量があることを前提とする。game-scoped bankだけをモデル化し、kyoku補充や全閉鎖seat集合はPython契約の独立検査で補う。
+
+固定seed20261001、70step、1,000sampleのRust実行で5witness全ての到達を要求する。TLCによる有限到達グラフ全体の安全性/temporal検査とは別の到達性確認である。実装全体のrefinementや暗号学的token管理を証明するものではない。

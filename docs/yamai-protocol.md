@@ -107,7 +107,7 @@ GameState = {
   players, rules, scores, kyotaku, kyoku,
   decision: null | TurnRequest | ReactionGroup,
   terminal_requests, stale_attempts,
-  seat_state[4], time_bank_ms[4], id_allocator
+  seat_state[4], seat_control[4]: EXTERNAL | DETACHED, time_bank_ms[4], id_allocator
 }
 SessionState = {
   session_id, game_id, phase: NEGOTIATING | ACTIVE | ENDED | FATAL_CLOSED,
@@ -125,6 +125,8 @@ RequestState = {
 ```
 
 GameStateの進行中decisionは、自摸番の単独request1個または反応group1個だけである。反応groupは他家3seatのrequestを持ち、同一seatへ二重発行しない。requestは選択と計時を固定してSELECTEDとなり、全memberの選択が固定されてから優先順位を一度だけ計算し、終端ACKを記録してTERMINALとなる。詳細は第8・9節に従う。
+
+`DETACHED` は第8.1.2節のhost内部自動応答seatであり、閉鎖sessionをACTIVEへ戻す状態ではない。内部requestも同じ選択・期限・終端statusを持つが、新しいwireの `issued_seq` / `caused_by_seq` と終端ACKの配送を持たない。原因はhostの正準game eventへ直接対応付け、wire上のrequestにnullや架空seqを送って代用しない。
 
 終端statusはaccepted、passed、superseded、defaulted、取消しのstaleのいずれかである。rejectedは終端ではない。自動選択・取消し後の後着actionに返すstaleは別のattempt履歴であり、元の終端決定を変更しない（MUST NOT）。
 
@@ -1461,7 +1463,7 @@ request の lifecycle は `OPEN`（入力受付中）、`SELECTED`（選択と�
 
 `riichi-4p` の反応requestでは既定行動を `none` とし、自摸番では自摸牌を捨てる `dahai`（`tsumogiri:true`）とする（MUST）。ホストがtimeoutによってリーチ、和了または鳴きを自動選択してはならない（MUST NOT）。複合鳴きの直後に追加の打牌requestは存在しない。
 
-実対局では、各dahai・ankan_declared・kakan_declaredの後、他の3seat全員へ同じgroupの反応requestを発行する（MUST）。和了も鳴きもできないseatにはnoneだけを提示する。group memberの有無から他家の合法手や手牌を漏らしてはならない（MUST NOT）。caused_by_seqは各受信sessionの原因eventの番号であり、異なるsession間で同じ数値になる必要はない。同一game内で進行する判断は、自摸番の単独request1個または直前eventの反応group1個だけである。
+実対局では、各dahai・ankan_declared・kakan_declaredの後、他の3seat全員へ同じgroupの反応requestを発行する（MUST）。第8.1.2節のDETACHED seatにも内部requestを生成するが、閉鎖sessionへのwire送信は行わない。和了も鳴きもできないseatにはnoneだけを提示する。group memberの有無から他家の合法手や手牌を漏らしてはならない（MUST NOT）。caused_by_seqは各受信sessionの原因eventの番号であり、異なるsession間で同じ数値になる必要はない。同一game内で進行する判断は、自摸番の単独request1個または直前eventの反応group1個だけである。
 
 `decision_group_members` は常に3要素であり、そのseat集合は原因eventのactor以外の全seatに一致する（MUST）。noneだけの反応もgroupから外さない。
 
@@ -1469,7 +1471,7 @@ request の lifecycle は `OPEN`（入力受付中）、`SELECTED`（選択と�
 
 #### 8.1.1 要求の発行・確定と時計
 
-requestの並行性はtransportの並行workerではなく、hostの単一state machineが決める。hostは次の順序でrequestを発行しなければならない（MUST）。
+requestの並行性はtransportの並行workerではなく、hostの単一state machineが決める。hostは次の順序でrequestを発行しなければならない（MUST）。DETACHED seatの内部requestに限り、第8.1.2節の準備・内部終端記録をそのseatのwire ledger/queue記録の代わりに用いる。
 
 1. 原因eventの適用後、全request ID、candidate、defaultおよびgroup descriptorを生成し、active requestへ予約する。
 2. 同一groupのrequestを `seat` の昇順（同一seatは不可）で並べ、各送信先sessionのledgerへ、そのsessionの次のseqを予約する。他のtransactionのmessageをgroup memberの間へ挿入してはならない（MUST NOT）。
@@ -1495,7 +1497,19 @@ groupの `linearization point` は、全memberがSELECTED（応答またはdefau
 
 requestの候補を固定する最初の期限内action ingressまたは個別deadlineによるdefault固定時に、`elapsed_ms` を一度だけ確定し、`consumed_ms = min(max(0, elapsed_ms - grace_ms - timeout_ms), prior_time_bank_ms)` をそのseatのbankから控除する。rejectedの不正actionは候補を固定せず、その時点の経過を通知するだけでselectionの時計を確定しない。候補固定後にgroup closeを待つ時間は同じrequestのbankを追加消費しない。ACKの `time_bank_ms` はこの控除後の値であり、group内の他requestとの待ち時間を二重に差し引いてはならない（MUST NOT）。
 
-linearization後のackはmemberの `seat` 昇順、同seat不可、の順で生成する。各sessionのledgerで自分宛てACKのseqを予約し、全memberのackをcommitしてから採用eventまたは `end_kyoku` を同じtransactionで送信する。採用eventの内容はlinearization pointで凍結したcandidate集合からだけ計算し、後着action・後着timeout・再接続を結果へ混在させてはならない（MUST NOT）。
+linearization後のackはmemberの `seat` 昇順、同seat不可、の順で生成する。DETACHED seatについては第8.1.2節の内部終端記録で置き換える。各sessionのledgerで自分宛てACKのseqを予約し、全memberのackをcommitしてから採用eventまたは `end_kyoku` を同じtransactionで送信する。採用eventの内容はlinearization pointで凍結したcandidate集合からだけ計算し、後着action・後着timeout・再接続を結果へ混在させてはならない（MUST NOT）。
+
+#### 8.1.2 Fatal終了seatの自動応答
+
+確立済みのplay sessionが `FATAL_CLOSED` となりgameがまだ終了していない場合、hostはそのseatを `DETACHED` へ一度だけ移行し、対局終了まで自動応答で進める（MUST）。原因が資源超過であるか他のfatal違反であるかによって、対局上の扱いを変えない。session・tokenは永久に無効であり、同じgameのそのseatへ新しいplay sessionを割り当てたり、resumeやsnapshotで元sessionを復活させたりしてはならない（MUST NOT）。seat、player identity、手牌、点数、フリテン、既存選択等の正準game状態は保持し、game終了後にだけ新しいgameへ参加できる。交渉拒否、spectate/replay sessionの終了、通常の通信断はこのseat移行を発生させない。
+
+既存requestがOPENなら、元の候補・default・開始時刻・期限・残りbankをそのまま引き継ぎ、元の個別deadlineでのみdefaultを固定する（MUST）。SELECTEDならsource、action_id、elapsed_ms、控除済みbankを変更せず、その選択を通常の優先順位評価へ含める。fatalを理由に即時default、早期group close、選択の取消し、時計の停止・延長・bank補充を行ってはならない（MUST NOT）。まだgroup_startに達していないrequestは未開始のまま準備を続け、fatal後のbuffer済み入力を新しい選択として採用しない。
+
+以後の自摸番・反応判断でも、hostは完全な合法候補、default、request IDとgroup descriptorを持つ内部requestを生成する（MUST）。自摸番のdefaultは自摸切り、反応のdefaultはnoneであり、自動で和了・リーチ・鳴きを選択しない。G、T、B、個別deadline、D_Gとbank消費式は通常seatと同じで、入力がないまま個別deadlineへ達したものとしてdefaultを固定する。bankはseatの同じ残量から継続し、bank_scope=kyokuの通常start_kyoku補充だけは従来の規則どおり行う。閉鎖sessionへの新request/ACK/eventのseq割当て、wire生成、ledger追記、送信queue予約、資源予算確保は行わず、これらを内部requestの開始や解決の前提にしてはならない（MUST NOT）。旧ledger/attemptは復旧用として破棄できるが、seatと進行中decisionに必要なgame stateを捨ててはならない。
+
+反応groupのmemberは引き続き原因actor以外の全3seatであり、DETACHED seatをdescriptorから除外しない（MUST NOT）。各memberの候補・ID・descriptorの内部準備を終え、EXTERNAL seatについてはwire ledger/queue記録（通常の通信断中は再配送履歴への記録）も終えた、最初のhost単調時計の時点を共通group_startとする（MUST）。DETACHED seatは内部準備完了だけでこのbarrierを満たす。準備中にsessionがfatal終了した場合も、そのmemberを内部requestへ移してbarrierを完了し、他seatの済んだ準備やIDをやり直さない。単独のDETACHED requestでは、その内部準備完了時刻を開始時刻とする。全seatがDETACHEDでも同じ規則で内部進行を継続する。
+
+全memberの選択を固定した後、seat順に内部の終端結果を確定し、EXTERNAL sessionだけに通常のACKをcommitする。DETACHED memberの内部結果も含む全memberの確定を終えてから、同じtransactionの結果eventを正準gameと存続sessionへ記録する（MUST）。内部結果はaccepted/passed/superseded/defaulted/staleの同じ意味を持ち、他seatへのACK投影や新しいmessage kindではない。この節は、第3節、第8.1.1・8.4・8.5節、第9節およびAppendix Aを含む、本仕様の「全request/ACK/eventをsessionのledger・queueへ記録し配送する」義務について、閉鎖sessionだけに適用する例外である。chombo等による正規の取消しでも、そのseatのstale終端結果は内部だけに記録する。通常の通信断ではsessionを閉鎖せず、従来どおりledgerを保持して再開できる。この継続はhostの正常稼働とgame共有資源が利用可能であることを前提とし、game全体のevent上限、host crashや共有状態の破損まで解消する保証ではない。DETACHED化を理由に共有資源の上限を解除したり、不正な対局結果を生成したりしてはならない（MUST NOT）。
 
 ### 8.2 `action`
 
@@ -1637,7 +1651,7 @@ snapshotで `selection.source` を復元済みなら、そのrequestの終端ACK
 
 ### 9.1 計時と期限境界
 
-hostの単調時計で、完全なrequestのwire内容をseq付き送信履歴と送信キューへ記録し終えた時点を `start` とする（MUST）。切断中は再配送用履歴への記録完了が同じ起点である。JSONLのflushやWebSocket APIの完了を待って期限を延長してはならない（MUST NOT）。送信者のflush義務は第4節に従う。groupでは全memberの記録完了後の共通 `group_start` を使用する。group_start前に受信したactionは一旦保持し、開始時点に受信したものとして判定する。
+hostの単調時計で、完全なrequestのwire内容をseq付き送信履歴と送信キューへ記録し終えた時点を `start` とする（MUST）。DETACHED seatの内部requestだけは第8.1.2節の内部準備/barrier完了時点を使う。切断中は再配送用履歴への記録完了が同じ起点である。JSONLのflushやWebSocket APIの完了を待って期限を延長してはならない（MUST NOT）。送信者のflush義務は第4節に従う。groupでは全memberの記録完了後の共通 `group_start` を使用する。group_start前に受信したactionは一旦保持し、開始時点に受信したものとして判定する。
 
 `G = rules.time_control.grace_ms`、`T = request.timeout_ms`、`B = request.time_bank_ms`、`D = G + T + B` とする。完全なmessageを受信・構文検証し、そのactionをhostの直列化された入力処理に登録した単調時刻と `start` の差を `t` とする。合法actionを新規選択できる条件は **`0 <= t < D`** である（MUST）。比較は切り捨て前の時計精度で行う。`t == D` では常にtimeoutが優先し、`D == 0` では即座に既定選択となる。timer実行の遅延はdeadlineを延ばさない（MUST NOT）。入力とtimerは単一の順序で処理し、deadline前に固定済みの選択をtimerで置換してはならない（MUST NOT）。
 
@@ -1664,7 +1678,7 @@ Schemaとsession/game IDを検証し、第15節のsession資源予算へのadmis
 3. 自動選択または取消し済みなら、後着actionを状態へ適用せず `stale` ACKを新しいseqで返す。未配信の終端ACKがある場合は、そのACKと結果event列の後へ通知を並べる。`elapsed_ms` と `time_bank_ms` は元の終端ACKと同じとする。同じ後着 `(request_id, action_id)` への `stale` は最初の1回だけ生成し、同一再送では追加messageを生成しない。
 4. それ以外の `OPEN` requestは、まず期限を検査する。期限到達なら既定選択を固定し、後着の処理を行う。期限前なら、候補内IDを `SELECTED` に固定し、候補外IDを第8.5節で処理する。`reject` policyによる不正選択は固定されず、その後の正しいactionを元の期限まで受け付ける。
 
-resumeまたはsequence-gapのreplayでは、生成済みACKを元のseqとwire内容で再送する。元の終端ACK、後着の通知、明示選択か自動選択か、計時結果およびID対応を少なくとも同gameの `end_game` と保留中の後着通知のcommitまで保持する（MUST）。有効なresume tokenが残る場合は第13節の回復にも必要な履歴を保持する。第15節の資源予算超過で当該sessionをfatal終了させた場合だけ、このsessionの復旧用履歴・attempt保持義務を終了できる。接続を切るだけ、またはsnapshotを適用するだけではこの例外にならない。
+resumeまたはsequence-gapのreplayでは、生成済みACKを元のseqとwire内容で再送する。元の終端ACK、後着の通知、明示選択か自動選択か、計時結果およびID対応を少なくとも同gameの `end_game` と保留中の後着通知のcommitまで保持する（MUST）。有効なresume tokenが残る場合は第13節の回復にも必要な履歴を保持する。原因を問わず当該sessionを不可逆な `FATAL_CLOSED` としtokenを失効させた場合だけ、このsessionの復旧用履歴・attempt保持義務を終了できる。play seatの対局継続に必要なgame/decision stateは第8.1.2節に従って保持する。接続を切るだけ、またはsnapshotを適用するだけではこの例外にならない。
 
 受信者は観測済みの後着 `(request_id, action_id)` も保持し、同じ組のstale通知を別の新しいseqで受理してはならない（MUST NOT）。同一seq・同一byteの再送は通常どおり無視し、同じrequestでも異なる後着action_idは別attemptとする。requestを終端化する取消しstaleは後着通知とは別である。resumeやsnapshotで、既に観測したattemptを消去して再通知を許可しない。snapshotで元requestを失った場合も、置換後に観測した後着通知の重複は検査する（MUST）。
 
@@ -1898,7 +1912,7 @@ applicationの検査は、frame/JSON、envelopeの型と現在のversion/session
 
 同一transportで次sessionへ進む際、既に終了したsessionのIDに正確に一致するwell-formedな後着actionは無応答で破棄する（MUST）。新しいrequestや対局状態へ適用しない。未知のsession IDや壊れたmessageまでこの例外で受理してはならない。
 
-fatalなprotocol違反を確定したsessionは復旧対象から外し、tokenを失効させる。fatal errorの後に同じ接続の受信バッファへ残っているapplication messageを適用しない。通常の通信断による未完frameは別扱いで、部分frameを破棄して再開可能なsessionを保持する。EOF時のinvalid_frameという診断だけを、完全な不正messageを受信した証拠にしてはならない（MUST NOT）。fatalを和了やchomboへ変換せず、稼働しているhostの既存requestの時計・内部解決は継続する。
+fatalなprotocol違反を確定したsessionは復旧対象から外し、tokenを失効させる。fatal errorの後に同じ接続の受信バッファへ残っているapplication messageを適用しない。通常の通信断による未完frameは別扱いで、部分frameを破棄して再開可能なsessionを保持する。EOF時のinvalid_frameという診断だけを、完全な不正messageを受信した証拠にしてはならない（MUST NOT）。fatalを和了やchomboへ変換せず、稼働しているhostの既存requestの時計・内部解決は継続する。確立済みplay seatの以後の判断も、第8.1.2節のDETACHED方式で継続する。
 
 ## 13. 再接続と snapshot
 
@@ -2395,7 +2409,7 @@ event数はstart_game・start_kyoku・end_kyoku・end_gameと拡張eventを含�
 
 上限ちょうどまで許可し、それを超える次の処理は、attempt登録・新しいseq割当て・応答生成・配送予約の前に原子的に拒否する（MUST）。複数entryを作るtransactionはまとめて必要量を確保する。第12節第1–4層で既に確定したfatalなframe/構文/Schema/session違反の分類を変更しないが、通常のstale/rejected/request_conflict等を生成する義務より資源予算のadmissionを優先する。超過時は当該sessionをfatal `resource_limit` とし、入力の処理を停止し、tokenを失効させる（MUST）。この終了通知に限り累積予算とは別に最大1 messageを予約してよいが（MAY）、1 MiBと送信backlog上限を超えてはならず、送信不能なら通知なしでtransportを閉じる。終了通知のために別のerrorを生成するループを作らない。
 
-fatal終了したsessionは再開できず、その復旧ledger・attempt保持義務を終了できる。既にcommitした対局状態を巻き戻したり、他seatの予算を消費させたり、資源超過を和了・chombo・局取消しに変換してはならない（MUST NOT）。hostが稼働する限り、既存requestの時計・既定選択・group解決は継続し、参加を続ける他sessionへの結果を記録する（MUST）。終了sessionへの新規配送だけを打ち切り、そのsessionのquotaに依存してgame全体を停止しない。session内部解決のためにまだ必要な最小stateは、当該request/groupが解決するまで保持する。
+fatal終了したsessionは再開できず、その復旧ledger・attempt保持義務を終了できる。既にcommitした対局状態を巻き戻したり、他seatの予算を消費させたり、資源超過を和了・chombo・局取消しに変換してはならない（MUST NOT）。hostが稼働する限り、既存requestの時計・既定選択・group解決は継続し、参加を続ける他sessionへの結果を記録する（MUST）。終了sessionへの新規配送だけを打ち切り、そのsessionのquotaに依存してgame全体を停止しない。閉鎖sessionの復旧用stateと、対局継続に必要なseat/decision stateを区別し、後者は第8.1.2節に従ってgame終了まで保持する。以後の判断は同節のDETACHED方式で継続する。
 
 ## 16. 成果物と版の一致
 
@@ -2589,7 +2603,7 @@ stateDiagram-v2
 
 `ENDED` ではgame状態を凍結し、同一gameへ新しいevent/requestを追加してはならない（MUST NOT）。sessionのledgerには、第9.2節の終局前に受け付けた保留stale通知、第12節に従うerror、および第13節の回復用snapshotだけを例外的に追加できる。終局後の正しいactionは第9.2節に従って破棄するが、壊れたmessageの検証・error処理は省略しない。既存entryは不変のまま再送する。保留通知のcommitと送信キューへの記録を終えてから次sessionへ進む。次sessionを開始するhelloは新しいsession_idを生成するため、過去sessionのseqを再利用しない（MUST）。既存sessionのresumeで送るhelloはこの新規開始とは異なり、第6.3・13節に従って同じsession_idとledgerを保持する。
 
-未解決 `request` は session の部分状態である。`end_kyoku` または `end_game` を送信する前に、関連するすべての request を `accepted`、`passed`、`superseded`、`defaulted` または `stale` のいずれかで解決しなければならない（MUST）。`rejected` は診断ACKであり、これだけでrequestを終端化してはならない。`chombo` ではoffender自身を含む全ての未解決requestを、全てstaleとして取消しを記録してからpenaltyを確定する。
+通常の未解決 `request` はsessionの部分状態である。第8.1.2節のDETACHED内部requestはgame/seat状態に属し、FATAL_CLOSED sessionへ新しいwireを追加しない。`end_kyoku` または `end_game` を送信する前に、関連するすべての request を `accepted`、`passed`、`superseded`、`defaulted` または `stale` のいずれかで解決しなければならない（MUST）。`rejected` は診断ACKであり、これだけでrequestを終端化してはならない。`chombo` ではoffender自身を含む全ての未解決requestを、全てstaleとして取消しを記録してからpenaltyを確定する。
 
 ## Appendix B. 最小交換例
 

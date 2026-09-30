@@ -22,7 +22,7 @@ YAMAI は、4人リーチ麻雀の対局ホストと AI プレイヤーが、対
 | [YAMAI 仕様書](docs/yamai-protocol.md) | 通信、状態遷移、麻雀ルール、採点、復旧、適合性の規範本文 |
 | [成果物の仕様](docs/artifacts.md) | ファイル構成、版の一致、profile hash、検査層の関係 |
 | [検証ガイド](verification/README.md) | 実行方法、適合35項目と検査の対応、検証範囲 |
-| [形式モデル](verification/quint/README.md) | 5つの Quint モデル、有限境界、性質と前提 |
+| [形式モデル](verification/quint/README.md) | 6つの Quint モデル、有限境界、性質と前提 |
 
 ## 通信と対局の原則
 

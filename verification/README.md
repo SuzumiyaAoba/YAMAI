@@ -12,13 +12,14 @@ python3 scripts/test_validator.py
 python3 scripts/test_scoring_reference.py
 python3 scripts/test_session_contract.py
 python3 scripts/test_game_contract.py
+python3 scripts/test_detached_contract.py
 python3 scripts/test_resource_contract.py
 python3 scripts/test_tooling.py
 python3 tests/test_regressions.py
 python3 scripts/score_oracle.py
 ```
 
-[flake.nix](../flake.nix) と [flake.lock](../flake.lock) は Python、JSON Schema 検査実装、Quint、TLC、Java、Z3 を含む検証環境を固定する。Nix の flakes が有効な環境では、次のコマンドで上記の検査、独立した Draft 2020-12 検査、5つの形式モデルの検査を実行できる。
+[flake.nix](../flake.nix) と [flake.lock](../flake.lock) は Python、JSON Schema 検査実装、Quint、TLC、Java、Z3 を含む検証環境を固定する。Nix の flakes が有効な環境では、次のコマンドで上記の検査、独立した Draft 2020-12 検査、6つの形式モデルの検査を実行できる。
 
 ```sh
 nix flake check path:. --no-update-lock-file
@@ -39,6 +40,7 @@ nix build path:.#checks.aarch64-darwin.artifact-validator --no-link --print-out-
 | [validate_artifacts.py](../scripts/validate_artifacts.py) | JSON、Schema の参照と対応 keyword、registry、版、profile hash、本文 JSON 例、公式ベクトル |
 | [check_jsonschema.py](../scripts/check_jsonschema.py) | 独立した Draft 2020-12 実装によるメタ Schema・正例・指定された負例の検査。全参照をローカルで解決する |
 | [request_contract.py](../scripts/request_contract.py) | 全3 member の選択、競合解決、ACK、期限、再送、取消し |
+| [detached_contract.py](../scripts/detached_contract.py) | fatal終了seatの固定、内部準備barrier、既存選択と期限の保存、以後の自動応答とbank継続 |
 | [resource_contract.py](../scripts/resource_contract.py) | session単位の累積control/ledger/replay予算、超過前の原子的拒否。実装全体のmemoryやschedulerの証明ではない |
 | [session_contract.py](../scripts/session_contract.py) | 交渉、token、seq、再送、snapshot、transport の再利用、資源上限と時計 |
 | [game_contract.py](../scripts/game_contract.py) | 完全な判断局面の合法候補、受信 event の牌数・牌山・鳴き・槓・リーチ・責任払い・精算・次局 |
@@ -115,7 +117,7 @@ private actionの候補検査は、名前付き引数・配列順・入れ子obj
 - 標準ライブラリの validator は、この版で使用する JSON Schema assertion の部分集合を実装する。未対応 keyword と nested `$id` は拒否する。Nix の検査では固定した JSON Schema 実装によるメタ Schema と正例の検査も行う。
 - game_contractは完全な1判断局面の候補生成、精算済み条件からの次局、受信者が観測できるevent状態を検査する。和了では役IDの重複・排他、複合役満の両立、門前／副露、適用ルール、公開されたリーチ・和了原因と20符・25符の例外条件との整合を検査してから、符・飜・役満による金額、本場・供託・責任払いを含む差額を照合する。和了牌・可視手牌・公開副露の牌種条件、字牌面子の残り枠、公開面子で確定する役の欠落と符の下限も検査する。他家の非公開手牌やホストの牌山順列は復元しない。これらの必要条件の通過だけで非公開部分の役・符の成立を証明したとは扱わず、完全な判定にはホストの完全情報と採点fixtureが必要である。
 - event 投影の fixture は event payload と前後状態を検査する。envelope、request、ACK の配送と時計は wire trace、request contract、形式モデルで扱い、Receiver で観測可能な部分を接続する。
-- 5つの形式モデルは、それぞれの有限境界と環境仮定の下で性質を検査する。牌の全組合せ、任意の拡張・ネットワーク、認証サービス、実装コードとの refinement 証明、モデル間の合成証明は対象外である。
+- 6つの形式モデルは、それぞれの有限境界と環境仮定の下で性質を検査する。牌の全組合せ、任意の拡張・ネットワーク、認証サービス、実装コードとの refinement 証明、モデル間の合成証明は対象外である。
 
 ## 境界条件の検査
 
@@ -140,3 +142,7 @@ private actionの候補検査は、名前付き引数・配列順・入れ子obj
 `python3 scripts/test_resource_contract.py` は有限予算のちょうどの上限と超過、別IDの後着attempt、無応答の重複input、累積replayの消費と原子性を検査する。counterはsessionが所有し、queue排出やsnapshot、再接続で新しいSessionBudgetを生成してはならない。参考値はサービス設定の出発点であり、wireの受信上限の追加ではない。
 
 `test_session_contract.py` は送信圧迫状態の微量drain、予約された結果の配送期限、およびWebSocketからJSONLへの復旧時に元payloadを変更せずsnapshotまたは拒否へfallbackする境界を検査する。replay_plan traceの省略可能なtarget_transportはwebsocket（既定）またはjsonlを指定する。`snapshot=True` は、呼出し側が交渉と内容を検証したsnapshotを提供できることを表し、helper自体によるsnapshot生成・妥当性証明ではない。
+
+## Fatal終了seatの継続
+
+§8.1.2のDETACHEDは新しいwire messageではなく、host内部のseat制御状態である。request_contractとdetached_contractの回帰は、閉鎖前の選択保存、元deadlineでのdefault、以後の単独/全3member判断、通常のbank消費、閉鎖sessionのwire停止と再開/途中交代の拒否を検査する。通常の通信断はDETACHEDにせず再配送履歴を保持する。閉鎖sessionの資源予算を内部game進行へ再利用しないが、game全体の資源枯渇やhost停止を解決するものではない。
