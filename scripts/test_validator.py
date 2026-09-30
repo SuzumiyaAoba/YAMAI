@@ -17,6 +17,18 @@ class ValidatorBoundaries(unittest.TestCase):
             operation(*args, **kwargs)
         self.assertEqual(caught.exception.code, code)
 
+    def test_static_resource_deadline_covers_both_backlog_limits(self):
+        for backlog_bytes, backlog_messages in ((8388608, 1), (1000, 1024), (8388608, 1024)):
+            trace = {'trace_type': 'resource', 'peer_reads': False,
+                     'send_backlog_bytes': backlog_bytes, 'send_backlog_messages': backlog_messages,
+                     'write_deadline_ms': 60000}
+            with self.subTest(bytes=backlog_bytes, messages=backlog_messages):
+                self.assert_error('resource_limit', v.semantic_resource_trace, trace)
+                v.semantic_resource_trace(dict(trace, peer_reads=True))
+        v.semantic_resource_trace({'trace_type': 'resource', 'peer_reads': False,
+                                   'send_backlog_bytes': 8388607, 'send_backlog_messages': 1023,
+                                   'write_deadline_ms': 60000})
+
     def test_error_action_id_is_limited_to_action_diagnostics(self):
         schemas = v.SchemaSet()
         error_schema = schemas.schemas[f'urn:yamai:schema:protocol:{v.PROTOCOL}:error']

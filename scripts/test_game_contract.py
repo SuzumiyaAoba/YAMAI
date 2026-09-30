@@ -5,7 +5,7 @@ from copy import deepcopy
 from decimal import Decimal, localcontext
 
 import validate_artifacts as v
-from game_contract import EventState, GameError, canonical_action, check_hora_payments, legal_actions, next_kyoku
+from game_contract import EventState, GameError, canonical_action, check_hora_payments, json_equal, legal_actions, next_kyoku
 from session_contract import Receiver, SessionError
 
 
@@ -22,6 +22,36 @@ class GameContractTests(unittest.TestCase):
         p["hand"]["concealed_tiles"].reverse()
         self.assertEqual(actual, {canonical_action(a) for a in legal_actions(p, self.rules)})
         self.assertEqual(actual, {canonical_action(a) for a in trace["expected"]})
+
+    def test_immutable_json_equality_preserves_types_and_private_members(self):
+        for left, right in ((True, 1), (False, 0), ('1', 1), (None, False),
+                            ({'x_acme_rule': [True]}, {'x_acme_rule': [1]}),
+                            ({'consumed': [1, 2]}, {'consumed': [2, 1]}),
+                            ({'type': 'none', 'actor': 0}, {'type': 'none'})):
+            with self.subTest(left=left, right=right):
+                self.assertFalse(json_equal(left, right))
+        for left, right in ((1, 1.0), (1, Decimal('1.00')), (0, Decimal('-0.0')),
+                            ({'x_acme_rule': [True], 'amount': 1},
+                             {'amount': Decimal('1.0'), 'x_acme_rule': [True]})):
+            with self.subTest(left=left, right=right):
+                self.assertTrue(json_equal(left, right))
+
+    def test_start_game_rules_do_not_coerce_private_booleans_to_numbers(self):
+        for old, new, valid in ((True, 1, False), (False, 0, False),
+                                (1, Decimal('1.0'), True), (True, True, True)):
+            rules = deepcopy(self.rules)
+            rules['x_acme_rule'] = {'values': [old]}
+            event_rules = deepcopy(rules)
+            event_rules['x_acme_rule']['values'][0] = new
+            event = {'type': 'start_game', 'players': [{'seat': i, 'name': str(i)} for i in range(4)],
+                     'rules': event_rules, 'scores': [rules['starting_points']] * 4}
+            state = EventState(rules)
+            with self.subTest(old=old, new=new):
+                if valid:
+                    state.apply(event)
+                else:
+                    with self.assertRaisesRegex(GameError, 'negotiated rules'):
+                        state.apply(event)
 
     def test_canonical_action_preserves_exact_decimal_values(self):
         for spellings in (("0.5", "0.50", "5e-1"), ("1", "1.00", "10e-1"),
@@ -572,6 +602,132 @@ class GameContractTests(unittest.TestCase):
         event.update(deltas=win["deltas"], scores=[23000, 27000, 25000, 25000])
         state.apply(event)
         self.assertEqual(state.scores, [23000, 27000, 25000, 25000])
+
+    def test_kan_declaration_preserves_hidden_count_and_visible_ownership(self):
+        from game_contract import check_kan_declaration_hand
+
+        ankan = {"type": "ankan_declared", "actor": 1, "consumed": ["E"] * 4}
+        kakan = {"type": "kakan_declared", "actor": 1, "pai": "E", "consumed": ["E"] * 3}
+        for declaration, minimum in ((ankan, 4), (kakan, 1)):
+            for count in (0, 1, 2, 3, 4, 5):
+                with self.subTest(kind=declaration["type"], count=count):
+                    if count < minimum:
+                        with self.assertRaises(GameError):
+                            check_kan_declaration_hand({"count": count}, declaration)
+                    else:
+                        check_kan_declaration_hand({"count": count}, declaration)
+            check_kan_declaration_hand({"tiles": ["E"] * minimum}, declaration)
+            with self.assertRaises(GameError):
+                check_kan_declaration_hand({"tiles": ["E"] * (minimum - 1) + ["S"]}, declaration)
+
+    def test_hidden_ankan_count_is_checked_in_events_and_snapshots(self):
+        from game_contract import validate_snapshot_state
+
+        def position(calls):
+            state = EventState(self.rules)
+            state.apply({"type": "start_game", "scores": [25000] * 4, "rules": self.rules})
+            state.apply({"type": "start_kyoku", "bakaze": "E", "kyoku": 1, "oya": 0,
+                         "honba": 0, "kyotaku": 0, "extension_round": 0, "scores": [25000] * 4,
+                         "dora_marker": "C", "hands": [{"count": 13} for _ in range(4)]})
+            def draw_discard(actor, tile):
+                state.apply({"type": "tsumo", "actor": actor, "pai": None})
+                state.apply({"type": "dahai", "actor": actor, "pai": tile, "tsumogiri": True})
+            groups = [["1m", "2m", "3m"], ["7m", "8m", "9m"],
+                      ["1p", "2p", "3p"], ["7p", "8p", "9p"]]
+            for group, discard in zip(groups[:calls], ["2s", "3s", "4s", "5s"]):
+                draw_discard(0, group[0])
+                state.apply({"type": "chi", "actor": 1, "target": 0,
+                             "pai": group[0], "consumed": group[1:]})
+                state.apply({"type": "dahai", "actor": 1, "pai": discard, "tsumogiri": False})
+                draw_discard(2, "P")
+                draw_discard(3, "F")
+            draw_discard(0, "9s")
+            state.apply({"type": "tsumo", "actor": 1, "pai": None})
+            return state
+
+        declaration = {"type": "ankan_declared", "actor": 1, "consumed": ["E"] * 4}
+        for calls, count in ((3, 5), (4, 2)):
+            with self.subTest(calls=calls):
+                state = position(calls)
+                self.assertEqual(state.round["hands"][1], {"count": count})
+                kyoku = deepcopy(state.round)
+                kyoku["turn"].update(phase="awaiting_responses", last_event=deepcopy(declaration))
+                kyoku["pending_kan"] = deepcopy(declaration)
+                snapshot = {"game_phase": "in_kyoku", "kyoku": kyoku, "next_kyoku": None,
+                            "kyotaku": 0, "scores": [25000] * 4}
+                if calls == 3:
+                    validate_snapshot_state(snapshot, self.rules)
+                    state.apply(declaration)
+                else:
+                    with self.assertRaises(GameError):
+                        validate_snapshot_state(snapshot, self.rules)
+                    before = deepcopy(state.round)
+                    with self.assertRaises(GameError):
+                        state.apply(declaration)
+                    self.assertEqual(state.round, before)
+                    state.apply({"type": "dahai", "actor": 1, "pai": "9s", "tsumogiri": True})
+                    self.assertEqual(state.round["hands"][1], {"count": 1})
+
+    def test_mixed_fourth_kan_rejects_reach_without_changing_scores(self):
+        from game_contract import validate_snapshot_state
+
+        events = self.vectors["V246_mixed_four_kans_abort_after_discard"]["positive"]["trace"]["input"]["events"]
+        for enabled in (True, False):
+            with self.subTest(abort_enabled=enabled):
+                rules = deepcopy(self.rules)
+                if not enabled:
+                    rules["abortive_draws"].remove("suukan_sanra")
+                state = EventState(rules)
+                for event in events[:-2]:
+                    state.apply({**event, "rules": rules} if event["type"] == "start_game" else event)
+                before = deepcopy(vars(state))
+                if enabled:
+                    with self.assertRaises(GameError):
+                        state.apply({"type": "reach", "actor": 2})
+                    self.assertEqual(vars(state), before)
+                    state.apply(events[-2])
+                    # Simulate a standalone checkpoint claiming that forbidden
+                    # declaration; the discard remains otherwise unchanged.
+                    state.round["reach_status"][2]["state"] = "declared"
+                    state.round["rivers"][2][-1]["reach"] = True
+                else:
+                    state.apply({"type": "reach", "actor": 2})
+                    state.apply(events[-2])
+                kyoku = deepcopy(state.round)
+                kyoku["turn"]["last_event"] = deepcopy(state.last_cause)
+                snapshot = {"game_phase": "in_kyoku", "kyoku": kyoku, "next_kyoku": None,
+                            "kyotaku": 0, "scores": [25000] * 4}
+                if enabled:
+                    with self.assertRaises(GameError):
+                        validate_snapshot_state(snapshot, rules)
+                else:
+                    validate_snapshot_state(snapshot, rules)
+                    state.apply({"type": "reach_accepted", "actor": 2, "deltas": [0, 0, -1000, 0],
+                                 "scores": [25000, 25000, 24000, 25000], "kyotaku": 1})
+                    self.assertEqual(state.kyotaku, 1)
+
+    def test_one_players_four_kans_still_allow_reach(self):
+        from game_contract import validate_snapshot_state
+
+        state = EventState(self.rules)
+        state.apply({"type": "start_game", "scores": [25000] * 4, "rules": self.rules})
+        state.apply({"type": "start_kyoku", "bakaze": "E", "kyoku": 1, "oya": 0,
+                     "honba": 0, "kyotaku": 0, "extension_round": 0, "scores": [25000] * 4,
+                     "dora_marker": "1m", "hands": [{"tiles": [t for t in "ESWN" for _ in range(3)] + ["P"]},
+                                                       *[{"count": 13} for _ in range(3)]]})
+        for tile, marker in zip("ESWN", ["2m", "3m", "4m", "5m"]):
+            state.apply({"type": "tsumo", "actor": 0, "pai": tile})
+            state.apply({"type": "ankan_declared", "actor": 0, "consumed": [tile] * 4})
+            state.apply({"type": "ankan", "actor": 0, "consumed": [tile] * 4})
+            state.apply({"type": "dora", "dora_marker": marker})
+        state.apply({"type": "tsumo", "actor": 0, "pai": "P"})
+        state.apply({"type": "reach", "actor": 0})
+        state.apply({"type": "dahai", "actor": 0, "pai": "P", "tsumogiri": True})
+        kyoku = deepcopy(state.round)
+        kyoku["turn"]["last_event"] = deepcopy(state.last_cause)
+        validate_snapshot_state({"game_phase": "in_kyoku", "kyoku": kyoku, "next_kyoku": None,
+                                 "kyotaku": 0, "scores": [25000] * 4}, self.rules)
+        self.assertEqual(state.round["reach_status"][0]["state"], "declared")
 
     def test_failed_restore_leaves_state_untouched(self):
         source = self._dealt()

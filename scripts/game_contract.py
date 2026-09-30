@@ -138,7 +138,7 @@ def kuikae(kind: str, pai: str, consumed: list[str]) -> set[int]:
     return forbidden
 
 
-def canonical_action(action: dict, *, private_payload: bool = False) -> str:
+def canonical_action(action: Any, *, private_payload: bool = False) -> str:
     """Compare core choices, or conservatively preserve a private payload.
 
     Private member semantics belong to the negotiated owner. In that mode,
@@ -178,6 +178,16 @@ def canonical_action(action: dict, *, private_payload: bool = False) -> str:
         return json.dumps(value, allow_nan=False, separators=(",", ":"))
 
     return encode(action if private_payload else project(action))
+
+
+def json_equal(left: Any, right: Any) -> bool:
+    """JSON value equality: numeric spellings agree, booleans are not numbers.
+
+    Unlike core action equivalence, immutable facts retain every member and
+    array position, including negotiated namespaced rule and argument values.
+    """
+    return (canonical_action(left, private_payload=True)
+            == canonical_action(right, private_payload=True))
 
 
 def scoring_melds(row: list[dict]) -> list[dict]:
@@ -226,6 +236,23 @@ def known_round_tiles(kyoku: dict) -> list[str]:
         # concealed hand. Kakan's original pon is already counted above.
         known.extend(pending["consumed"] if pending["type"] == "ankan_declared" else [pending["pai"]])
     return known
+
+
+def fourth_kan_aborts(kan_counts: list[int], rules: dict) -> bool:
+    return (sum(kan_counts) == 4 and max(kan_counts) < 4
+            and "suukan_sanra" in rules["abortive_draws"])
+
+
+def check_kan_declaration_hand(hand: dict, declaration: dict) -> None:
+    """Declared tiles remain concealed, even when only their count is visible."""
+    ankan = declaration["type"] == "ankan_declared"
+    needed = declaration["consumed"] if ankan else [declaration["pai"]]
+    if "tiles" in hand:
+        require(not Counter(needed) - Counter(hand["tiles"]),
+                "kan declaration uses absent visible tiles")
+    else:
+        require(hand["count"] >= (4 if ankan else 1),
+                "kan declaration exceeds the concealed hand count")
 
 
 def check_hora_payments(wins: list[dict], kyoku: dict, rules: dict) -> None:
@@ -491,7 +518,7 @@ def legal_actions(position: dict, rules: dict) -> list[dict]:
         else:
             add("hora")
     kan_ok = p["wall_remaining"] > 0 and sum(p["kan_counts"]) < 4
-    fourth_abort = sum(p["kan_counts"]) == 4 and max(p["kan_counts"]) < 4 and "suukan_sanra" in rules["abortive_draws"]
+    fourth_abort = fourth_kan_aborts(p["kan_counts"], rules)
     if not turn:
         add("none")
         if cause["type"] == "dahai" and not p["reach_accepted"] and p["wall_remaining"] > 0 and not fourth_abort:
@@ -627,6 +654,8 @@ def validate_snapshot_state(snapshot: dict, rules: dict | None = None) -> None:
         require(self_state is None or not self_state["kuikae_forbidden"],
                 "snapshot pauses a compound discard")
         reach_declared = [a for a, s in enumerate(kyoku["reach_status"]) if s["state"] == "declared"]
+        require(not reach_declared or rules is None or not fourth_kan_aborts(kyoku["kan_counts"], rules),
+                "reach declared on the fourth-kan abortive turn")
         require(not reach_declared or (reach_declared == [kyoku["turn"]["actor"]] and cause_type == "dahai"
                                        and phase in {"awaiting_responses", "resolving"}),
                 "unaccepted reach declaration survives outside its discard window")
@@ -696,10 +725,7 @@ def validate_snapshot_state(snapshot: dict, rules: dict | None = None) -> None:
                             and any(m["type"] == "pon" and Counter([m["pai"], *m["consumed"]]) == Counter(cause["consumed"])
                                     for m in kyoku["melds"][actor]),
                             "kakan declaration has no matching pon")
-                hand = kyoku["hands"][actor]
-                if "tiles" in hand:
-                    needed = Counter(cause["consumed"] if cause_type == "ankan_declared" else [cause["pai"]])
-                    require(not needed - Counter(hand["tiles"]), "kan declaration uses absent visible tiles")
+                check_kan_declaration_hand(kyoku["hands"][actor], cause)
         # Self furiten flags follow public state: riichi furiten exists
         # only under an accepted declaration, and a seat's own draw
         # clears its temporary furiten (§10.4, §13.3).
@@ -950,7 +976,7 @@ class EventState:
             return  # The negotiated owner validates extension state separately.
         if kind == "start_game":
             require(self.game_phase == "not_started", "duplicate start_game")
-            require(event["rules"] == self.rules, "start_game changed negotiated rules")
+            require(json_equal(event["rules"], self.rules), "start_game changed negotiated rules")
             require(event["scores"] == [self.rules["starting_points"]] * 4, "wrong initial scores")
             self.game_phase = "between_kyoku"
             self.scores = event["scores"].copy()
@@ -1039,6 +1065,8 @@ class EventState:
             self.last_cause = deepcopy(event)
         elif kind == "reach":
             require(phase == "awaiting_action" and actor == turn_actor and r["reach_status"][actor]["state"] == "none", "invalid reach declaration")
+            require(not fourth_kan_aborts(r["kan_counts"], self.rules),
+                    "reach declared on the fourth-kan abortive turn")
             require(all(m["type"] == "ankan" for m in r["melds"][actor]) and self.scores[actor] >= self.rules["riichi_stick_value"] and r["wall_remaining"] >= 4, "reach prerequisites differ")
             r["reach_status"][actor].update(state="declared", double=r["first_turn_eligible"][actor])
             self.required_event = "dahai"
@@ -1057,10 +1085,8 @@ class EventState:
                 require(r["reach_status"][actor]["state"] == "none", "kakan after riichi")
                 require(any(m["type"] == "pon" and Counter([m["pai"],*m["consumed"]]) == Counter(event["consumed"]) for m in r["melds"][actor]), "kakan declaration has no matching pon")
                 require(tile_index(event["pai"]) == tile_index(event["consumed"][0]), "added tile differs from declared pon")
+            check_kan_declaration_hand(r["hands"][actor], event)
             if "tiles" in r["hands"][actor]:
-                held = Counter(r["hands"][actor]["tiles"])
-                consumed = Counter(event["consumed"] if kind == "ankan_declared" else [event["pai"]])
-                require(not consumed - held, "kan declaration uses absent visible tiles")
                 if r["reach_status"][actor]["state"] == "accepted":
                     require(self.last_cause["type"] == "tsumo"
                             and tile_index(event["consumed"][0]) == tile_index(self.last_cause["pai"])

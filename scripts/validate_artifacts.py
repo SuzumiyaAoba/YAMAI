@@ -1391,7 +1391,8 @@ def semantic_resource_trace(trace: Mapping[str, Any]) -> None:
     _require(backlog_bytes >= 0 and backlog_messages >= 0, "invalid_message", "backlog values are negative")
     if backlog_bytes > 8388608 or backlog_messages > 1024:
         raise ArtifactError("resource_limit", "send backlog exceeds the protocol limit")
-    if trace.get("peer_reads") is False and trace.get("write_deadline_ms") == 60000 and backlog_bytes >= 8388608:
+    if (trace.get("peer_reads") is False and trace.get("write_deadline_ms") == 60000
+            and (backlog_bytes >= 8388608 or backlog_messages >= 1024)):
         raise ArtifactError("resource_limit", "peer did not drain the send backlog")
 
 
@@ -1973,6 +1974,8 @@ def semantic_ledger_trace(trace: Mapping[str, Any], expected_hash: str) -> None:
                 receiver = Receiver(msg, strict_load_bytes, _session_schema_validator(schemas, expected_hash, rules=msg["rules"]), initial_snapshot=msg["mode"] == "spectate" and trace.get("context", {}).get("game_started", False))
             elif step["direction"] == "in":
                 _require(receiver is not None, "invalid_message", "input before welcome")
+                if receiver.closed:
+                    continue  # Fatal closure discards buffered input without applying it.
                 validate("player-application", msg)
                 _require(msg["session_id"] == trace["session_id"] and msg["game_id"] == trace["game_id"], "invalid_message", "input session differs")
                 if kind == "action":
@@ -1994,6 +1997,16 @@ def semantic_ledger_trace(trace: Mapping[str, Any], expected_hash: str) -> None:
                         # Group lifecycles and snapshot-restored ingress clocks
                         # remain outside this single-request capture check.
                         untracked_action_diagnostics = True
+                    selection = selections.get(rid)
+                    terminal = receiver.terminal_acks.get(rid)
+                    if (rid in starts and "decision_group_id" not in request
+                            and selection is not None and selection[1] == "user"
+                            and (terminal is None or terminal["status"] != "stale")):
+                        if msg["action_id"] != selection[0]:
+                            diagnostic_obligations.append({"request_id": rid, "action_id": msg["action_id"],
+                                                           "index": capture_index, "rejected": False,
+                                                           "code": "request_conflict"})
+                        continue  # Same-ID resubmission is silent, not a new choice.
                     if rid in starts and rid in receiver.active_requests and rid not in selections and "decision_group_id" not in request:
                         grace = receiver.welcome["rules"]["time_control"]["grace_ms"]
                         deadline = grace + request["timeout_ms"] + request["time_bank_ms"]
@@ -2018,7 +2031,7 @@ def semantic_ledger_trace(trace: Mapping[str, Any], expected_hash: str) -> None:
                 _require(all(step.get(k) == ledger[seq][k] for k in ("transaction_id", "operation_id")), "invalid_message", "message changed its transaction or operation")
                 duplicate = seq in seen
                 terminalizing = kind == "ack" and msg["request_id"] in receiver.active_requests and msg["status"] != "rejected"
-                if not duplicate and pending_transaction is not None:
+                if not duplicate and pending_transaction is not None and not (kind == "error" and msg.get("severity") == "fatal"):
                     _require(kind == "event" and (step["transaction_id"], step["operation_id"]) == pending_transaction, "invalid_message", "terminal ACK and result events belong to different transactions")
                 if kind == "request" and not duplicate:
                     starts[msg["request_id"]] = step.get("group_start", now)
@@ -2049,7 +2062,15 @@ def semantic_ledger_trace(trace: Mapping[str, Any], expected_hash: str) -> None:
                 outcome = receiver.receive(raw)
                 _require(outcome in {"applied", "duplicate"}, "invalid_message", "capture contains an unapplied host message")
                 if not duplicate:
-                    if kind == "error" and msg["code"] == "invalid_action" and msg["severity"] == "recoverable":
+                    if kind == "error" and msg["code"] in {"invalid_action", "request_conflict"} and msg["severity"] == "recoverable":
+                        if msg["code"] == "request_conflict":
+                            terminal = receiver.terminal_acks.get(msg["request_id"])
+                            if terminal is not None:
+                                _require(msg.get("original_status") == terminal["status"], "invalid_message",
+                                         "conflict differs from the original terminal status")
+                            elif msg["request_id"] in starts and receiver.floor == 0:
+                                _require("original_status" not in msg, "invalid_message",
+                                         "conflict claims a terminal status before terminalization")
                         captured_diagnostics.append((capture_index, msg))
                     if terminalizing:
                         pending_transaction = (step["transaction_id"], step["operation_id"])
@@ -2057,10 +2078,10 @@ def semantic_ledger_trace(trace: Mapping[str, Any], expected_hash: str) -> None:
                         pending_transaction = None
                 seen.add(seq)
         _require(receiver is not None and set(ledger) == seen, "invalid_message", "capture omits ledger messages")
-        _require(not any(o["rejected"] for o in diagnostic_obligations), "invalid_message", "capture omits a required rejected ACK")
-        if not untracked_action_diagnostics:
+        _require(receiver.closed or not any(o["rejected"] for o in diagnostic_obligations), "invalid_message", "capture omits a required rejected ACK")
+        if not untracked_action_diagnostics and not receiver.closed:
             _require(len(captured_diagnostics) == len(diagnostic_obligations), "invalid_message",
-                     "capture emits an extra recoverable invalid_action diagnostic")
+                     "recoverable action diagnostic count differs from captured obligations")
         # Diagnostic IDs are optional. Match responses one-to-one without
         # greedily assigning an ID-less error to the wrong outstanding input.
         matches = {}
@@ -2071,7 +2092,7 @@ def semantic_ledger_trace(trace: Mapping[str, Any], expected_hash: str) -> None:
                 need = pending.pop()
                 obligation = diagnostic_obligations[need]
                 for error_index, (position, error) in enumerate(captured_diagnostics):
-                    if error_index in visited_errors or position <= obligation["index"] or any(
+                    if error_index in visited_errors or position <= obligation["index"] or error["code"] != obligation.get("code", "invalid_action") or any(
                             key in error and error[key] != obligation[key] for key in ("request_id", "action_id")):
                         continue
                     visited_errors.add(error_index)
@@ -2087,9 +2108,12 @@ def semantic_ledger_trace(trace: Mapping[str, Any], expected_hash: str) -> None:
                     if displaced != root and displaced not in parents:
                         parents[displaced] = (need, error_index)
                         pending.append(displaced)
-            _require(found, "invalid_message", "capture omits a matching recoverable invalid_action diagnostic")
-        _require(trace.get("allow_open_requests", False) or (not receiver.active_requests and not receiver.awaiting_request
-                 and not receiver.expected_effects and not receiver.unadopted_reaction),
+            _require(found or receiver.closed, "invalid_message", "capture omits a matching recoverable action diagnostic")
+        if not untracked_action_diagnostics:
+            _require(len(matches) == len(captured_diagnostics), "invalid_message", "capture contains an unmatched action diagnostic")
+        _require(receiver.closed or trace.get("allow_open_requests", False) or (not receiver.active_requests and not receiver.awaiting_request
+                 and not receiver.expected_effects and not receiver.unadopted_reaction
+                 and (receiver.welcome["mode"] == "replay" or not receiver.end_game_due)),
                  "invalid_message", "capture ends with an unresolved decision or missing action effects")
         for lifecycle in trace.get("request_lifecycles", []):
             semantic_lifecycle_trace(lifecycle)

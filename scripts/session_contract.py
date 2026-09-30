@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from typing import Any, Callable
-from game_contract import EventState, GameError, canonical_action
+from game_contract import EventState, GameError, canonical_action, json_equal
 from scoring_reference import ScoringError
 
 
@@ -71,7 +71,7 @@ def negotiate(hello: dict, join: dict, welcome: dict, context: dict,
     require(join["profile_hash"] == profile_hash == profile["hashes"][revision], "profile_mismatch", "profile hash differs")
     require(join["mode"] in context.get("supported_modes", ["play", "spectate", "replay"]), "unsupported_view", "host does not implement the requested mode")
     supported_views = context.get("supported_views", {}).get(join["mode"])
-    require(supported_views is None or join["view"] in supported_views, "unsupported_view", "host does not implement the requested view")
+    require(supported_views is None or any(json_equal(join["view"], view) for view in supported_views), "unsupported_view", "host does not implement the requested view")
     host = set(hello["capabilities"]["required"] + hello["capabilities"]["optional"])
     player = set(join["capabilities"]["required"] + join["capabilities"]["optional"])
     required = set(hello["capabilities"]["required"] + join["capabilities"]["required"])
@@ -99,13 +99,13 @@ def negotiate(hello: dict, join: dict, welcome: dict, context: dict,
         require(context["now_ms"] < previous["expires_at_ms"], "resume_unavailable", "token expired")
         require(join["resume"]["last_seq"] <= previous["highest_seq"], "resume_unavailable", "client claims an unissued sequence")
         old = previous["welcome"]
-        require(all(join[key] == old[key] for key in ("mode", "view", "profile", "profile_revision", "profile_hash")), "resume_unavailable", "resume identity differs")
+        require(all(json_equal(join[key], old[key]) for key in ("mode", "view", "profile", "profile_revision", "profile_hash")), "resume_unavailable", "resume identity differs")
         require(sorted(enabled) == old["capabilities"], "resume_unavailable", "resume capabilities differ")
 
     validate("welcome", welcome)
     require(welcome["yamai"] == join["version"], "invalid_message", "welcome version differs")
     for key in ("mode", "view", "profile", "profile_revision", "profile_hash"):
-        require(welcome[key] == join[key], "invalid_message", "welcome selection differs")
+        require(json_equal(welcome[key], join[key]), "invalid_message", "welcome selection differs")
     require(welcome["capabilities"] == sorted(enabled), "invalid_message", "welcome enabled set differs")
     require(welcome["resumed"] is resumed, "invalid_message", "welcome resume flag differs")
     if join["mode"] in {"spectate", "replay"}:
@@ -114,7 +114,7 @@ def negotiate(hello: dict, join: dict, welcome: dict, context: dict,
     if resumed:
         previous = context["resume_state"]
         old = previous["welcome"]
-        require(all(welcome[key] == old[key] for key in ("session_id", "game_id", "seat", "players", "rules")), "invalid_message", "resume changed retained session facts")
+        require(all(json_equal(welcome[key], old[key]) for key in ("session_id", "game_id", "seat", "players", "rules")), "invalid_message", "resume changed retained session facts")
         require(welcome["replay_from_seq"] == join["resume"]["last_seq"] + 1 and welcome["replay_through_seq"] == previous["highest_seq"], "invalid_message", "resume replay bounds differ")
         require(welcome["resume"]["token"] != previous["token"], "invalid_message", "resume token was not rotated")
         if "scores" in previous:
@@ -139,7 +139,7 @@ def negotiate(hello: dict, join: dict, welcome: dict, context: dict,
             value: Any = welcome["rules"]
             for key in path.split("."):
                 value = value[key]
-            require(value in accepted, "unsupported_rules", "client does not support the offered rule value")
+            require(any(json_equal(value, option) for option in accepted), "unsupported_rules", "client does not support the offered rule value")
         for yaku in welcome["rules"]["local_yaku"]:
             capability = context.get("local_yaku_capabilities", {}).get(yaku)
             supported = context.get("local_yaku_supported", [])
@@ -193,6 +193,7 @@ class Receiver:
         self.through = welcome.get("replay_through_seq", last_seq)
         self.started = bool(last_seq)
         self.ended = False
+        self.end_game_due = False
         self.closed = False
         self.fatal_error: dict | None = None
         self.request_ids: set[str] = set()
@@ -217,7 +218,7 @@ class Receiver:
     def begin_resume(self, welcome: dict) -> None:
         require(not self.closed, "resume_unavailable", "fatal receiver session cannot resume")
         self.validate("welcome", welcome)
-        require(welcome["resumed"] and all(welcome[key] == self.welcome[key] for key in
+        require(welcome["resumed"] and all(json_equal(welcome[key], self.welcome[key]) for key in
                 ("session_id", "game_id", "mode", "view", "seat", "profile", "profile_revision", "profile_hash", "players", "rules", "capabilities")),
                 "invalid_message", "resume changed session identity")
         require(welcome["replay_from_seq"] == self.applied + 1 and welcome["replay_through_seq"] >= self.applied,
@@ -415,7 +416,13 @@ class Receiver:
             required_floor = self.applied if contiguous else max(self.applied, self.gap_received, self.through if self.resume_snapshot_allowed else 0)
             require(message["replaces_through_seq"] >= required_floor and seq == message["replaces_through_seq"] + 1, "invalid_message", "snapshot replacement range is insufficient")
             state = message["state"]
-            require(all(state[key] == self.welcome[key] for key in ("mode", "view", "seat", "players")), "invalid_message", "snapshot changed session identity")
+            require(not self.end_game_due or not contiguous and state["game_phase"] == "ended",
+                    "invalid_message", "snapshot interrupts the mandatory end_game continuation")
+            if self.end_game_due:
+                require(state["scores"] == self.game.scores and state["kyotaku"] == self.game.kyotaku
+                        and (mode != "play" or state["time_bank_ms"] == self.time_bank_ms),
+                        "invalid_message", "snapshot changed the already settled final game state")
+            require(all(json_equal(state[key], self.welcome[key]) for key in ("mode", "view", "seat", "players")), "invalid_message", "snapshot changed session identity")
             if not self.started and mode == "spectate" and not self.welcome["resumed"] and seq == 1:
                 require(state["scores"] == self.welcome["scores"], "invalid_message",
                         "initial observer snapshot differs from welcome scores")
@@ -450,6 +457,7 @@ class Receiver:
             self.floor = message["replaces_through_seq"]
             self.started = True
             self.ended = state["game_phase"] == "ended"
+            self.end_game_due = False
             try:
                 self.game.restore(state)
             except (GameError, ScoringError) as error:
@@ -516,7 +524,7 @@ class Receiver:
                 if request["request_id"] in self.requests:
                     old = self.requests[request["request_id"]]
                     immutable = ("seat", "caused_by_seq", "timeout_ms", "time_bank_ms", "legal_actions", "default_action_id", "decision_group_id", "decision_group_members", "decision_group_deadline_ms", "decision_group_close")
-                    require(all(request.get(key) == old.get(key) for key in immutable), "invalid_message", "snapshot changed an issued request")
+                    require(all(json_equal(request.get(key), old.get(key)) for key in immutable), "invalid_message", "snapshot changed an issued request")
                     if "remaining_ms" in old:
                         require(request["remaining_ms"] <= old["remaining_ms"], "invalid_message",
                                 "snapshot increased the remaining request time")
@@ -544,6 +552,9 @@ class Receiver:
             require(self.started or kind == "event" and message["event"]["type"] == "start_game"
                     or kind == "error" and message["severity"] == "fatal",
                     "invalid_message", "nonfatal message precedes session initialization")
+            require(not self.end_game_due or kind == "event" and message["event"]["type"] == "end_game"
+                    or kind == "error" and message["severity"] == "fatal",
+                    "invalid_message", "message interrupts the mandatory end_game continuation")
             require(not (self.expected_effects or self.unadopted_reaction) or kind == "event" or (kind == "error" and message["severity"] == "fatal"),
                     "invalid_message", "message interrupts acknowledged action effects")
             if kind == "event":
@@ -556,7 +567,7 @@ class Receiver:
                     require("original_seq" not in message, "invalid_message", "original_seq outside replay")
                 if not self.started:
                     require(event["type"] == "start_game" and seq == 1, "invalid_message", "first game event is not start_game")
-                    require(all(event[key] == self.welcome[key] for key in ("players", "rules")), "invalid_message", "start_game differs from welcome")
+                    require(all(json_equal(event[key], self.welcome[key]) for key in ("players", "rules")), "invalid_message", "start_game differs from welcome")
                     expected_scores = [self.welcome["rules"]["starting_points"]] * 4 if self.welcome["resumed"] else self.welcome["scores"]
                     require(event["scores"] == expected_scores, "invalid_message", "start_game initial scores differ")
                     self.started = True
@@ -582,6 +593,9 @@ class Receiver:
                     require(not self.active_requests, "invalid_message", "round ended with unresolved requests")
                 if event["type"] == "end_game":
                     self.ended = True
+                    self.end_game_due = False
+                elif event["type"] == "end_kyoku" and event["next"]["type"] == "end_game":
+                    self.end_game_due = True
             elif kind == "request":
                 require(self.started and not self.ended, "invalid_message", "request outside an active game")
                 require(self.awaiting_request, "invalid_message", "no new decision is due for this seat")
@@ -718,6 +732,9 @@ def resource_trace(trace: dict) -> list[dict]:
     """
     pending_frame = None
     frame_bytes = 0
+    max_message_bytes = trace.get("max_message_bytes", 1048576)
+    require(type(max_message_bytes) is int and 0 < max_message_bytes <= 1048576,
+            "invalid_message", "invalid message byte limit")
     waiting_join = trace.get("join_wait_started_ms")
     waiting_hello = trace.get("hello_wait_started_ms")
     waiting_welcome = trace.get("welcome_wait_started_ms")
@@ -758,10 +775,10 @@ def resource_trace(trace: dict) -> list[dict]:
         require(not expired, "resource_limit", "resource or handshake deadline reached")
         op = step["op"]
         if op == "chunk":
-            if pending_frame is None:
+            if step["bytes"] and pending_frame is None:
                 pending_frame = now
             frame_bytes += step["bytes"]
-            require(frame_bytes <= trace.get("max_message_bytes", 1048576), "resource_limit", "frame payload limit exceeded")
+            require(frame_bytes <= max_message_bytes, "resource_limit", "frame payload limit exceeded")
         elif op == "frame_complete":
             require(pending_frame is not None, "invalid_message", "no frame to complete")
             pending_frame, frame_bytes = None, 0
@@ -773,6 +790,8 @@ def resource_trace(trace: dict) -> list[dict]:
         elif op == "welcome":
             waiting_welcome = None
         elif op == "enqueue":
+            require(step["bytes"] > 0, "invalid_message", "queued message payload must not be empty")
+            require(step["bytes"] <= max_message_bytes, "resource_limit", "queued message payload limit exceeded")
             uses_reservation = step.get("uses_reservation", False)
             if uses_reservation:
                 require(reserved_messages > 0 and 0 <= step["bytes"] <= reserved_bytes, "invalid_message", "message exceeds its reservation")
@@ -817,6 +836,10 @@ def resource_trace(trace: dict) -> list[dict]:
                 if backlog_bytes == 8388608 or backlog_messages == 1024:
                     start_pressure(now)
         elif op == "open_request":
+            # This validates coherent abstract capacity, not the actual size
+            # of the request/ACK/result transaction, which the caller must size.
+            require(0 < step["reserved_messages"] <= step["reserved_bytes"],
+                    "invalid_message", "request reservation needs positive messages and at least one byte per message")
             require(unresolved == 0 and reserved_messages == 0, "resource_limit", "duplicate unresolved request or undelivered result at one seat")
             require(backlog_bytes + step["reserved_bytes"] <= 8388608 and backlog_messages + step["reserved_messages"] <= 1024, "resource_limit", "request output cannot be reserved")
             unresolved = 1

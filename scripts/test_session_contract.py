@@ -1,5 +1,6 @@
 """Session isolation and atomic recovery checks beyond individual goldens."""
 from copy import deepcopy
+from decimal import Decimal
 import json
 import unittest
 
@@ -25,6 +26,159 @@ class SessionInvariants(unittest.TestCase):
     @staticmethod
     def raw(message):
         return json.dumps(message, ensure_ascii=False, separators=(',',':')).encode()
+
+    def test_resume_immutable_facts_use_json_value_equality(self):
+        for field in ('rules', 'players'):
+            for old, new, valid in ((True, 1, False), (False, 0, False),
+                                    (1, Decimal('1.0'), True), (True, True, True)):
+                trace = self.trace('resume_preserves_rules')
+                previous = trace['context']['resume_state']['welcome']
+                old_object = previous['rules'] if field == 'rules' else previous['players'][0]
+                new_object = trace['welcome']['rules'] if field == 'rules' else trace['welcome']['players'][0]
+                old_object['x_acme_data'] = {'values': [old], 'label': 'unchanged'}
+                new_object['x_acme_data'] = {'label': 'unchanged', 'values': [new]}
+                validate = v._session_schema_validator(self.schemas, self.digest)
+                with self.subTest(field=field, old=old, new=new):
+                    receiver = self.receiver(previous, last_seq=trace['join']['resume']['last_seq'])
+                    if valid:
+                        negotiate(trace['hello'], trace['join'], trace['welcome'], trace['context'],
+                                  validate, v.PROTOCOL, v.PROFILE_REVISION, self.digest)
+                        receiver.begin_resume(trace['welcome'])
+                    else:
+                        with self.assertRaises(SessionError) as caught:
+                            negotiate(trace['hello'], trace['join'], trace['welcome'], trace['context'],
+                                      validate, v.PROTOCOL, v.PROFILE_REVISION, self.digest)
+                        self.assertEqual(caught.exception.code, 'invalid_message')
+                        with self.assertRaises(SessionError) as caught:
+                            receiver.begin_resume(trace['welcome'])
+                        self.assertEqual(caught.exception.code, 'invalid_message')
+
+    def test_start_game_immutable_facts_preserve_private_json_types(self):
+        for field in ('rules', 'players'):
+            for old, new, valid in ((True, 1, False), (False, 0, False), (1, 1.0, True), (True, True, True)):
+                welcome = deepcopy(self.vectors['V104_wire_complete_game']['positive']['trace']['welcome'])
+                target = welcome['rules'] if field == 'rules' else welcome['players'][0]
+                target['x_acme_data'] = {'values': [old]}
+                event = {'type': 'start_game', 'players': deepcopy(welcome['players']),
+                         'rules': deepcopy(welcome['rules']), 'scores': deepcopy(welcome['scores'])}
+                changed = event['rules'] if field == 'rules' else event['players'][0]
+                changed['x_acme_data']['values'][0] = new
+                message = {'yamai': welcome['yamai'], 'kind': 'event', 'session_id': welcome['session_id'],
+                           'game_id': welcome['game_id'], 'seq': 1, 'event': event}
+                receiver = self.receiver(welcome)
+                with self.subTest(field=field, old=old, new=new):
+                    if valid:
+                        self.assertEqual(receiver.receive(self.raw(message)), 'applied')
+                    else:
+                        with self.assertRaises(SessionError) as caught:
+                            receiver.receive(self.raw(message))
+                        self.assertEqual(caught.exception.code, 'invalid_message')
+
+    def test_declared_support_uses_exact_json_values(self):
+        for boundary in ('rules', 'view'):
+            for supported, offered, valid in ((True, 1, False), (False, 0, False),
+                                              (1, Decimal('1.0'), True), (True, True, True)):
+                if boundary == 'rules':
+                    trace = self.trace('resume_preserves_rules')
+                    trace['context']['resume_state']['welcome']['rules']['x_acme_rule'] = offered
+                    trace['welcome']['rules']['x_acme_rule'] = offered
+                    trace['context']['supported_rules'] = {'x_acme_rule': [supported]}
+                    code = 'unsupported_rules'
+                else:
+                    trace = self.trace('replay_recording_target')
+                    trace['join']['view']['x_acme_option'] = offered
+                    trace['welcome']['view']['x_acme_option'] = offered
+                    allowed = deepcopy(trace['join']['view'])
+                    allowed['x_acme_option'] = supported
+                    trace['context']['supported_views'] = {'replay': [allowed]}
+                    code = 'unsupported_view'
+                validate = v._session_schema_validator(self.schemas, self.digest)
+                with self.subTest(boundary=boundary, supported=supported, offered=offered):
+                    if valid:
+                        negotiate(trace['hello'], trace['join'], trace['welcome'], trace['context'],
+                                  validate, v.PROTOCOL, v.PROFILE_REVISION, self.digest)
+                    else:
+                        with self.assertRaises(SessionError) as caught:
+                            negotiate(trace['hello'], trace['join'], trace['welcome'], trace['context'],
+                                      validate, v.PROTOCOL, v.PROFILE_REVISION, self.digest)
+                        self.assertEqual(caught.exception.code, code)
+
+    def test_snapshot_issued_candidate_preserves_private_json_types(self):
+        for old, new, valid in ((True, 1, False), (False, 0, False), (1, 1.0, True), (True, True, True)):
+            welcome, messages = self.snapshot_history()
+            issued = messages[3]
+            self.assertEqual(issued['kind'], 'request')
+            issued['legal_actions'][0]['action']['x_acme_data'] = {'value': old}
+            receiver = self.receiver(welcome)
+            for message in messages[:4]:
+                receiver.receive(self.raw(message))
+            snapshot = messages[4]
+            snapshot['state']['pending_requests'][0]['legal_actions'][0]['action']['x_acme_data'] = {'value': new}
+            with self.subTest(old=old, new=new):
+                if valid:
+                    self.assertEqual(receiver.receive(self.raw(snapshot)), 'applied')
+                else:
+                    with self.assertRaisesRegex(SessionError, 'changed an issued request'):
+                        receiver.receive(self.raw(snapshot))
+
+    def test_final_round_requires_immediate_end_game_continuation(self):
+        trace = self.trace('wire_complete_game')
+        final_index = next(i for i, step in enumerate(trace['steps'])
+                           if step['message'].get('event', {}).get('type') == 'end_game')
+
+        def waiting():
+            receiver = self.receiver(trace['welcome'])
+            for step in trace['steps'][:final_index]:
+                receiver.receive(self.raw(step['message']))
+            self.assertTrue(receiver.end_game_due)
+            return receiver
+
+        final = trace['steps'][final_index]['message']
+        receiver = waiting()
+        prior = trace['steps'][final_index - 1]['message']
+        self.assertEqual(receiver.receive(self.raw(prior)), 'duplicate')
+        self.assertTrue(receiver.end_game_due)
+        self.assertEqual(receiver.receive(self.raw(final)), 'applied')
+        self.assertTrue(receiver.ended)
+        self.assertFalse(receiver.end_game_due)
+
+        identity = {key: final[key] for key in ('yamai', 'session_id', 'game_id', 'seq')}
+        error = dict(identity, kind='error', code='invalid_action', severity='recoverable', message='diagnosis')
+        receiver = waiting()
+        self.assert_rejected_atomically(receiver, error)
+        receiver = waiting()
+        fatal = {**error, 'code': 'internal_error', 'severity': 'fatal'}
+        self.assertEqual(receiver.receive(self.raw(fatal)), 'applied')
+        self.assertTrue(receiver.closed)
+
+        # Only a recovery jump covering the missing final event may replace
+        # this continuation, and it must preserve the terminal game outcome.
+        snapshot = deepcopy(self.vectors['V58_snapshot_ended_rankings']['positive'])
+        snapshot.update(identity, seq=final['seq'], replaces_through_seq=final['seq'] - 1)
+        snapshot['state'].update(players=trace['welcome']['players'], scores=final['event']['scores'],
+                                 kyotaku=final['event']['kyotaku'], final_rankings=final['event']['rankings'],
+                                 time_bank_ms=waiting().time_bank_ms)
+        receiver = waiting()
+        self.assert_rejected_atomically(receiver, snapshot)
+        receiver = waiting()
+        self.assertEqual(receiver.receive(self.raw({**error, 'seq': final['seq'] + 1})), 'sequence_gap')
+        snapshot.update(seq=final['seq'] + 2, replaces_through_seq=final['seq'] + 1)
+        altered = deepcopy(snapshot)
+        altered['state']['time_bank_ms'] = 0 if snapshot['state']['time_bank_ms'] else 1
+        self.assert_rejected_atomically(receiver, altered)
+        receiver = waiting()
+        self.assertEqual(receiver.receive(self.raw({**error, 'seq': final['seq'] + 1})), 'sequence_gap')
+        altered = deepcopy(snapshot)
+        altered['state']['scores'][0] += 100
+        altered['state']['scores'][1] -= 100
+        order = sorted(range(4), key=lambda seat: (-altered['state']['scores'][seat], seat))
+        altered['state']['final_rankings'] = [order.index(seat) + 1 for seat in range(4)]
+        self.assert_rejected_atomically(receiver, altered)
+        receiver = waiting()
+        self.assertEqual(receiver.receive(self.raw({**error, 'seq': final['seq'] + 1})), 'sequence_gap')
+        self.assertEqual(receiver.receive(self.raw(snapshot)), 'applied')
+        self.assertTrue(receiver.ended)
+        self.assertFalse(receiver.end_game_due)
 
     def test_future_fatal_error_closes_without_applying_missing_prefix(self):
         for suffix in ('visibility_play_self', 'visibility_spectate_public',
@@ -1695,6 +1849,57 @@ class ResourceOutputTimers(unittest.TestCase):
         with self.assertRaises(SessionError) as caught:
             self.run_trace(steps, **initial)
         self.assertEqual(caught.exception.code, 'resource_limit')
+
+    def test_request_reservation_requires_coherent_positive_capacity(self):
+        for reserved_bytes, reserved_messages in ((0, 0), (100, 0), (0, 1), (1, 2)):
+            for initial in ({}, {'backlog_bytes': 8388608, 'backlog_messages': 1024}):
+                with self.subTest(bytes=reserved_bytes, messages=reserved_messages, initial=initial):
+                    with self.assertRaises(SessionError) as caught:
+                        self.run_trace([{'op': 'open_request', 'at_ms': 0,
+                                         'reserved_bytes': reserved_bytes,
+                                         'reserved_messages': reserved_messages}], **initial)
+                    self.assertEqual(caught.exception.code, 'invalid_message')
+        step = {'op': 'open_request', 'at_ms': 0, 'reserved_bytes': 3, 'reserved_messages': 3}
+        self.assertEqual(self.run_trace([step])[-1]['unresolved'], 1)
+        self.assert_limit([step], backlog_bytes=8388608, backlog_messages=1024)
+
+    def test_enqueue_enforces_one_message_payload_limit(self):
+        for cap in (65536, 1048576):
+            for reserved in (False, True):
+                prefix = ([{'op': 'open_request', 'at_ms': 0, 'reserved_bytes': cap + 1,
+                            'reserved_messages': 1}] if reserved else [])
+                for size in (1, cap):
+                    with self.subTest(cap=cap, reserved=reserved, size=size):
+                        steps = prefix + [{'op': 'enqueue', 'at_ms': 1, 'bytes': size,
+                                           'uses_reservation': reserved}]
+                        self.assertEqual(self.run_trace(steps, max_message_bytes=cap)[-1]['outcome'], 'ok')
+                self.assert_limit(prefix + [{'op': 'enqueue', 'at_ms': 1, 'bytes': cap + 1,
+                                             'uses_reservation': reserved}], max_message_bytes=cap)
+                with self.assertRaises(SessionError) as caught:
+                    self.run_trace(prefix + [{'op': 'enqueue', 'at_ms': 1, 'bytes': 0,
+                                              'uses_reservation': reserved}], max_message_bytes=cap)
+                self.assertEqual(caught.exception.code, 'invalid_message')
+        self.assert_limit([{'op': 'enqueue', 'at_ms': 0, 'bytes': 1048577}],
+                          backlog_bytes=8388608, backlog_messages=1024)
+
+    def test_message_limit_configuration_cannot_expand_protocol_cap(self):
+        for cap in (0, -1, True, 65536.5, 1048577):
+            with self.subTest(cap=cap):
+                with self.assertRaises(SessionError) as caught:
+                    self.run_trace([], max_message_bytes=cap)
+                self.assertEqual(caught.exception.code, 'invalid_message')
+
+    def test_zero_byte_chunk_does_not_start_or_extend_frame_timer(self):
+        idle = [{'op': 'chunk', 'at_ms': 0, 'bytes': 0},
+                {'op': 'tick', 'at_ms': 60000}]
+        self.assertEqual(self.run_trace(idle)[-1]['outcome'], 'ok')
+        self.assert_limit([{'op': 'chunk', 'at_ms': 0, 'bytes': 1},
+                           {'op': 'chunk', 'at_ms': 59999, 'bytes': 0},
+                           {'op': 'tick', 'at_ms': 60000}])
+        with self.assertRaises(SessionError) as caught:
+            self.run_trace([{'op': 'chunk', 'at_ms': 0, 'bytes': 0},
+                            {'op': 'frame_complete', 'at_ms': 1}])
+        self.assertEqual(caught.exception.code, 'invalid_message')
 
     def test_partial_drain_cannot_refresh_initial_full_queue(self):
         for initial, drain in (({'backlog_bytes': 8388608, 'backlog_messages': 1},
