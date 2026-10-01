@@ -711,6 +711,9 @@ def calculate_fixture(fixture: dict[str, Any], base_rules: dict[str, Any]) -> di
                       for hand in data["hands"]]
         require(state["kan_counts"] == kan_counts and sum(kan_counts) <= 4,
                 "invalid_context", "draw kan counts differ from the four hands' committed melds")
+        require(not (sum(kan_counts) == 4 and max(kan_counts) < 4
+                     and "suukan_sanra" in rules["abortive_draws"]),
+                "invalid_context", "exhaustive draw bypasses the mandatory four-kan abort")
         physical = [tile for hand in data["hands"] for tile in hand["concealed_tiles"]]
         physical.extend(tile for hand in data["hands"] for meld in hand["melds"] for tile in meld["tiles"])
         inventory(physical,rules)

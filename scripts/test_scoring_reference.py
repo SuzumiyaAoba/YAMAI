@@ -305,6 +305,51 @@ class ScoringInvariants(unittest.TestCase):
                         calculate_fixture(f, self.rules)
                     self.assertEqual(error.exception.code, 'invalid_context')
 
+    def test_draw_cannot_bypass_enabled_four_kan_abort(self):
+        from score_oracle import validate_fixture_input
+        from validate_artifacts import SchemaSet
+        schemas = SchemaSet()
+        hands = [
+            {'concealed_tiles': ['1m','2m','3m','4m','5m','6m','7m','8m','9m','5s'],
+             'melds': [{'kind': 'ankan', 'open': False, 'tiles': ['E'] * 4}]},
+            {'concealed_tiles': ['1p','2p','3p','4p','5p','6p','7p','8p','C','2s'],
+             'melds': [{'kind': 'ankan', 'open': False, 'tiles': ['F'] * 4}]},
+            {'concealed_tiles': ['1s','2s','3s','4s','5s','6s','7s','8s','P','2m'],
+             'melds': [{'kind': 'ankan', 'open': False, 'tiles': ['S'] * 4}]},
+            {'concealed_tiles': ['1m','3m','5m','7m','9m','1p','3p','5p','7p','9p'],
+             'melds': [{'kind': 'ankan', 'open': False, 'tiles': ['W'] * 4}]},
+        ]
+        def fixture(draw_hands, counts, enabled=True):
+            f = deepcopy(self.fixtures['noten_1'])
+            f['input']['hands'] = deepcopy(draw_hands)
+            for state in (f['state'], f['state']['pre_state']):
+                state['kan_counts'] = counts.copy()
+            reasons = [r for r in self.rules['abortive_draws'] if r != 'suukan_sanra']
+            f['rule_overrides']['abortive_draws'] = reasons + (['suukan_sanra'] if enabled else [])
+            validate_fixture_input(f, self.rules, schemas)
+            return f
+        with self.assertRaises(ScoringError) as error:
+            calculate_fixture(fixture(hands, [1,1,1,1]), self.rules)
+        self.assertEqual(error.exception.code, 'invalid_context')
+        disabled = calculate_fixture(fixture(hands, [1,1,1,1], False), self.rules)
+        self.assertEqual(disabled['tenpai'], [True,False,False,False])
+        self.assertEqual(disabled['deltas'], [3000,-1000,-1000,-1000])
+        three = deepcopy(hands)
+        three[3]['melds'] = [{'kind': 'pon', 'open': True, 'source': 0, 'tiles': ['W'] * 3}]
+        result = calculate_fixture(fixture(three, [1,1,1,0]), self.rules)
+        self.assertEqual(result['tenpai'], [True,False,False,False])
+        self.assertEqual(result['deltas'], [3000,-1000,-1000,-1000])
+        one_owner = [
+            {'concealed_tiles': ['5s'], 'melds': [
+                {'kind': 'ankan', 'open': False, 'tiles': [tile] * 4} for tile in ('E','F','S','W')]},
+            {'concealed_tiles': ['1p','2p','3p','4p','5p','6p','7p','8p','9p','2s','3s','4s','5m'], 'melds': []},
+            {'concealed_tiles': ['1s','2s','3s','4s','5s','6s','7s','8s','9s','2m','3m','4m','5p'], 'melds': []},
+            {'concealed_tiles': ['1m','3m','5m','7m','9m','1p','3p','5p','7p','9p','6s','8s','9s'], 'melds': []},
+        ]
+        result = calculate_fixture(fixture(one_owner, [4,0,0,0]), self.rules)
+        self.assertEqual(result['tenpai'], [True,True,True,False])
+        self.assertEqual(result['deltas'], [1000,1000,1000,-3000])
+
     def test_uncommitted_kan_does_not_cancel_first_turn_or_ippatsu(self):
         for riichi in (False, True):
             with self.subTest(riichi=riichi):

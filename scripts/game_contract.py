@@ -1280,6 +1280,9 @@ class EventState:
                 if reason == "fanpai":
                     require(r["wall_remaining"] == 0 and phase == "awaiting_responses" and r["pending_kan"] is None, "exhaustive draw before last discard")
                     tenpai = result["tenpai"]
+                    require(all(tenpai[seat] for seat in range(4)
+                                if r["reach_status"][seat]["state"] == "accepted"),
+                            "accepted riichi must remain tenpai at exhaustive draw")
                     total = self.rules["noten_payment"]["total_points"]
                     count = sum(tenpai)
                     expected = [0] * 4 if count in (0, 4) else [total // count if ready else -total // (4 - count) for ready in tenpai]

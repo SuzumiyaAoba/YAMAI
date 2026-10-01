@@ -17,6 +17,65 @@ class GameContractTests(unittest.TestCase):
         cls.vectors = v.strict_load(v.ROOT / f"test-vectors/protocol/{v.PROTOCOL}/vectors.json")
         cls.rules = v.strict_load(v.ROOT / f"test-vectors/riichi-4p/{v.PROFILE_REVISION}/scoring.json")["rules"]
 
+    def test_hidden_accepted_riichi_remains_tenpai_at_exhaustive_draw(self):
+        import random
+        from scoring_reference import waits
+        for declared, first in ((True, '9s'), (True, '5s'), (False, '9s')):
+            dealer = ['1m','2m','3m','4m','5m','6m','7p','8p','9p','E','E','E','5s']
+            if not declared:
+                dealer.remove('E')
+                dealer.append('2s')
+            self.assertEqual(bool(waits({'concealed_tiles': dealer, 'melds': []}, self.rules)), declared)
+            deck = self._physical_tiles()
+            for tile in dealer + ['C', first]:
+                deck.remove(tile)
+            for seed in range(20261001, 20262001):
+                remaining = deck.copy()
+                random.Random(seed).shuffle(remaining)
+                others = [{'concealed_tiles': remaining[69+i*13:82+i*13], 'melds': []}
+                          for i in range(3)]
+                if all(not waits(hand, self.rules) for hand in others):
+                    break
+            else:
+                self.fail('could not construct physical noten controls')
+            self.assertEqual(len(remaining[108:]), 13)
+            receiver = self._observer_receiver()
+            self._send_event(receiver, dict(type='start_game', players=receiver.welcome['players'],
+                                           rules=self.rules, scores=[25000]*4))
+            self._send_event(receiver, dict(type='start_kyoku', bakaze='E', kyoku=1, oya=0,
+                                           honba=0, kyotaku=0, extension_round=0, scores=[25000]*4,
+                                           dora_marker='C', hands=[{'count':13} for _ in range(4)]))
+            for i, tile in enumerate([first] + remaining[:69]):
+                actor = i % 4
+                self._send_event(receiver, dict(type='tsumo', actor=actor, pai=None))
+                if i == 0 and declared:
+                    self._send_event(receiver, dict(type='reach', actor=0))
+                self._send_event(receiver, dict(type='dahai', actor=actor, pai=tile, tsumogiri=True))
+                if i == 0 and declared:
+                    self._send_event(receiver, dict(type='reach_accepted', actor=0,
+                                                   deltas=[-1000,0,0,0], scores=[24000,25000,25000,25000], kyotaku=1))
+            for restored in (False, True):
+                for ready in ((True, False) if declared else (False,)):
+                    with self.subTest(declared=declared, first=first, restored=restored, ready=ready):
+                        current = deepcopy(receiver)
+                        if restored:
+                            snapshot = self._public_snapshot(receiver.game)
+                            current = self._observer_receiver(initial_snapshot=True)
+                            current.welcome['scores'] = receiver.game.scores.copy()
+                            self.assertEqual(current.receive(json.dumps(snapshot).encode()), 'applied')
+                        deltas = [3000,-1000,-1000,-1000] if ready else [0]*4
+                        event = dict(type='end_kyoku', result=dict(type='ryukyoku', reason='fanpai',
+                                     tenpai=[ready,False,False,False]), deltas=deltas,
+                                     scores=[score+delta for score,delta in zip(receiver.game.scores,deltas)],
+                                     next=dict(type='renchan' if ready else 'rotate', bakaze='E',
+                                               kyoku=1 if ready else 2, oya=0 if ready else 1,
+                                               honba=1, kyotaku=int(declared), extension_round=0))
+                        if declared and not ready:
+                            self._assert_receiver_rejects_atomically(current, self._event_message(current,event),
+                                                                   'accepted riichi.*tenpai')
+                        else:
+                            self._send_event(current,event)
+
     def test_complete_choices_ignore_hand_and_consumed_order(self):
         trace = self.vectors["V193_red_consumed_tile_and_compound_discard"]["positive"]["trace"]
         p = deepcopy(trace["input"])
