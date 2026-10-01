@@ -585,6 +585,257 @@ class GameContractTests(unittest.TestCase):
                     self._assert_receiver_rejects_atomically(
                         receiver, self._event_message(receiver, event), 'situational yaku')
 
+    def test_final_live_discard_snapshot_preserves_last_tile_flag(self):
+        state, _ = self._final_live_draw_witness()
+        state.apply({'type': 'dahai', 'actor': 1, 'pai': '4s', 'tsumogiri': True})
+        self.assertEqual(state.round['kan_counts'], [0] * 4)
+        for phase in ('awaiting_responses', 'resolving'):
+            snapshot = self._public_snapshot(state)
+            snapshot['state']['kyoku']['turn']['phase'] = phase
+            with self.subTest(phase=phase):
+                self._restore_public_snapshot(snapshot)
+                snapshot['state']['kyoku']['haitei'] = False
+                for rules in (None, self.rules):
+                    with self.assertRaisesRegex(Exception, 'final live-wall discard'):
+                        v._check_snapshot(snapshot, rules=rules)
+                with self.assertRaisesRegex(GameError, 'final live-wall discard'):
+                    EventState(self.rules).restore(snapshot['state'])
+                receiver = self._observer_receiver(initial_snapshot=True)
+                self._assert_receiver_rejects_atomically(receiver, snapshot, 'final live-wall discard')
+
+    def test_snapshot_deal_cannot_bypass_mandatory_game_end(self):
+        cases = [('bankruptcy boundary', [0, 47000, 25000, 25000], False, 'end_game', True),
+                 ('bankruptcy ending', [-100, 47100, 25000, 25000], False, 'end_game', False),
+                 ('bankruptcy continues', [-100, 47100, 25000, 25000], False, 'continue', True),
+                 ('below extension target', [29900, 17100, 25000, 25000], True, 'end_game', True),
+                 ('at extension target', [30000, 17000, 25000, 25000], True, 'end_game', False)]
+        for label, scores, extension, bankruptcy, valid in cases:
+            with self.subTest(case=label):
+                trace = deepcopy(self.vectors['V271_snapshot_between_round_continuation']['positive']['trace'])
+                welcome = trace['welcome']
+                welcome.update(scores=scores)
+                welcome['rules']['bankruptcy'] = bankruptcy
+                snapshot = trace['steps'][0]['message']
+                snapshot['state']['scores'] = scores
+                for step in trace['steps'][1:]:
+                    event = step['message']['event']
+                    if 'scores' in event:
+                        event['scores'] = scores
+                if extension:
+                    coords = dict(bakaze='W', kyoku=1, oya=0, extension_round=1)
+                    snapshot['state']['next_kyoku'].update(coords)
+                    trace['steps'][1]['message']['event'].update(coords)
+                receiver = Receiver(welcome, v.strict_load_bytes,
+                                    v._session_schema_validator(v.SchemaSet(), welcome['profile_hash']))
+                if not valid:
+                    pattern = 'mandatory bankruptcy' if not extension else 'target was reached'
+                    self._assert_receiver_rejects_atomically(receiver, snapshot, pattern)
+                else:
+                    for step in trace['steps']:
+                        self.assertEqual(receiver.receive(json.dumps(step['message']).encode()), 'applied')
+                    self.assertEqual(receiver.game.game_phase, 'in_kyoku')
+
+    def test_snapshot_round_entry_allows_initial_deal_and_riichi_deposits(self):
+        # A configured positive bankruptcy threshold can be crossed by an
+        # in-round riichi payment. It applies only at the next settlement.
+        trace = deepcopy(self.vectors['V271_snapshot_between_round_continuation']['positive']['trace'])
+        snapshot = trace['steps'][0]['message']
+        snapshot['state'].update(scores=[25000] * 4, kyotaku=0)
+        snapshot['state']['next_kyoku'].update(honba=0, kyotaku=0)
+        rules = deepcopy(self.rules)
+        rules['bankruptcy_threshold'] = 30000
+        EventState(rules).restore(snapshot['state'])
+        # The same initial-deal exception remains valid within the first
+        # round, and it is not available for a later coordinate.
+        state, _ = self._final_live_draw_witness()
+        public = self._public_snapshot(state)['state']
+        EventState(rules).restore(public)
+        later = deepcopy(public)
+        later['kyoku'].update(kyoku=2, oya=1)
+        with self.assertRaisesRegex(GameError, 'mandatory bankruptcy'):
+            EventState(rules).restore(later)
+
+        state = EventState(self.rules)
+        starts = self.vectors['V104_wire_complete_game']['positive']['trace']['steps'][:2]
+        state.apply(deepcopy(starts[0]['message']['event']))
+        dealt = deepcopy(starts[1]['message']['event'])
+        dealt['hands'] = [{'count': 13} for _ in range(4)]
+        state.apply(dealt)
+        for event in ({'type': 'tsumo', 'actor': 0, 'pai': None},
+                      {'type': 'reach', 'actor': 0},
+                      {'type': 'dahai', 'actor': 0, 'pai': '9s', 'tsumogiri': True},
+                      {'type': 'reach_accepted', 'actor': 0, 'deltas': [-1000, 0, 0, 0],
+                       'scores': [24000, 25000, 25000, 25000], 'kyotaku': 1},
+                      {'type': 'tsumo', 'actor': 1, 'pai': None}):
+            state.apply(event)
+        rules['bankruptcy_threshold'] = 25000
+        EventState(rules).restore(self._public_snapshot(state)['state'])
+
+    def _furiten_reaction(self, *, first_tile='5s', riichi=False, discard='9s',
+                          winning='5s', hand=None):
+        welcome = deepcopy(self.vectors['V104_wire_complete_game']['positive']['trace']['welcome'])
+        receiver = Receiver(welcome, v.strict_load_bytes,
+                            v._session_schema_validator(v.SchemaSet(), welcome['profile_hash']))
+        identity = {key: welcome[key] for key in ('yamai', 'session_id', 'game_id')}
+        events = []
+        def send(kind, **fields):
+            message = dict(identity, kind=kind, seq=receiver.applied + 1, **fields)
+            self.assertEqual(receiver.receive(json.dumps(message).encode()), 'applied')
+            if kind == 'event':
+                events.append(deepcopy(fields['event']))
+        def request(chosen, *, inject_hora=False):
+            r, cause = receiver.game.round, receiver.game.last_cause
+            reach = r['reach_status'][0]
+            position = dict(seat=0, hand=receiver.game._scoring_hand(0), cause=cause,
+                            scores=receiver.game.scores, bakaze=r['bakaze'], oya=r['oya'],
+                            kyotaku=r['kyotaku'], wall_remaining=r['wall_remaining'], kan_counts=r['kan_counts'],
+                            reach_accepted=reach['state'] == 'accepted', double_riichi=reach['double'],
+                            ippatsu=reach['ippatsu'], first_turn=r['first_turn_eligible'][0],
+                            rinshan=r['rinshan'], last_tile=r['haitei'],
+                            temporary_furiten=r['self_state']['temporary_furiten'],
+                            riichi_furiten=r['self_state']['riichi_furiten'],
+                            river=[t['pai'] for t in r['rivers'][0]], dora_markers=r['dora_markers'],
+                            ura_dora_markers=['F'] if reach['state'] == 'accepted' else [])
+            actions = legal_actions(position, welcome['rules'])
+            if inject_hora and not any(a['type'] == 'hora' for a in actions):
+                actions.append({'type': 'hora', 'actor': 0})
+            rid = 'r' + str(receiver.applied + 1)
+            default = next(i for i, a in enumerate(actions) if a['type'] == 'none'
+                           or a['type'] == 'dahai' and a['tsumogiri'])
+            req = dict(request_id=rid, seat=0, caused_by_seq=receiver.applied, timeout_ms=3000,
+                       time_bank_ms=receiver.time_bank_ms, default_action_id='a' + str(default),
+                       legal_actions=[dict(action_id='a' + str(i), action=a) for i, a in enumerate(actions)])
+            if cause['type'] != 'tsumo':
+                req.update(decision_group_id='g' + rid,
+                           decision_group_members=[dict(seat=s, request_id=rid if s == 0 else rid + str(s))
+                                                   for s in range(4) if s != cause['actor']],
+                           decision_group_deadline_ms=welcome['rules']['time_control']['grace_ms'] + 3000 + receiver.time_bank_ms,
+                           decision_group_close='all_selected_or_deadline')
+            send('request', **req)
+            selected = next(i for i, a in enumerate(actions) if a['type'] == chosen
+                            and (chosen not in {'dahai', 'reach'} or a.get('dahai', a)['tsumogiri']))
+            ack = dict(identity, kind='ack', seq=receiver.applied + 1, request_id=rid,
+                       action_id='a' + str(selected), status='passed' if chosen == 'none' else 'accepted',
+                       elapsed_ms=1, time_bank_ms=receiver.time_bank_ms)
+            if not inject_hora:
+                self.assertEqual(receiver.receive(json.dumps(ack).encode()), 'applied')
+            return ack
+        send('event', event=dict(type='start_game', players=welcome['players'], rules=welcome['rules'], scores=[25000] * 4))
+        hand = hand or ['1m', '2m', '3m', '4m', '5m', '6m', '7p', '8p', '9p', 'E', 'E', 'E', '5s']
+        send('event', event=dict(type='start_kyoku', bakaze='E', kyoku=1, oya=0, honba=0, kyotaku=0,
+                                extension_round=0, scores=[25000] * 4, dora_marker='C',
+                                hands=[{'tiles': hand}, *({'count': 13} for _ in range(3))]))
+        send('event', event=dict(type='tsumo', actor=0, pai=discard))
+        request('reach' if riichi else 'dahai')
+        if riichi:
+            send('event', event=dict(type='reach', actor=0))
+        send('event', event=dict(type='dahai', actor=0, pai=discard, tsumogiri=True))
+        if riichi:
+            send('event', event=dict(type='reach_accepted', actor=0, deltas=[-1000, 0, 0, 0],
+                                    scores=[24000, 25000, 25000, 25000], kyotaku=1))
+        send('event', event=dict(type='tsumo', actor=1, pai=None))
+        send('event', event=dict(type='dahai', actor=1, pai=first_tile, tsumogiri=True))
+        request('none')
+        send('event', event=dict(type='tsumo', actor=2, pai=None))
+        send('event', event=dict(type='dahai', actor=2, pai=winning, tsumogiri=True))
+        ack = request('hora', inject_hora=True)
+        return receiver, ack, events
+
+    def test_known_furiten_rejects_ron_ack_without_partial_application(self):
+        for riichi in (False, True):
+            with self.subTest(riichi=riichi):
+                receiver, ack, _ = self._furiten_reaction(riichi=riichi)
+                flag = 'riichi_furiten' if riichi else 'temporary_furiten'
+                self.assertTrue(receiver.game.round['self_state'][flag])
+                self._assert_receiver_rejects_atomically(receiver, ack, 'known furiten')
+        receiver, ack, _ = self._furiten_reaction(first_tile='6s')
+        self.assertFalse(receiver.game.round['self_state']['temporary_furiten'])
+        self.assertEqual(receiver.receive(json.dumps(ack).encode()), 'applied')
+
+    def test_riichi_snapshot_distinguishes_persistent_and_temporary_furiten(self):
+        source, _, _ = self._furiten_reaction(riichi=True)
+        self.assertTrue(source.game.round['self_state']['riichi_furiten'])
+        snapshot = deepcopy(self.vectors['V18_snapshot_state']['positive'])
+        snapshot.update(seq=source.applied + 1, replaces_through_seq=source.applied)
+        kyoku = deepcopy(source.game.round)
+        kyoku['turn'].update(last_event_seq=source.last_event_seq,
+                             last_event=deepcopy(source.game.last_cause))
+        rid = next(iter(source.active_requests))
+        request = {key: deepcopy(value) for key, value in source.requests[rid].items()
+                   if key not in {'kind', 'yamai', 'session_id', 'game_id', 'seq'}}
+        request['legal_actions'] = [a for a in request['legal_actions'] if a['action']['type'] == 'none']
+        remaining = source.welcome['rules']['time_control']['grace_ms'] + request['timeout_ms'] + request['time_bank_ms'] - 1
+        request.update(remaining_ms=remaining, decision_group_remaining_ms=remaining, selection=None)
+        snapshot['state'].update(scores=source.game.scores.copy(), kyotaku=source.game.kyotaku,
+                                 kyoku=kyoku, pending_requests=[request])
+        welcome = deepcopy(source.welcome)
+        welcome.update(resumed=True, replay_from_seq=1, replay_through_seq=source.applied,
+                       scores=source.game.scores.copy())
+        for temporary in (False, True):
+            with self.subTest(temporary=temporary):
+                message = deepcopy(snapshot)
+                message['state']['kyoku']['self_state']['temporary_furiten'] = temporary
+                receiver = Receiver(welcome, v.strict_load_bytes,
+                                    v._session_schema_validator(v.SchemaSet(), welcome['profile_hash']))
+                if temporary:
+                    self._assert_receiver_rejects_atomically(receiver, message, 'temporary furiten survives')
+                else:
+                    self.assertEqual(receiver.receive(json.dumps(message).encode()), 'applied')
+                    self.assertTrue(receiver.game.round['self_state']['riichi_furiten'])
+
+    def test_observable_discard_furiten_rejects_ron_in_play_and_replay(self):
+        for other_wait in (False, True):
+            options = dict(first_tile='9s', discard='3s', winning='6s',
+                           hand=['1m', '2m', '3m', '1p', '2p', '3p', '4s', '5s', '7p', '7p', 'E', 'E', 'E']) if other_wait else dict(first_tile='6s', discard='5s')
+            receiver, ack, events = self._furiten_reaction(**options)
+            self._assert_receiver_rejects_atomically(receiver, ack,
+                                                   'visible hand is discard-furiten' if other_wait else 'previously discarded')
+            for visible in (False, True):
+                with self.subTest(other_wait=other_wait, visible=visible):
+                    replay = self._observer_receiver(mode='replay', view={'seat': 0} if visible else 'public')
+                    for event in deepcopy(events):
+                        if not visible and event['type'] == 'start_kyoku':
+                            event['hands'] = [{'count': 13} for _ in range(4)]
+                        if not visible and event['type'] == 'tsumo':
+                            event['pai'] = None
+                        self._send_event(replay, event)
+                    win = dict(actor=0, target=2, pai=options.get('winning', '5s'), fu=40, han=2,
+                               yakus=[dict(id='round_wind', value=1, unit='han'), dict(id='seat_wind', value=1, unit='han')],
+                               bonuses=[], hand_points=3900, deltas=[3900, 0, -3900, 0], ura_dora_markers=[], pao=[])
+                    event = dict(type='end_kyoku', result=dict(type='hora', wins=[win]), deltas=win['deltas'],
+                                 scores=[28900, 25000, 21100, 25000],
+                                 next=dict(type='renchan', bakaze='E', kyoku=1, oya=0, honba=1, kyotaku=0, extension_round=0))
+                    if other_wait and not visible:
+                        self._send_event(replay, event)  # An unseen wait cannot be inferred.
+                    else:
+                        self._assert_receiver_rejects_atomically(replay, self._event_message(replay, event),
+                                                               'visible hand is discard-furiten' if other_wait else 'previously discarded')
+
+    def test_three_ron_draw_preserves_observable_furiten_rules(self):
+        for discarded, valid in (('9s', True), ('5s', False)):
+            with self.subTest(discarded=discarded):
+                _, _, events = self._furiten_reaction(first_tile='6s', discard=discarded)
+                rules = deepcopy(self.rules)
+                rules['ron_policy'] = 'double_only'
+                rules['abortive_draws'] = sorted(set(rules['abortive_draws']) | {'sanchaho'})
+                receiver = self._observer_receiver(rules=rules)
+                for event in deepcopy(events):
+                    if event['type'] == 'start_game':
+                        event['rules'] = rules
+                    if event['type'] == 'start_kyoku':
+                        event['hands'] = [{'count': 13} for _ in range(4)]
+                    if event['type'] == 'tsumo':
+                        event['pai'] = None
+                    self._send_event(receiver, event)
+                event = dict(type='end_kyoku', result=dict(type='ryukyoku', reason='sanchaho', tenpai=None),
+                             deltas=[0] * 4, scores=[25000] * 4,
+                             next=dict(type='renchan', bakaze='E', kyoku=1, oya=0, honba=1, kyotaku=0, extension_round=0))
+                if valid:
+                    self._send_event(receiver, event)
+                else:
+                    self._assert_receiver_rejects_atomically(receiver, self._event_message(receiver, event),
+                                                           'previously discarded')
+
     def test_final_rinshan_draw_and_discard_do_not_require_haitei(self):
         state = EventState(self.rules)
         state.apply({'type': 'start_game', 'scores': [25000] * 4, 'rules': self.rules})

@@ -17,6 +17,21 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_INPUT = ROOT / "test-vectors" / "riichi-4p" / v.PROFILE_REVISION / "scoring.json"
 
 
+def validate_fixture_input(fixture: dict, base_rules: dict, schemas: v.SchemaSet) -> None:
+    """Apply the ordinary payload schemas, including after rule replacement.
+
+    Negative fixtures deliberately have a permissive outer shape so that
+    they can contain malformed inputs. Their expected error still comes
+    from the same input and effective-rule checks as positive fixtures.
+    """
+    schema_id = f"urn:yamai:schema:riichi-4p:{v.PROFILE_REVISION}:scoring-vectors"
+    for field in ("input", "state", "rule_overrides"):
+        schemas.validate(fixture[field], {"$ref": schema_id + f"#/$defs/{field}"})
+    effective_rules = {**base_rules, **fixture["rule_overrides"]}
+    schemas.validate(effective_rules, {
+        "$ref": f"urn:yamai:schema:riichi-4p:{v.PROFILE_REVISION}:riichi-4p-rules"})
+
+
 def run(path: Path, print_json: bool = False) -> int:
     data = v.strict_load(path)
     schemas = v.SchemaSet()
@@ -26,14 +41,16 @@ def run(path: Path, print_json: bool = False) -> int:
         raise ValueError("duplicate fixture id")
     computed = {}
     for fixture in data["fixtures"]:
+        validate_fixture_input(fixture, data["rules"], schemas)
         actual = compute_fixture(fixture, data["rules"])
         if not v._json_equal(actual, fixture["expected"]):
             raise ValueError(f"{fixture['id']}: recalculated scoring differs")
         computed[fixture["id"]] = actual
     for fixture in data["negative_fixtures"]:
         try:
+            validate_fixture_input(fixture, data["rules"], schemas)
             compute_fixture(fixture, data["rules"])
-        except ScoringError as error:
+        except (v.ArtifactError, ScoringError) as error:
             if error.code != fixture["expected_error"]:
                 raise ValueError(f"{fixture['id']}: expected {fixture['expected_error']}, got {error.code}") from error
         else:

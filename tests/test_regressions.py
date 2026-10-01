@@ -1123,7 +1123,43 @@ class ProtocolRegressionTests(unittest.TestCase):
 
         snapshot = self._reach_window_snapshot()
         snapshot["state"]["kyoku"]["self_state"]["temporary_furiten"] = True
-        validator._check_snapshot(snapshot)   # seat 0 just discarded: flag may persist
+        with self.assertRaisesRegex(validator.ArtifactError, "temporary furiten survives"):
+            validator._check_snapshot(snapshot)  # The declaration followed a draw.
+
+        # A real pass -> pon -> compound discard preserves temporary furiten:
+        # unlike a riichi declaration, the call does not entail an own draw.
+        rules = SCORING["rules"]
+        state = EventState(rules, self_seat=0)
+        state.apply({"type": "start_game", "rules": rules, "scores": [25000] * 4})
+        hand = ["1m", "2m", "3m", "1p", "2p", "3p", "4s", "5s", "7p", "7p", "E", "E", "E"]
+        state.apply({"type": "start_kyoku", "bakaze": "E", "kyoku": 1, "oya": 0,
+                     "honba": 0, "kyotaku": 0, "extension_round": 0, "scores": [25000] * 4,
+                     "dora_marker": "C", "hands": [{"tiles": hand}, *({"count": 13} for _ in range(3))]})
+        for event in ({"type": "tsumo", "actor": 0, "pai": "9s"},
+                      {"type": "dahai", "actor": 0, "pai": "9s", "tsumogiri": True},
+                      {"type": "tsumo", "actor": 1, "pai": None},
+                      {"type": "dahai", "actor": 1, "pai": "3s", "tsumogiri": True}):
+            state.apply(event)
+        state.acknowledge({"legal_actions": [{"action_id": "pass", "action": {"type": "none"}}]},
+                          {"action_id": "pass", "status": "passed"})
+        self.assertTrue(state.round["self_state"]["temporary_furiten"])
+        for event in ({"type": "tsumo", "actor": 2, "pai": None},
+                      {"type": "dahai", "actor": 2, "pai": "E", "tsumogiri": True},
+                      {"type": "pon", "actor": 0, "target": 2, "pai": "E", "consumed": ["E", "E"]},
+                      {"type": "dahai", "actor": 0, "pai": "7p", "tsumogiri": False}):
+            state.apply(event)
+            self.assertTrue(state.round["self_state"]["temporary_furiten"])
+        snapshot = copy.deepcopy(VECTORS["V18_snapshot_state"]["positive"])
+        # Ten game events and three own request/ACK pairs precede this
+        # checkpoint; the compound discard is the last message at seq 16.
+        snapshot.update(seq=17, replaces_through_seq=16)
+        snapshot["state"].update(kyoku=copy.deepcopy(state.round), pending_requests=[])
+        snapshot["state"]["kyoku"]["turn"].update(last_event_seq=16, last_event=copy.deepcopy(state.last_cause))
+        validator._check_snapshot(snapshot, rules=rules)
+        EventState(rules).restore(snapshot["state"])
+        welcome = copy.deepcopy(VECTORS["V104_wire_complete_game"]["positive"]["trace"]["welcome"])
+        welcome.update(rules=rules, resumed=True, replay_from_seq=1, replay_through_seq=16)
+        self.assertEqual(self.receiver(welcome).receive(self.raw(snapshot)), "applied")
 
         def expect(pattern, mutate):
             bad = copy.deepcopy(VECTORS["V18_snapshot_state"]["positive"])

@@ -54,6 +54,23 @@ def round_coordinates_reachable(coords: dict, rules: dict) -> bool:
             and (coordinate - scheduled_winds * 4) % 16 <= extra - 1)
 
 
+def check_round_entry_scores(coords: dict, scores: list[int], kyotaku: int, rules: dict) -> None:
+    """Necessary conditions for a deal, without inventing the prior result.
+
+    Bankruptcy is checked after settlement, so the initial deal is permitted
+    even when a configured threshold exceeds starting_points. A later deal
+    must have survived that check, and every extension starts below target.
+    """
+    initial = (all(coords[key] == value for key, value in
+                   {"bakaze": "E", "kyoku": 1, "oya": 0, "honba": 0, "extension_round": 0}.items())
+               and kyotaku == 0 and scores == [rules["starting_points"]] * 4)
+    require(initial or rules["bankruptcy"] != "end_game"
+            or min(scores) >= rules["bankruptcy_threshold"],
+            "next deal follows a mandatory bankruptcy ending")
+    require(coords["extension_round"] == 0 or max(scores) < rules["extension"]["target_points"],
+            "extension deal starts after the target was reached")
+
+
 def check_snapshot_rinshan(kyoku: dict, rules: dict | None = None) -> None:
     """Check facts visible in a snapshot, preserving original pon ordering."""
     turn = kyoku["turn"]
@@ -76,6 +93,13 @@ def check_snapshot_rinshan(kyoku: dict, rules: dict | None = None) -> None:
     # houtei: the final live tile may have replenished the dead wall.
     require(not (rinshan_decision and kyoku["wall_remaining"] == 0 and not kyoku["rinshan"])
             or kyoku["haitei"], "final live-wall draw is missing its last-tile flag")
+    # The discard clears rinshan, but a player without any possible preceding
+    # kan cannot have just drawn from the dead wall. Other seats' kans do not
+    # make this player's final discard ambiguous.
+    final_live_discard = (turn["last_event"]["type"] == "dahai"
+                          and kyoku["wall_remaining"] == 0 and not possible_kans)
+    require(not final_live_discard or kyoku["haitei"],
+            "final live-wall discard is missing its last-tile flag")
     require(not kyoku["rinshan"] or not any(s["ippatsu"] for s in kyoku["reach_status"]),
             "ippatsu survives the kan preceding the rinshan turn")
     require(not kyoku["rinshan"] or (possible_kans and (rinshan_decision or kyoku["pending_kan"] is not None)),
@@ -639,6 +663,8 @@ def validate_snapshot_state(snapshot: dict, rules: dict | None = None) -> None:
     require((nxt is not None) == (snapshot["game_phase"] == "between_kyoku")
             and (nxt is None or (nxt["kyotaku"] == snapshot["kyotaku"] and (rules is None or round_coordinates_reachable(nxt, rules)) and nxt["oya"] == nxt["kyoku"] - 1)),
             "snapshot next kyotaku differs")
+    if nxt is not None and rules is not None:
+        check_round_entry_scores(nxt, snapshot["scores"], snapshot["kyotaku"], rules)
     if kyoku is not None:
         require(kyoku["oya"] == kyoku["kyoku"] - 1 and (rules is None or round_coordinates_reachable(kyoku, rules)), "snapshot round coordinates are unreachable")
         pao = sorted(kyoku["pao"], key=lambda p: (p["actor"], p["yaku_id"]))
@@ -746,6 +772,9 @@ def validate_snapshot_state(snapshot: dict, rules: dict | None = None) -> None:
                     or kyoku["reach_status"][seat]["state"] == "accepted",
                     "riichi furiten without an accepted declaration")
             require(not self_state["temporary_furiten"]
+                    or kyoku["reach_status"][seat]["state"] == "none",
+                    "temporary furiten survives the draw preceding a riichi declaration")
+            require(not self_state["temporary_furiten"]
                     or cause_type != "tsumo" or cause["actor"] != seat,
                     "temporary furiten survives its own draw")
         # Committed melds must be physically well-formed, and every
@@ -786,6 +815,13 @@ def validate_snapshot_state(snapshot: dict, rules: dict | None = None) -> None:
         check_snapshot_rinshan(kyoku, rules)
         require(sum(s["state"] == "accepted" for s in kyoku["reach_status"]) <= kyoku["kyotaku"],
                 "accepted riichi deposits exceed the round's deposit count")
+        if rules is not None:
+            # Within a round, only accepted riichi deposits change scores.
+            # Undo those disclosed deposits to check its entry conditions.
+            accepted = [s["state"] == "accepted" for s in kyoku["reach_status"]]
+            entry_scores = [score + rules["riichi_stick_value"] * paid
+                            for score, paid in zip(snapshot["scores"], accepted)]
+            check_round_entry_scores(kyoku, entry_scores, snapshot["kyotaku"] - sum(accepted), rules)
         for a in range(4):
             require(kyoku["first_turn_eligible"][a] == (not kyoku["rivers"][a] and not any(kyoku["melds"])),
                     "first-turn eligibility differs from public discard/call history")
@@ -896,6 +932,9 @@ class EventState:
             return
         chosen = next(c["action"] for c in request["legal_actions"] if c["action_id"] == ack["action_id"])
         cause = self.last_cause
+        if chosen["type"] == "hora" and cause["type"] != "tsumo":
+            tile = cause["consumed"][0] if cause["type"] == "ankan_declared" else cause["pai"]
+            self._check_ron_furiten(self.self_seat, tile)
         if chosen["type"] == "hora" or cause["type"] == "tsumo":
             return
         hand = self._scoring_hand(self.self_seat)
@@ -927,6 +966,19 @@ class EventState:
     def _scoring_hand(self, actor: int) -> dict:
         return {"concealed_tiles": self.round["hands"][actor]["tiles"].copy(),
                 "melds": scoring_melds(self.round["melds"][actor])}
+
+    def _check_ron_furiten(self, actor: int, tile: str) -> None:
+        """Check known flags and visible waits, without guessing hidden hands."""
+        r = self.round
+        if actor == self.self_seat:
+            require(not r["self_state"]["temporary_furiten"] and not r["self_state"]["riichi_furiten"],
+                    "ron while a known furiten flag is active")
+        discarded = {tile_index(t["pai"]) for t in r["rivers"][actor]}
+        # The claimed winning tile must be a wait even in a hidden view.
+        require(tile_index(tile) not in discarded, "ron on a previously discarded winning tile")
+        if "tiles" in r["hands"][actor]:
+            require(not waits(self._scoring_hand(actor), self.rules) & discarded,
+                    "ron while the visible hand is discard-furiten")
 
     def _meld(self, event: dict) -> None:
         r, actor, kind = self.round, event["actor"], event["type"]
@@ -1160,6 +1212,8 @@ class EventState:
                 for win in result["wins"]:
                     require(win["target"] == cause["actor"] and (tile is None or win["pai"] == tile), "win differs from its source event")
                     require((win["actor"] == win["target"]) == (cause["type"] == "tsumo"), "win method differs from its source event")
+                    if cause["type"] != "tsumo":
+                        self._check_ron_furiten(win["actor"], win["pai"])
                     check_hora_yaku_context(win, r, cause, self.rules)
                     require([yaku["id"] for yaku in win["yakus"]] == sorted(yaku["id"] for yaku in win["yakus"]), "win yaku ids are not in ASCII order")
                     require([bonus["id"] for bonus in win["bonuses"]] == sorted(bonus["id"] for bonus in win["bonuses"]), "win bonus ids are not in ASCII order")
@@ -1234,6 +1288,10 @@ class EventState:
                         require(self.rules["ron_policy"] == "double_only" and phase == "awaiting_responses"
                                 and cause["type"] in {"dahai", "ankan_declared", "kakan_declared"},
                                 "sanchaho without a ron group")
+                        tile = cause["consumed"][0] if cause["type"] == "ankan_declared" else cause["pai"]
+                        for winner in range(4):
+                            if winner != cause["actor"]:
+                                self._check_ron_furiten(winner, tile)
                         if cause["type"] == "dahai":
                             river = r["rivers"][cause["actor"]]
                             require(not (river and river[-1]["reach"] and r["reach_status"][cause["actor"]]["state"] == "accepted"),

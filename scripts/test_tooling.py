@@ -51,6 +51,49 @@ class ScoreOracleCLI(unittest.TestCase):
         self.assertIn('score oracle:', result.stderr)
         self.assertNotIn('Traceback', result.stderr)
 
+    def test_complete_rules_are_validated_after_fixture_overrides(self):
+        for overrides, valid in (
+            ({'ron_policy': 'head_bump'}, False),
+            ({'ron_policy': 'head_bump',
+              'abortive_draws': [reason for reason in self.data['rules']['abortive_draws']
+                                if reason != 'sanchaho']}, True),
+            ({'extension': {'mode': 'none', 'target_points': 30000, 'max_extra_rounds': 4}}, False),
+            ({'extension': {'mode': 'none', 'target_points': 30000, 'max_extra_rounds': 0}}, True),
+        ):
+            with self.subTest(overrides=overrides):
+                data = deepcopy(self.data)
+                data['fixtures'][0]['rule_overrides'].update(overrides)
+                with TemporaryDirectory() as directory:
+                    path = Path(directory) / 'effective-rules.json'
+                    path.write_text(json.dumps(data), encoding='utf-8')
+                    result = self.run_oracle(str(path))
+                self.assertEqual(result.returncode, 0 if valid else 1, result.stderr)
+                self.assertNotIn('Traceback', result.stderr)
+
+    def test_negative_fixture_payloads_receive_schema_validation(self):
+        for invalid_field in ('input', 'state', 'rule_overrides', 'effective_rules'):
+            with self.subTest(invalid_field=invalid_field):
+                data = deepcopy(self.data)
+                source = data['fixtures'][0]
+                negative = {field: deepcopy(source[field])
+                            for field in ('input', 'state', 'rule_overrides')}
+                negative.update(id='schema_negative', expected_error='invalid_message')
+                if invalid_field == 'input':
+                    negative['input']['actor'] = True
+                elif invalid_field == 'state':
+                    negative['state']['wall_remaining'] = True
+                elif invalid_field == 'rule_overrides':
+                    negative['rule_overrides']['unknown_rule'] = 1
+                else:
+                    negative['rule_overrides']['ron_policy'] = 'head_bump'
+                data['negative_fixtures'] = [negative]
+                with TemporaryDirectory() as directory:
+                    path = Path(directory) / 'schema-negative.json'
+                    path.write_text(json.dumps(data), encoding='utf-8')
+                    result = self.run_oracle(str(path))
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn('1 positive and 1 negative fixtures verified', result.stdout)
+
 
 class DocumentConversion(unittest.TestCase):
     def convert(self, text, suffix='.md'):

@@ -398,6 +398,93 @@ class ScoringInvariants(unittest.TestCase):
                     calculate_fixture(f, self.rules)
                 self.assertEqual(error.exception.code, 'invalid_context')
 
+    def test_empty_projection_preserves_final_normal_draw_qualification(self):
+        def freeze(fixture, wall, last_tile):
+            fixture = deepcopy(fixture)
+            state = fixture['state']
+            state.update(wall_remaining=wall, last_tile=last_tile, events=[])
+            state['pre_state'] = {key: deepcopy(value) for key, value in state.items()
+                                  if key not in {'events', 'pre_state', 'furiten'}}
+            return fixture
+
+        for name, wall, last_tile, points in (
+            ('yaku_pinfu', 40, False, 1500),
+            ('yaku_haitei', 0, True, 2700),
+            ('yaku_rinshan', 0, False, 4000),
+        ):
+            with self.subTest(fixture=name):
+                fixture = freeze(self.fixtures[name], wall, last_tile)
+                win = calculate_fixture(fixture, self.rules)['wins'][0]
+                self.assertEqual(win['hand_points'], points)
+                self.assertEqual('haitei' in {y['id'] for y in win['yakus']}, last_tile)
+
+        fixture = freeze(self.fixtures['yaku_pinfu'], 0, False)
+        with self.assertRaisesRegex(ScoringError, 'final normal draw') as error:
+            calculate_fixture(fixture, self.rules)
+        self.assertEqual(error.exception.code, 'invalid_context')
+
+    def test_empty_projection_preserves_initial_draw_accounting(self):
+        def freeze(fixture, **changes):
+            fixture = deepcopy(fixture)
+            state = fixture['state']
+            state.update(changes, events=[])
+            state['pre_state'] = {key: deepcopy(value) for key, value in state.items()
+                                  if key not in {'events', 'pre_state', 'furiten'}}
+            return fixture
+
+        first = freeze(self.fixtures['yakuman_tenhou'])
+        self.assertEqual(calculate_fixture(first, self.rules)['wins'][0]['hand_points'], 48000)
+        later = freeze(first, wall_remaining=65, first_turn=False)
+        self.assertEqual(calculate_fixture(later, self.rules)['wins'][0]['hand_points'], 1500)
+        for wall, actor in ((69, 0), (70, 0), (69, 1)):
+            with self.subTest(wall=wall, actor=actor):
+                bad = freeze(first, wall_remaining=wall, first_turn=False)
+                bad['input'].update(actor=actor, target=actor)
+                with self.assertRaises(ScoringError) as error:
+                    calculate_fixture(bad, self.rules)
+                self.assertEqual(error.exception.code, 'invalid_context')
+
+        # The dealer can kan on the first draw and win on rinshan: the
+        # kan consumes another live-wall tile and cancels tenhou.
+        rinshan = freeze(self.fixtures['yaku_rinshan'], wall_remaining=68,
+                         kan_counts=[1, 0, 0, 0])
+        rinshan['input'].update(actor=0, target=0)
+        win = calculate_fixture(rinshan, self.rules)['wins'][0]
+        self.assertEqual({y['id'] for y in win['yakus']}, {'menzen_tsumo', 'rinshan_kaihou'})
+        # There cannot already be a new normal draw at the same budget.
+        ordinary = freeze(rinshan, rinshan=False)
+        with self.assertRaises(ScoringError) as error:
+            calculate_fixture(ordinary, self.rules)
+        self.assertEqual(error.exception.code, 'invalid_context')
+
+    def test_empty_projection_preserves_known_final_discard_qualification(self):
+        for wall, kan_actor, last_tile, valid, points in (
+            (40, None, False, True, 1000),
+            (0, None, True, True, 2000),
+            (0, None, False, False, None),
+            (0, 2, True, True, 2000),
+            (0, 2, False, False, None),
+            (0, 0, False, True, 1000),  # The discarder may have just drawn rinshan.
+            (0, 0, True, True, 2000),   # An earlier kan does not disprove houtei.
+        ):
+            with self.subTest(wall=wall, kan_actor=kan_actor, last_tile=last_tile):
+                fixture = deepcopy(self.fixtures['yaku_houtei'])
+                state = fixture['state']
+                state.update(wall_remaining=wall, last_tile=last_tile, events=[])
+                if kan_actor is not None:
+                    state['kan_counts'][kan_actor] = 1
+                    fixture['input']['dora_markers'].append('4p')
+                state['pre_state'] = {key: deepcopy(value) for key, value in state.items()
+                                      if key not in {'events', 'pre_state', 'furiten'}}
+                if valid:
+                    win = calculate_fixture(fixture, self.rules)['wins'][0]
+                    self.assertEqual(win['hand_points'], points)
+                    self.assertEqual('houtei' in {y['id'] for y in win['yakus']}, last_tile)
+                else:
+                    with self.assertRaisesRegex(ScoringError, 'final normal discard') as error:
+                        calculate_fixture(fixture, self.rules)
+                    self.assertEqual(error.exception.code, 'invalid_context')
+
     def test_multiple_ron_shares_last_tile_and_pending_kan(self):
         f = deepcopy(self.fixtures['settlement_multiple_ron'])
         contexts = [f['state'], f['input']['other_winners'][0]['state']]

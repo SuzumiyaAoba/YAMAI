@@ -400,6 +400,14 @@ def validate_state_projection(state: dict[str, Any], actor: int, rules: dict[str
 def _context(data: dict[str, Any], state: dict[str, Any], fixed: tuple[Meld, ...], physical: list[str], rules: dict[str, Any]) -> None:
     actor, target = data["actor"], data["target"]
     require(data["win_method"] in {"ron", "tsumo"} and ((data["win_method"] == "tsumo") == (actor == target)), "invalid_context", "win method and target differ")
+    # Every normal draw and committed kan removes one live-wall tile.
+    # Even an empty event projection cannot place a win before the first
+    # draw, or relabel the sole normal draw as a later, ordinary win.
+    normal_draws = 70 - state["wall_remaining"] - sum(state["kan_counts"])
+    require(normal_draws >= 1, "invalid_context", "win precedes the first normal draw")
+    if data["win_method"] == "tsumo" and not state["rinshan"] and normal_draws == 1:
+        require(not any(state["kan_counts"]) and actor == state["oya"] and state["first_turn"],
+                "invalid_context", "first normal draw must be the dealer's first turn")
     require(not state["furiten"] or data["win_method"] == "tsumo", "invalid_context", "ron while furiten")
     closed = not any(m.open for m in fixed)
     require(not state["reach_accepted"] or closed, "invalid_context", "open hand declared riichi")
@@ -414,7 +422,14 @@ def _context(data: dict[str, Any], state: dict[str, Any], fixed: tuple[Meld, ...
     require(not (state["rinshan"] and state["ippatsu"]),
             "invalid_context", "ippatsu survives the kan preceding a rinshan win")
     require(not state["last_tile"] or (state["wall_remaining"] == 0 and not state["rinshan"] and state["pending_kan"] is None), "invalid_context", "last live tile qualification differs")
+    require(data["win_method"] != "tsumo" or state["rinshan"] or state["wall_remaining"] != 0
+            or state["last_tile"], "invalid_context", "final normal draw is missing last-tile qualification")
     pending = state["pending_kan"]
+    # A last discard can follow rinshan only if its own discarder has a
+    # committed kan. Other seats' kans cannot explain a missing houtei.
+    require(data["win_method"] != "ron" or state["wall_remaining"] != 0 or pending is not None
+            or state["kan_counts"][target] > 0 or state["last_tile"],
+            "invalid_context", "final normal discard is missing last-tile qualification")
     if pending:
         require(data["win_method"] == "ron" and pending["actor"] == target and pending["pai"] == data["winning_tile"], "invalid_context", "chankan target/tile differs")
         require(state["wall_remaining"] > 0 and sum(state["kan_counts"]) < 4,
