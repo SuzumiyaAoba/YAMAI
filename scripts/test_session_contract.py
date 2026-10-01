@@ -772,6 +772,156 @@ class SessionInvariants(unittest.TestCase):
             receiver.receive(self.raw(snapshot))
         self.assertEqual(receiver.applied, 5)
 
+    def request_identity_snapshot(self, receiver):
+        """Project an already validated live prefix without changing its IDs."""
+        state = {key: deepcopy(receiver.welcome[key]) for key in ('mode', 'view', 'seat', 'players')}
+        kyoku = deepcopy(receiver.game.round)
+        kyoku['turn'].update(last_event_seq=receiver.last_event_seq,
+                             last_event=deepcopy(receiver.game.last_cause))
+        pending = []
+        for rid in receiver.active_requests:
+            request = deepcopy(receiver.requests[rid])
+            for key in ('yamai', 'kind', 'session_id', 'game_id', 'seq'):
+                request.pop(key, None)
+            request.update(selection=None, remaining_ms=(receiver.welcome['rules']['time_control']['grace_ms']
+                                                        + request['timeout_ms'] + request['time_bank_ms']))
+            if 'decision_group_id' in request:
+                request['decision_group_remaining_ms'] = request['decision_group_deadline_ms']
+            pending.append(request)
+        state.update(game_phase=receiver.game.game_phase, scores=receiver.game.scores.copy(),
+                     kyotaku=receiver.game.kyotaku, kyoku=kyoku, next_kyoku=None, final_rankings=None,
+                     time_bank_ms=receiver.time_bank_ms, pending_requests=pending)
+        identity = {key: receiver.welcome[key] for key in ('yamai', 'session_id', 'game_id')}
+        return dict(identity, kind='snapshot', seq=receiver.applied + 1,
+                    replaces_through_seq=receiver.applied, state=state)
+
+    def test_observed_group_request_ids_are_distinct_from_own_ack_scope(self):
+        trace = self.trace('request_cause_uses_current_event_sequence')
+        receiver = self.receiver(trace['welcome'])
+        for step in trace['steps']:
+            self.assertEqual(receiver.receive(self.raw(step['message'])), 'applied')
+        self.assertEqual(receiver.observed_request_ids['reaction12'], (2, 8, 'greaction1'))
+        self.assertNotIn('reaction12', receiver.request_ids)
+        self.assertIn('r2', receiver.request_ids)
+
+    def test_live_request_rejects_observed_cross_seat_or_cross_decision_id_reuse(self):
+        for variant in ('old_own_as_peer', 'old_peer_as_own', 'old_peer_same_seat', 'old_peer_new_seat'):
+            with self.subTest(variant=variant):
+                trace = self.trace('request_cause_uses_current_event_sequence')
+                index = 8 if variant == 'old_own_as_peer' else 12
+                message = trace['steps'][index]['message']
+                members = message['decision_group_members']
+                if variant == 'old_own_as_peer':
+                    members[1]['request_id'] = 'r1'
+                elif variant == 'old_peer_as_own':
+                    message['request_id'] = members[0]['request_id'] = 'reaction12'
+                elif variant == 'old_peer_same_seat':
+                    members[2]['request_id'] = 'reaction13'
+                else:
+                    members[1]['request_id'] = 'reaction12'
+                receiver = self.receiver(trace['welcome'])
+                for step in trace['steps'][:index]:
+                    receiver.receive(self.raw(step['message']))
+                self.assert_rejected_atomically(receiver, message)
+
+    def test_request_identity_scope_is_one_game_not_the_group_label(self):
+        trace = self.trace('request_cause_uses_current_event_sequence')
+        receivers = []
+        for index in range(2):
+            welcome = dict(trace['welcome'], session_id=f'identity-session-{index}', game_id=f'identity-game-{index}')
+            receiver = self.receiver(welcome)
+            for step in trace['steps']:
+                message = deepcopy(step['message'])
+                message.update(session_id=welcome['session_id'], game_id=welcome['game_id'])
+                if 'decision_group_id' in message:
+                    # Only request IDs have a game-wide uniqueness contract.
+                    message['decision_group_id'] = 'same-group-label'
+                self.assertEqual(receiver.receive(self.raw(message)), 'applied')
+            receivers.append(receiver)
+        self.assertEqual(receivers[0].observed_request_ids, receivers[1].observed_request_ids)
+        self.assertIsNot(receivers[0].observed_request_ids, receivers[1].observed_request_ids)
+
+    def test_public_receiver_trace_rejects_cross_seat_id_reuse(self):
+        trace = self.trace('request_cause_uses_current_event_sequence')
+        v.semantic_session_trace(trace, self.digest)
+        trace['steps'][8]['message']['decision_group_members'][1]['request_id'] = 'r1'
+        with self.assertRaises(v.ArtifactError):
+            v.semantic_session_trace(trace, self.digest)
+
+    def test_snapshot_request_provenance_survives_replay_and_reordering(self):
+        trace = self.trace('snapshot_group_remaining_cannot_increase')
+        receiver = self.receiver(trace['welcome'])
+        first, repeated = (step['message'] for step in trace['steps'])
+        self.assertEqual(receiver.receive(self.raw(first)), 'applied')
+        observed = deepcopy(receiver.observed_request_ids)
+        self.assertEqual(len(observed), 3)
+        self.assertEqual(receiver.receive(self.raw(first)), 'duplicate')
+        repeated['state']['pending_requests'][0]['decision_group_members'].reverse()
+        receiver.begin_resume(dict(trace['welcome'], resumed=True, replay_from_seq=7, replay_through_seq=7))
+        self.assertEqual(receiver.receive(self.raw(repeated)), 'applied')
+        self.assertEqual(receiver.observed_request_ids, observed)
+        self.assertEqual(receiver.request_ids, {'r1'})
+
+    def test_gap_snapshot_rejects_observed_request_id_reuse(self):
+        for collision in ('none', 'old_own_as_peer', 'old_peer_as_own', 'old_peer_same_seat'):
+            with self.subTest(collision=collision):
+                trace = self.trace('request_cause_uses_current_event_sequence')
+                truth, receiver = self.receiver(trace['welcome']), self.receiver(trace['welcome'])
+                for step in trace['steps'][:13]:
+                    truth.receive(self.raw(step['message']))
+                for step in trace['steps'][:9]:
+                    receiver.receive(self.raw(step['message']))
+                snapshot = self.request_identity_snapshot(truth)
+                request = snapshot['state']['pending_requests'][0]
+                if collision == 'old_own_as_peer':
+                    request['decision_group_members'][1]['request_id'] = 'r1'
+                elif collision == 'old_peer_as_own':
+                    request['request_id'] = request['decision_group_members'][0]['request_id'] = 'reaction12'
+                elif collision == 'old_peer_same_seat':
+                    request['decision_group_members'][2]['request_id'] = 'reaction13'
+                receiver.begin_resume(dict(trace['welcome'], resumed=True, replay_from_seq=10, replay_through_seq=13))
+                if collision == 'none':
+                    self.assertEqual(receiver.receive(self.raw(snapshot)), 'applied')
+                    self.assertEqual(receiver.observed_request_ids['reaction12'], (2, 8, 'greaction1'))
+                    self.assertEqual(receiver.observed_request_ids['reaction2'], (0, 12, 'greaction2'))
+                else:
+                    self.assert_rejected_atomically(receiver, snapshot)
+
+    def test_known_peer_id_never_authorizes_late_stale_ack(self):
+        for with_snapshot in (False, True):
+            with self.subTest(with_snapshot=with_snapshot):
+                trace = self.trace('request_cause_uses_current_event_sequence')
+                receiver = self.receiver(trace['welcome'])
+                for step in trace['steps'][:9]:
+                    receiver.receive(self.raw(step['message']))
+                if with_snapshot:
+                    receiver.receive(self.raw(self.request_identity_snapshot(receiver)))
+                ack = deepcopy(trace['steps'][9]['message'])
+                ack.update(seq=receiver.applied + 1, request_id='reaction12', status='stale')
+                self.assert_rejected_atomically(receiver, ack)
+
+    def test_snapshot_compacted_stale_remembers_terminal_own_identity(self):
+        trace = self.trace('request_cause_uses_current_event_sequence')
+        receiver = self.receiver(trace['welcome'])
+        for step in trace['steps'][:9]:
+            receiver.receive(self.raw(step['message']))
+        receiver.receive(self.raw(self.request_identity_snapshot(receiver)))
+        ack = deepcopy(trace['steps'][9]['message'])
+        ack.update(seq=receiver.applied + 1, request_id='hidden-prior', status='stale')
+        self.assertEqual(receiver.receive(self.raw(ack)), 'applied')
+        self.assertEqual(receiver.observed_request_ids['hidden-prior'], (0, None, None))
+        self.assertEqual(receiver.active_requests, {'reaction1'})
+        # The known terminal identity cannot later be introduced as a new
+        # pending request, even though its original request was compacted.
+        truth = self.receiver(trace['welcome'])
+        for step in trace['steps']:
+            truth.receive(self.raw(step['message']))
+        snapshot = self.request_identity_snapshot(truth)
+        snapshot['state']['pending_requests'][0]['request_id'] = 'hidden-prior'
+        receiver.begin_resume(dict(trace['welcome'], resumed=True,
+                                   replay_from_seq=receiver.applied + 1, replay_through_seq=20))
+        self.assert_rejected_atomically(receiver, snapshot)
+
     def snapshot_history(self):
         trace = self.trace('wire_complete_game')
         messages = [step['message'] for step in trace['steps'][:4]]
@@ -1170,6 +1320,7 @@ class SessionInvariants(unittest.TestCase):
                     receiver.request_clock_floor,
                     receiver.terminal_acks, receiver.expected_effects,
                     receiver.active_requests, receiver.known, receiver.event_seq_floor,
+                    receiver.request_ids, receiver.observed_request_ids,
                     vars(receiver.game))
         before = deepcopy(state())
         with self.assertRaises(SessionError) as caught:

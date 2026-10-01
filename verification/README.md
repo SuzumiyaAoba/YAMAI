@@ -9,6 +9,7 @@
 ```sh
 python3 scripts/validate_artifacts.py
 python3 scripts/test_validator.py
+python3 scripts/test_exact_decimal.py
 python3 scripts/test_scoring_reference.py
 python3 scripts/test_session_contract.py
 python3 scripts/test_game_contract.py
@@ -160,5 +161,9 @@ resumeのcaptureでは、元のrequest発行・選択と、同じledgerを再配
 group descriptorはseatとrequest IDの対応を保持し、配列順だけの変更を別groupやrequestの変更と判定しない。lifecycle fixture内のrequest payloadにも、wireのrequest Schemaと同じ型・数値範囲・member制約を適用する。意味検査だけの通過や、期待値が同じ計算実装に従うことを、構造検査の代わりにしない。
 
 数値は有限なJSON値を保存し、指数がPythonのDecimalの範囲を超える場合も、係数と指数を入力長に比例する表現で保持して比較する。指数に比例する整数や0列は展開しない。0の巨大指数表記、有限小数、数値同値性、大小比較、multipleOfとmessage上限の対照回帰を含む。この表現は検査用の比較・整除判定に限定し、任意精度の一般的な算術エンジンとしては扱わない。
+
+`test_exact_decimal.py` は標準ライブラリDecimalのC実装とPython実装を別processで検査する。整数文字列の変換上限を小さくした環境でも、大きな係数・指数の有限小数、比較、multipleOfを同じ結果として扱い、検査実装がprocess全体の変換上限を変更しないことを確認する。profile hashは計算時に自己参照fieldを除外するが、registryの `profiles[].hash` 自体の存在・型・形式と計算結果との一致を別途検査する。交渉済み拡張のSchemaがactorを制限しない場合でも、coreの整数seat・所有者制約を維持する。
+
+request IDの回帰は、自分宛ての要求とgroup descriptorで観測した他seatの要求を区別する。観測済みIDをseat・原因event・groupへ結び付け、別判断や別seatでの再利用をsnapshot・resume後も拒否する。同じpending requestのsnapshot復元とdescriptor配列の並べ替えは許可し、他seatのIDを観測しただけで自分宛てのstale ACKを許可しない。snapshotで省略された過去要求へのstale ACKにも、既知の所有者と終端IDの再利用禁止を適用する。
 
 局結果の回帰では、最終通常自摸のsnapshotが海底資格を保持すること、同じリーチ宣言打牌へのpenaltyで供託を控除しないこと、全手牌が可視の国士無双に必要な13種が揃うことを検査する。最終嶺上、リーチ成立後の次手番のpenalty、非公開手牌が残るviewは合法な対照例として区別する。これらは観測可能な必要条件の検査であり、受信者による非公開手牌の復元を要求しない。

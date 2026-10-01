@@ -97,6 +97,7 @@
             cd "$src"
             python3 scripts/validate_artifacts.py > "$out/validate.log" 2>&1
             python3 scripts/test_validator.py > "$out/regression.log" 2>&1
+            python3 scripts/test_exact_decimal.py > "$out/exact-decimal-regression.log" 2>&1
             python3 scripts/test_scoring_reference.py > "$out/scoring-regression.log" 2>&1
             python3 scripts/test_session_contract.py > "$out/session-regression.log" 2>&1
             python3 scripts/test_game_contract.py > "$out/game-regression.log" 2>&1

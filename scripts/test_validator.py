@@ -3,7 +3,7 @@
 import unittest
 import random
 import json
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from copy import deepcopy
 from decimal import Decimal, InvalidOperation, localcontext
 from fractions import Fraction
@@ -409,6 +409,66 @@ class ValidatorBoundaries(unittest.TestCase):
         for wire in ('{"kind":"join","profile_hash":3}', '{"kind":[],"profile_hash":"' + digest + '"}',
                      '{"kind":"join","profile_hash":"' + digest + '","bad":}'):
             self.assertEqual(v.normalize_wire_profile_hashes(wire), wire)
+
+    def test_registry_hash_must_be_present_and_well_formed(self):
+        original_load = v.strict_load
+        registry = (v.ROOT / f'registry/protocol/{v.PROTOCOL}/registry.json').resolve()
+        schemas = v.SchemaSet()
+        missing = object()
+        for value in (missing, None, False, 42, [], {}, '', 'sha256:' + '0' * 63,
+                      'sha256:' + 'A' * 64, 'sha256:' + 'a' * 64 + '\n'):
+            def load(path):
+                result = original_load(path)
+                if Path(path).resolve() == registry:
+                    if value is missing:
+                        result['profiles'][0].pop('hash')
+                    else:
+                        result['profiles'][0]['hash'] = value
+                return result
+            with self.subTest(value=value), patch.object(v, 'strict_load', load):
+                self.assert_error('registry_error', v.check_registry, schemas)
+
+    def test_registry_hash_matches_computed_artifacts_at_full_gate(self):
+        original_load = v.strict_load
+        registry = (v.ROOT / f'registry/protocol/{v.PROTOCOL}/registry.json').resolve()
+        schemas = v.SchemaSet()
+        protocol, rules = v.check_registry(schemas)
+        digest = v.profile_hash(protocol, rules)
+        self.assertEqual(protocol['profiles'][0]['hash'], digest)
+        v.check_manifest(schemas, protocol, rules)
+        altered = deepcopy(protocol)
+        altered['profiles'][0]['hash'] = 'sha256:' + '0' * 64
+        # Hash exclusion must remain cycle-free, while the publication check
+        # independently requires the excluded identity field to be correct.
+        self.assertEqual(v.profile_hash(altered, rules), digest)
+        self.assert_error('registry_error', v.check_manifest, schemas, altered, rules)
+        def load(path):
+            return deepcopy(altered) if Path(path).resolve() == registry else original_load(path)
+        output = StringIO()
+        with patch.object(v, 'strict_load', load), redirect_stderr(output):
+            self.assertEqual(v.main(), 1)
+        self.assertIn('FAIL [registry_error]', output.getvalue())
+
+    def test_extension_action_actor_keeps_core_integer_seat_constraint(self):
+        manifest = v.strict_load(v.ROOT / f'test-vectors/protocol/{v.PROTOCOL}/manifest.json')
+        vectors = v.strict_load(v.ROOT / manifest['vectors'])
+        base = vectors['V131_private_action_preserves_owner_binding']['positive']['trace']
+        for actor in (0, False, True, None, -1, 4, '0', 1):
+            trace = deepcopy(base)
+            # A negotiated extension may use a permissive schema. The core
+            # owner/seat assertion still applies to every action candidate.
+            trace['definitions'][0]['action_types']['x-acme-policy']['schema']['properties']['actor'] = {}
+            trace['message']['legal_actions'][-1]['action']['actor'] = actor
+            trace['message'] = v.strict_load_bytes(json.dumps(trace['message']).encode())
+            with self.subTest(actor=actor):
+                if type(actor) is int and actor == 0:
+                    v.semantic_session_trace(trace, manifest['profile_hash'])
+                else:
+                    self.assert_error('invalid_message', v.semantic_session_trace,
+                                      trace, manifest['profile_hash'])
+        for seat in range(4):
+            v._check_action_object({'type': 'x-acme-policy', 'actor': seat},
+                                   expected_actor=seat, extension_types={'x-acme-policy'})
 
     def test_anyof_does_not_skip_sibling_constraints(self):
         schema = {'anyOf':[{'type':'integer'},{'type':'string'}], 'const':3}

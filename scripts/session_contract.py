@@ -210,6 +210,9 @@ class Receiver:
         self.closed = False
         self.fatal_error: dict | None = None
         self.request_ids: set[str] = set()
+        # A descriptor exposes other seats' IDs too. Keep their game-wide
+        # provenance separate from the own-seat IDs that authorize late ACKs.
+        self.observed_request_ids: dict[str, tuple[int, int | None, str | None]] = {}
         self.active_requests: set[str] = set()
         self.awaiting_request = False
         self.requests: dict[str, dict] = {}
@@ -253,6 +256,23 @@ class Receiver:
             if getattr(error, "severity", "fatal") == "fatal":
                 self.closed = True
             raise
+
+    def _observe_request_ids(self, request: dict) -> None:
+        """Bind every visible ID to its original seat and decision cause.
+
+        Repeated snapshots of the same pending request may repeat these
+        bindings; a new decision or another seat may not reuse them. Cause
+        numbers are from this receiver's session, never another seat's seq.
+        """
+        members = request.get("decision_group_members", [request])
+        additions = {}
+        for member in members:
+            rid = member["request_id"]
+            identity = (member["seat"], request["caused_by_seq"], request.get("decision_group_id"))
+            require(rid not in self.observed_request_ids or self.observed_request_ids[rid] == identity,
+                    "invalid_message", "request id was reused for another seat or decision")
+            additions[rid] = identity
+        self.observed_request_ids.update(additions)
 
     def _check_snapshot_prefix(self, state: dict, *, allow_unreceived_request: bool = False) -> None:
         pending = state.get("pending_requests", [])
@@ -551,6 +571,7 @@ class Receiver:
                     if old.get("selection") is not None:
                         require(selection is not None and all(selection[k] == old["selection"][k] for k in ("action_id", "source", "elapsed_ms", "time_bank_ms")),
                                 "invalid_message", "snapshot changed a frozen selection")
+                self._observe_request_ids(request)
                 self.requests[request["request_id"]] = deepcopy(request)
             self.active_requests = {r["request_id"] for r in state.get("pending_requests", [])}
             self.awaiting_request = False
@@ -624,6 +645,7 @@ class Receiver:
                 require(cause is not None and cause["kind"] == "event", "invalid_message", "request does not refer to an applied event")
                 self.validate("decision-cause", {"request":message,"cause":cause["event"]})
                 require(cause["event"] == self.game.last_cause, "invalid_message", "request does not refer to the current decision event")
+                self._observe_request_ids(message)
                 self.request_ids.add(message["request_id"])
                 self.active_requests.add(message["request_id"])
                 self.requests[message["request_id"]] = deepcopy(message)
@@ -632,6 +654,8 @@ class Receiver:
                 rid, status = message["request_id"], message["status"]
                 if rid not in self.active_requests:
                     require(status == "stale" and (rid in self.request_ids or self.floor > 0), "invalid_message", "ACK refers to an unissued or terminal request")
+                    require(rid not in self.observed_request_ids or self.observed_request_ids[rid][0] == self.welcome["seat"],
+                            "invalid_message", "late ACK refers to another seat's request")
                     attempt = (rid, message["action_id"])
                     require(attempt not in self.late_attempts, "invalid_message",
                             "late attempt was assigned a second ACK sequence")
@@ -640,6 +664,10 @@ class Receiver:
                                 "invalid_message", "late stale ACK follows an explicit terminal selection")
                         require(all(message[key] == self.terminal_acks[rid][key] for key in ("elapsed_ms", "time_bank_ms")), "invalid_message", "late ACK changed the original clock")
                     self.late_attempts.add(attempt)
+                    # A stale ACK after snapshot compaction can reveal an
+                    # otherwise unknown terminal own-seat request. Its cause
+                    # is unknown, but the ID cannot become a new request.
+                    self.observed_request_ids.setdefault(rid, (self.welcome["seat"], None, None))
                 else:
                     request = self.requests[rid]
                     grace = self.welcome["rules"]["time_control"]["grace_ms"]

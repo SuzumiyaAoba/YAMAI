@@ -2,8 +2,8 @@
 
 Only parsing, numeric comparison and schema divisibility are needed here;
 this is deliberately not an arithmetic context. Coefficients and signed
-exponents stay decimal strings, bounded by the input's length. No power of
-ten is expanded and no unbounded exponent is converted to a Python int.
+exponents stay decimal strings, bounded by the input's length. No decimal
+exponent is expanded into a power of ten or converted to an unbounded int.
 """
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
@@ -62,6 +62,57 @@ def bounded_exponent_difference(left: str, right: str, bound: int) -> int:
     def residue(value):
         return (-1 if value.startswith("-") else 1) * int(value.lstrip("-")[-width:])
     return (residue(left) - residue(right)) % modulus
+
+
+def coefficient_to_int(digits: str) -> int:
+    """Convert coefficient digits without Decimal or integer-string limits.
+
+    Each leaf is a small decimal block, and balanced joins avoid the
+    quadratic repeated-multiply cost of accumulating a long input one
+    digit at a time. The largest integer is proportional to the supplied
+    coefficient, never to the value of a decimal exponent.
+    """
+    def convert(start: int, end: int) -> int:
+        if end - start <= 18:
+            return int(digits[start:end])
+        middle = (start + end) // 2
+        return convert(start, middle) * 10 ** (end - middle) + convert(middle, end)
+
+    return convert(0, len(digits))
+
+
+def denominator_factors(value: int) -> tuple[int, int, int]:
+    """Extract 2 and 5 factors using input-sized powers and logarithmic steps.
+
+    Decimal divisibility needs only these two primes after reducing the
+    coefficient fraction. In particular, a huge coprime denominator must
+    not cause modular exponentiation with a huge modulus. ``value`` is a
+    positive integer; the result is (remaining factor, twos, fives).
+    """
+    twos = (value & -value).bit_length() - 1
+    value >>= twos
+    fives = 0
+    powers = []
+    power, width = 5, 1
+    while power <= value:
+        quotient, remainder = divmod(value, power)
+        if remainder:
+            break
+        value = quotient
+        fives += width
+        powers.append((power, width))
+        if value == 1:
+            return value, twos, fives
+        power *= power
+        width *= 2
+    # A failed power leaves fewer than width factors. Descending binary
+    # refinement recovers their exact count without one division per 5.
+    for power, width in reversed(powers):
+        quotient, remainder = divmod(value, power)
+        if not remainder:
+            value = quotient
+            fives += width
+    return value, twos, fives
 
 
 @total_ordering
@@ -141,12 +192,20 @@ def parse_real(raw: str, max_integer: int):
         if integer > max_integer:
             raise ValueError("integer outside IEEE-754 safe range")
         return -integer if sign else integer
+    # The optional pure-Python Decimal backend parses both fields through
+    # int(string). Never hand it an unbounded token: 640 is Python's
+    # smallest configurable conversion limit; exponent parsing is bounded
+    # too, with smaller platform limits handled below. Larger values use
+    # the same compact representation on both backends. This also avoids
+    # expensive conversions when the process has disabled the digit cap.
+    if len(coefficient) > 640 or len(exponent.lstrip("-")) > 18:
+        return ExactDecimal(sign, coefficient, exponent)
     token = ("-" if sign else "") + coefficient + "e" + exponent
     try:
         number = Decimal(token)
         if number.is_finite():
             return number
-    except InvalidOperation:
+    except (InvalidOperation, ValueError, OverflowError):
         pass
     # A finite fraction remains valid even when its exponent cannot fit
     # Decimal's platform C integer. Keep the same normalized JSON value,

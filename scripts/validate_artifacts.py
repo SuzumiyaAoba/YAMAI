@@ -19,7 +19,7 @@ import sys
 from collections import Counter
 from copy import deepcopy
 from decimal import Decimal, InvalidOperation
-from exact_decimal import ExactDecimal, parse_real, number_parts, exponent_compare, bounded_exponent_difference
+from exact_decimal import ExactDecimal, parse_real, number_parts, exponent_compare, bounded_exponent_difference, coefficient_to_int, denominator_factors
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Sequence, Tuple
 
@@ -197,8 +197,9 @@ def _is_multiple_of(value: Any, divisor: Any) -> bool:
 
     def parts(number: Decimal | ExactDecimal) -> Tuple[int, str]:
         _, digits, exponent = number_parts(number)
-        # Decimal-to-int conversion has no string-to-int digit-limit artifact.
-        coefficient = int(Decimal(digits))
+        # Bounded-block conversion works with both standard-library Decimal
+        # backends without changing the process-wide integer digit limit.
+        coefficient = coefficient_to_int(digits)
         return coefficient, exponent
 
     a, a_exponent = parts(numerator)
@@ -207,11 +208,14 @@ def _is_multiple_of(value: Any, divisor: Any) -> bool:
         # The normalized numerator lacks a factor of ten; an extra factor of
         # ten in the denominator therefore cannot divide it.
         return False
-    # Once the exponent covers every possible factor 2 or 5 in b, further
-    # powers of ten cannot change divisibility. The bound is coefficient-
-    # sized, even for an exponent with hundreds of thousands of digits.
-    difference = bounded_exponent_difference(a_exponent, b_exponent, b.bit_length())
-    return ((a % b) * pow(10, difference, b)) % b == 0
+    # After cancellation, only factors 2 and 5 can be supplied by powers
+    # of ten. Reject any other prime factor before doing exponent work;
+    # huge odd coefficients must not trigger huge modular exponentiation.
+    remaining, twos, fives = denominator_factors(b // math.gcd(a, b))
+    if remaining != 1:
+        return False
+    required = max(twos, fives)
+    return required == 0 or bounded_exponent_difference(a_exponent, b_exponent, required) == required
 
 
 def _json_type(value: Any, name: str) -> bool:
@@ -522,8 +526,11 @@ def check_registry(schemas: SchemaSet) -> Tuple[Dict[str, Any], Dict[str, Any]]:
              "registry_error", "score range constants differ from the protocol event/integer limits")
     if not isinstance(p.get("profiles"), list) or len(p["profiles"]) != 1:
         raise ArtifactError("registry_error", "protocol registry must contain exactly one profile")
-    if p["profiles"][0]["id"] != PROFILE or p["profiles"][0]["revision"] != PROFILE_REVISION:
+    profile = p["profiles"][0]
+    if not isinstance(profile, Mapping) or profile.get("id") != PROFILE or profile.get("revision") != PROFILE_REVISION:
         raise ArtifactError("registry_error", "profile registry mismatch")
+    if not isinstance(profile.get("hash"), str) or re.fullmatch(r"sha256:[0-9a-f]{64}", profile["hash"]) is None:
+        raise ArtifactError("registry_error", "profile registry hash must be a lowercase SHA-256 identity")
     for field in ("message_kinds", "event_types", "action_types", "ack_statuses", "error_codes", "rule_keys", "result_types", "result_reasons"):
         values = p[field]
         ids = [x if isinstance(x, str) else x["id"] for x in values]
@@ -810,6 +817,10 @@ def check_manifest(schemas: SchemaSet, p: Dict[str, Any], r: Dict[str, Any]) -> 
         raise ArtifactError("manifest_error", "profile hash input manifest is not the release set")
     _repo_file_list(manifest["profile_hash_inputs"], "profile_hash_inputs")
     actual = profile_hash(p, r)
+    # Excluding the self-referential hash from its digest is not validation:
+    # every advertised copy must still agree with the computed artifact set.
+    if p["profiles"][0].get("hash") != actual:
+        raise ArtifactError("registry_error", f"profile registry hash mismatch: actual {actual}")
     if manifest["profile_hash"] != actual:
         raise ArtifactError("manifest_error", f"profile_hash mismatch: expected {manifest['profile_hash']}, actual {actual}")
     vectors = strict_load(ROOT / manifest["vectors"])
@@ -887,7 +898,7 @@ def check_release_manifest(manifest: Dict[str, Any], p: Dict[str, Any], r: Dict[
     if not isinstance(validator, Mapping) or validator.get("path") != "scripts/validate_artifacts.py" or validator.get("command") != "python3 scripts/validate_artifacts.py":
         raise ArtifactError("release_error", "release validator metadata mismatch")
     _repo_file(validator.get("path"), "validator.path")
-    if validator.get("support_files") != ["scripts/exact_decimal.py", "scripts/request_contract.py", "scripts/detached_contract.py", "scripts/test_detached_contract.py", "scripts/scoring_reference.py", "scripts/session_contract.py", "scripts/game_contract.py", "scripts/resource_contract.py", "scripts/test_scoring_reference.py", "scripts/test_session_contract.py", "scripts/test_game_contract.py", "scripts/test_resource_contract.py", "scripts/test_validator.py", "scripts/check_jsonschema.py", "scripts/score_oracle.py", "scripts/render_docs.py", "scripts/test_tooling.py", "tests/test_regressions.py"]:
+    if validator.get("support_files") != ["scripts/exact_decimal.py", "scripts/test_exact_decimal.py", "scripts/request_contract.py", "scripts/detached_contract.py", "scripts/test_detached_contract.py", "scripts/scoring_reference.py", "scripts/session_contract.py", "scripts/game_contract.py", "scripts/resource_contract.py", "scripts/test_scoring_reference.py", "scripts/test_session_contract.py", "scripts/test_game_contract.py", "scripts/test_resource_contract.py", "scripts/test_validator.py", "scripts/check_jsonschema.py", "scripts/score_oracle.py", "scripts/render_docs.py", "scripts/test_tooling.py", "tests/test_regressions.py"]:
         raise ArtifactError("release_error", "release validator support files mismatch")
     _repo_file_list(validator.get("support_files"), "validator.support_files")
 
@@ -985,7 +996,7 @@ def _check_action_object(action: Any, *, expected_actor: int | None = None, exte
         _require("actor" not in action or (type(actor) is int and 0 <= actor <= 3), "invalid_message", "none actor is invalid")
         _require(actor is None or expected_actor is None or actor == expected_actor, "invalid_message", "none actor does not match request seat")
         return
-    _require(isinstance(action.get("actor"), int) and 0 <= action["actor"] <= 3, "invalid_message", "action actor is invalid")
+    _require(type(action.get("actor")) is int and 0 <= action["actor"] <= 3, "invalid_message", "action actor is invalid")
     if expected_actor is not None:
         _require(action["actor"] == expected_actor, "invalid_message", "action actor does not match request seat")
     if kind in extension_types:
