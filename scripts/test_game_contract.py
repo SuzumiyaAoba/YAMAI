@@ -836,6 +836,116 @@ class GameContractTests(unittest.TestCase):
                     self._assert_receiver_rejects_atomically(receiver, self._event_message(receiver, event),
                                                            'previously discarded')
 
+    def test_three_ron_on_ankan_requires_kokushi_compatible_melds(self):
+        rules = deepcopy(self.rules)
+        rules['ron_policy'] = 'double_only'
+        rules['abortive_draws'] = sorted(set(rules['abortive_draws']) | {'sanchaho'})
+        rules['ankan_chankan'] = 'kokushi_only'
+        rules['kan_dora_timing'] = dict.fromkeys(('ankan', 'daiminkan', 'kakan'), 'before_rinshan')
+        for kind in ('chi', 'pon', 'daiminkan', 'ankan', 'kakan'):
+            for owner_declares in (False, True):
+                with self.subTest(kind=kind, owner_declares=owner_declares):
+                    receiver = self._observer_receiver(rules=rules)
+                    self._send_event(receiver, dict(type='start_game', players=receiver.welcome['players'],
+                                                   rules=rules, scores=[25000] * 4))
+                    self._send_event(receiver, dict(type='start_kyoku', bakaze='E', kyoku=1, oya=0,
+                                                   honba=0, kyotaku=0, extension_round=0, scores=[25000] * 4,
+                                                   dora_marker='2p', hands=[{'count': 13} for _ in range(4)]))
+                    def draw(actor):
+                        self._send_event(receiver, dict(type='tsumo', actor=actor, pai=None))
+                    def discard(actor, pai, *, tsumogiri=True):
+                        self._send_event(receiver, dict(type='dahai', actor=actor, pai=pai, tsumogiri=tsumogiri))
+                    def rinshan(actor):
+                        self._send_event(receiver, dict(type='dora', dora_marker='3p'))
+                        draw(actor)
+                    draw(0)
+                    if kind == 'ankan':
+                        owner = 0
+                        self._send_event(receiver, dict(type='ankan_declared', actor=owner, consumed=['6p'] * 4))
+                        self._send_event(receiver, dict(type='ankan', actor=owner, consumed=['6p'] * 4))
+                        rinshan(owner)
+                    else:
+                        owner = 1
+                        tile = '3p' if kind == 'chi' else '6p'
+                        discard(0, tile)
+                        consumed = ['1p', '2p'] if kind == 'chi' else ['6p'] * (3 if kind == 'daiminkan' else 2)
+                        self._send_event(receiver, dict(type='pon' if kind == 'kakan' else kind,
+                                                       actor=owner, target=0, pai=tile, consumed=consumed))
+                        if kind == 'daiminkan':
+                            rinshan(owner)
+                    discard(owner, '7p', tsumogiri=kind in {'ankan', 'daiminkan'})
+                    if kind == 'kakan':
+                        for actor, tile in ((2, '2s'), (3, '3s'), (0, '4s')):
+                            draw(actor)
+                            discard(actor, tile)
+                        draw(owner)
+                        self._send_event(receiver, dict(type='kakan_declared', actor=owner, pai='6p', consumed=['6p'] * 3))
+                        self._send_event(receiver, dict(type='kakan', actor=owner, pai='6p', consumed=['6p'] * 3))
+                        rinshan(owner)
+                        discard(owner, '8p')
+                    actor = (owner + 1) % 4
+                    if owner_declares:
+                        for tile in ('6s', '7s', '8s'):
+                            draw(actor)
+                            discard(actor, tile)
+                            actor = (actor + 1) % 4
+                    draw(actor)
+                    self._send_event(receiver, dict(type='ankan_declared', actor=actor, consumed=['9m'] * 4))
+                    result = dict(type='end_kyoku', result=dict(type='ryukyoku', reason='sanchaho', tenpai=None),
+                                  deltas=[0] * 4, scores=[25000] * 4,
+                                  next=dict(type='renchan', bakaze='E', kyoku=1, oya=0, honba=1, kyotaku=0, extension_round=0))
+                    if owner_declares:
+                        # The declarer may retain these simple-tile melds;
+                        # only the three potential Kokushi winners must lack melds.
+                        self._send_event(receiver, result)
+                    else:
+                        self._assert_receiver_rejects_atomically(receiver, self._event_message(receiver, result),
+                                                               'sanchaho ankan winner has a committed meld')
+
+    def test_three_ron_on_ankan_checks_visible_orphan_kinds(self):
+        rules = deepcopy(self.rules)
+        rules['ron_policy'] = 'double_only'
+        rules['abortive_draws'] = sorted(set(rules['abortive_draws']) | {'sanchaho'})
+        rules['ankan_chankan'] = 'kokushi_only'
+        orphans = [TILES[tile] for tile in sorted(ORPHANS) if TILES[tile] != '9m']
+        dealt = [['9m'] * 3 + ['3p'] * 3 + ['4p'] * 3 + ['6p'] * 3 + ['7p'],
+                 *(orphans + [pair] for pair in ('1m', '1p', '1s'))]
+        # All three hands can simultaneously rob the same physical 9m.
+        inventory([*sum(dealt, []), '9m', '2p'], rules)
+        for seat in (1, 2, 3):
+            context = dict(bakaze='E', oya=0, kyotaku=0, wall_remaining=69, kan_counts=[0] * 4,
+                           reach_accepted=False, double_riichi=False, ippatsu=False, first_turn=True,
+                           rinshan=False, last_tile=False, pending_kan=dict(kind='ankan', actor=0, pai='9m'),
+                           furiten=False, events=[])
+            score = score_hand(dict(actor=seat, target=0, win_method='ron', winning_tile='9m',
+                                    hand=dict(concealed_tiles=dealt[seat], melds=[]),
+                                    dora_markers=['2p'], ura_dora_markers=[]), context, rules)
+            self.assertEqual(score['yakus'], [dict(id='kokushi_musou', value=1, unit='yakuman')])
+        for view in ('public', 'full', {'seat': 1}, {'seat': 2}, {'seat': 3}):
+            for invalid_seat in (None, 1, 2, 3):
+                with self.subTest(view=view, invalid_seat=invalid_seat):
+                    receiver = self._observer_receiver(rules=rules, mode='replay', view=view)
+                    hands = deepcopy(dealt)
+                    if invalid_seat is not None:
+                        hands[invalid_seat][hands[invalid_seat].index('9p')] = '2m'
+                    visible = [view == 'full' or view == {'seat': seat} for seat in range(4)]
+                    self._send_event(receiver, dict(type='start_game', players=receiver.welcome['players'],
+                                                   rules=rules, scores=[25000] * 4))
+                    self._send_event(receiver, dict(type='start_kyoku', bakaze='E', kyoku=1, oya=0,
+                                                   honba=0, kyotaku=0, extension_round=0, scores=[25000] * 4,
+                                                   dora_marker='2p', hands=[{'tiles': hand} if shown else {'count': 13}
+                                                                          for hand, shown in zip(hands, visible)]))
+                    self._send_event(receiver, dict(type='tsumo', actor=0, pai='9m' if visible[0] else None))
+                    self._send_event(receiver, dict(type='ankan_declared', actor=0, consumed=['9m'] * 4))
+                    result = dict(type='end_kyoku', result=dict(type='ryukyoku', reason='sanchaho', tenpai=None),
+                                  deltas=[0] * 4, scores=[25000] * 4,
+                                  next=dict(type='renchan', bakaze='E', kyoku=1, oya=0, honba=1, kyotaku=0, extension_round=0))
+                    if invalid_seat is not None and visible[invalid_seat]:
+                        self._assert_receiver_rejects_atomically(receiver, self._event_message(receiver, result),
+                                                               'sanchaho ankan winner lacks a kokushi shape')
+                    else:
+                        self._send_event(receiver, result)  # Never infer hidden tile kinds.
+
     def test_final_rinshan_draw_and_discard_do_not_require_haitei(self):
         state = EventState(self.rules)
         state.apply({'type': 'start_game', 'scores': [25000] * 4, 'rules': self.rules})

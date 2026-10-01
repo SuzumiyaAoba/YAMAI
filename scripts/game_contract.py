@@ -1300,6 +1300,18 @@ class EventState:
                             require(self.rules["ankan_chankan"] == "kokushi_only"
                                     and tile_index(cause["consumed"][0]) in ORPHANS,
                                     "sanchaho on an ankan that cannot be robbed")
+                            for winner in range(4):
+                                if winner == cause["actor"]:
+                                    continue
+                                require(not r["melds"][winner],
+                                        "sanchaho ankan winner has a committed meld")
+                                hand = r["hands"][winner]
+                                if "tiles" in hand:
+                                    # With no meld and thirteen concealed tiles,
+                                    # these thirteen kinds prove Kokushi after
+                                    # adding the one shared winning tile.
+                                    require({tile_index(t) for t in hand["tiles"]} | {tile_index(tile)} == ORPHANS,
+                                            "sanchaho ankan winner lacks a kokushi shape")
                     elif reason == "kyushukyuhai":
                         require(phase == "awaiting_action" and r["first_turn_eligible"][turn_actor], "nine-orphans draw after first turn interruption")
                         if "tiles" in r["hands"][turn_actor]:
