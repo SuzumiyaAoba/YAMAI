@@ -485,6 +485,64 @@ class ScoringInvariants(unittest.TestCase):
                         calculate_fixture(fixture, self.rules)
                     self.assertEqual(error.exception.code, 'invalid_context')
 
+    def test_fourth_kan_abort_preserves_its_forced_rinshan_win_context(self):
+        for method in ('tsumo', 'ron'):
+            for enabled in (False, True):
+                for flag in (False, True):
+                    with self.subTest(method=method, enabled=enabled, flag=flag):
+                        f = deepcopy(self.fixtures['yaku_rinshan' if method == 'tsumo' else 'yaku_houtei'])
+                        f['input']['dora_markers'] = ['E', 'S', 'W', 'N', 'P']
+                        state = f['state']
+                        state['kan_counts'] = [2, 1, 1, 0] if method == 'tsumo' else [2, 0, 1, 1]
+                        state['rinshan' if method == 'tsumo' else 'last_tile'] = flag
+                        state['events'] = []
+                        state['pre_state'] = {k: deepcopy(v) for k, v in state.items()
+                                              if k not in {'events', 'pre_state', 'furiten'}}
+                        if not enabled:
+                            f['rule_overrides']['abortive_draws'] = [
+                                reason for reason in self.rules['abortive_draws'] if reason != 'suukan_sanra']
+                        if enabled and flag != (method == 'tsumo'):
+                            with self.assertRaises(ScoringError) as error:
+                                calculate_fixture(f, self.rules)
+                            self.assertEqual(error.exception.code, 'invalid_context')
+                        else:
+                            result = calculate_fixture(f, self.rules)['wins'][0]
+                            self.assertEqual(result['hand_points'],
+                                             (4000 if flag else 2000) if method == 'tsumo'
+                                             else (2000 if flag else 1000))
+
+        # Four kans owned by one player do not force the abortive turn.
+        f = deepcopy(self.fixtures['yakuman_suukantsu'])
+        f['input'].update(win_method='tsumo', target=f['input']['actor'])
+        for flag in (False, True):
+            for state in (f['state'], f['state']['pre_state']):
+                state['rinshan'] = flag
+            self.assertEqual(calculate_fixture(f, self.rules)['wins'][0]['hand_points'], 96000)
+        f = deepcopy(self.fixtures['yaku_houtei'])
+        f['input']['dora_markers'] = ['E', 'S', 'W', 'N', 'P']
+        f['state'].update(kan_counts=[4, 0, 0, 0], events=[])
+        f['state']['pre_state'] = {k: deepcopy(v) for k, v in f['state'].items()
+                                   if k not in {'events', 'pre_state', 'furiten'}}
+        self.assertEqual(calculate_fixture(f, self.rules)['wins'][0]['hand_points'], 2000)
+
+    def test_fourth_kan_abort_ron_source_must_own_a_committed_kan(self):
+        f = deepcopy(self.fixtures['yaku_houtei'])
+        f['input']['dora_markers'] = ['E', 'S', 'W', 'N', 'P']
+        state = f['state']
+        state.update(wall_remaining=40, kan_counts=[0, 0, 2, 2], last_tile=False, events=[])
+        state['pre_state'] = {k: deepcopy(v) for k, v in state.items()
+                              if k not in {'events', 'pre_state', 'furiten'}}
+        with self.assertRaises(ScoringError) as error:
+            calculate_fixture(f, self.rules)
+        self.assertEqual(error.exception.code, 'invalid_context')
+        for target in (2, 3):
+            f['input']['target'] = target
+            self.assertEqual(calculate_fixture(f, self.rules)['wins'][0]['hand_points'], 1000)
+        f['input']['target'] = 0
+        f['rule_overrides']['abortive_draws'] = [
+            reason for reason in self.rules['abortive_draws'] if reason != 'suukan_sanra']
+        self.assertEqual(calculate_fixture(f, self.rules)['wins'][0]['hand_points'], 1000)
+
     def test_multiple_ron_shares_last_tile_and_pending_kan(self):
         f = deepcopy(self.fixtures['settlement_multiple_ron'])
         contexts = [f['state'], f['input']['other_winners'][0]['state']]

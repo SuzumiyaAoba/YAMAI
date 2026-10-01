@@ -1390,6 +1390,99 @@ class GameContractTests(unittest.TestCase):
                                  "kyotaku": 0, "scores": [25000] * 4}, self.rules)
         self.assertEqual(state.round["reach_status"][0]["state"], "declared")
 
+    def _fourth_kan_checkpoint(self, rules, *, empty_wall=False, discard=False):
+        events = deepcopy(self.vectors['V246_mixed_four_kans_abort_after_discard']['positive']['trace']['input']['events'][:-1])
+        events[0]['rules'] = rules
+        events[1]['hands'] = [{'count': 13} for _ in range(4)]
+        if rules['kan_dora_timing']['ankan'] == 'after_rinshan_discard':
+            for i, event in enumerate(events.copy()):
+                if event['type'] == 'dora':
+                    events[i:i + 2] = [events[i + 1], event]
+        state = EventState(rules)
+        for event in events[:2]:
+            state.apply(event)
+        if empty_wall:
+            deck = [str(n) + suit for suit in 'mps' for n in range(1, 10)
+                    for _ in range(3 if n == 5 else 4)] + ['5mr', '5pr', '5sr']
+            deck += [tile for tile in 'ESWNPFC' for _ in range(4)]
+            for tile in [t for t in 'ESWC' for _ in range(4)] + ['9p', '8p', '7p', '6p', '5p', '9s', '9m', '8m']:
+                deck.remove(tile)
+            # 63 earlier normal draws plus the witness's three normal draws
+            # and four kan replacements consume exactly 70 live tiles.
+            for i, tile in enumerate(deck[:63]):
+                state.apply(dict(type='tsumo', actor=i % 4, pai=None))
+                state.apply(dict(type='dahai', actor=i % 4, pai=tile, tsumogiri=True))
+        stop = len(events) if discard else max(i for i, e in enumerate(events) if e['type'] == 'tsumo') + 1
+        for event in events[2:stop]:
+            if 'actor' in event and empty_wall:
+                event['actor'] = (event['actor'] + 3) % 4
+            if event['type'] == 'tsumo':
+                event['pai'] = None
+            state.apply(event)
+        return state
+
+    def test_fourth_kan_snapshots_preserve_forced_rinshan_turn(self):
+        for timing in ('before_rinshan', 'after_rinshan_discard'):
+            rules = deepcopy(self.rules)
+            rules['kan_dora_timing']['ankan'] = timing
+            for empty_wall in (False, True):
+                for discard in (False, True):
+                    state = self._fourth_kan_checkpoint(rules, empty_wall=empty_wall, discard=discard)
+                    for resolving in (False, True):
+                        with self.subTest(timing=timing, empty_wall=empty_wall, discard=discard, resolving=resolving):
+                            snapshot = self._public_snapshot(state)
+                            if resolving:
+                                snapshot['state']['kyoku']['turn']['phase'] = 'resolving'
+                            self._restore_public_snapshot(snapshot, rules)
+                            bad = deepcopy(snapshot)
+                            kyoku = bad['state']['kyoku']
+                            if discard:
+                                kyoku['haitei'] = True
+                            else:
+                                kyoku['rinshan'] = False
+                            with self.assertRaisesRegex(GameError, 'fourth-kan terminal'):
+                                EventState(rules).restore(bad['state'])
+                            receiver = self._observer_receiver(rules=rules, initial_snapshot=True)
+                            self._assert_receiver_rejects_atomically(
+                                receiver, bad, 'fourth-kan terminal|last-tile flag|deferred dora marker')
+                            if discard:
+                                # An otherwise consistent river projection
+                                # cannot transfer the terminal turn to a seat
+                                # that never made a kan.
+                                bad = deepcopy(snapshot)
+                                kyoku = bad['state']['kyoku']
+                                actor = kyoku['turn']['actor']
+                                other = next(a for a, n in enumerate(kyoku['kan_counts']) if n == 0)
+                                kyoku['rivers'][other].append(kyoku['rivers'][actor].pop())
+                                kyoku['turn']['actor'] = kyoku['turn']['last_event']['actor'] = other
+                                receiver = self._observer_receiver(rules=rules, initial_snapshot=True)
+                                self._assert_receiver_rejects_atomically(receiver, bad, 'no preceding kan|last-tile flag')
+
+    def test_fourth_kan_snapshot_guard_preserves_normal_draw_exceptions(self):
+        rules = deepcopy(self.rules)
+        rules['abortive_draws'].remove('suukan_sanra')
+        state = self._fourth_kan_checkpoint(rules, discard=True)
+        state.apply(dict(type='tsumo', actor=3, pai=None))
+        self.assertFalse(state.round['rinshan'])
+        self._restore_public_snapshot(self._public_snapshot(state), rules)
+
+        state = EventState(self.rules)
+        state.apply(dict(type='start_game', rules=self.rules, scores=[25000] * 4))
+        state.apply(dict(type='start_kyoku', bakaze='E', kyoku=1, oya=0, honba=0, kyotaku=0,
+                         extension_round=0, scores=[25000] * 4, dora_marker='1m',
+                         hands=[{'tiles': [t for t in 'ESWN' for _ in range(3)] + ['P']},
+                                *[{'count': 13} for _ in range(3)]]))
+        for tile, marker in zip('ESWN', ('2m', '3m', '4m', '5m')):
+            state.apply(dict(type='tsumo', actor=0, pai=tile))
+            state.apply(dict(type='ankan_declared', actor=0, consumed=[tile] * 4))
+            state.apply(dict(type='ankan', actor=0, consumed=[tile] * 4))
+            state.apply(dict(type='dora', dora_marker=marker))
+        state.apply(dict(type='tsumo', actor=0, pai='P'))
+        state.apply(dict(type='dahai', actor=0, pai='P', tsumogiri=True))
+        state.apply(dict(type='tsumo', actor=1, pai=None))
+        self.assertFalse(state.round['rinshan'])
+        self._restore_public_snapshot(self._public_snapshot(state), self.rules)
+
     def test_failed_restore_leaves_state_untouched(self):
         source = self._dealt()
         source.apply({"type":"tsumo","actor":0,"pai":None})

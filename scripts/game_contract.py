@@ -80,6 +80,14 @@ def check_snapshot_rinshan(kyoku: dict, rules: dict | None = None) -> None:
     possible_kans = {m["type"] for i, m in enumerate(melds)
                      if m["type"] == "kakan" or i == len(melds) - 1 and m["type"] in {"ankan", "daiminkan"}}
     rinshan_decision = turn["last_event"]["type"] == "tsumo" and turn["phase"] in {"awaiting_action", "resolving"}
+    if rules is not None and fourth_kan_aborts(kyoku["kan_counts"], rules):
+        # The fourth replacement draw and its discard are the only remaining
+        # decision windows. A normal draw or another actor's discard would
+        # have crossed the mandatory abortive ending.
+        require(possible_kans, "fourth-kan terminal turn has no preceding kan")
+        require(not rinshan_decision or kyoku["rinshan"],
+                "fourth-kan terminal draw is missing its rinshan flag")
+        require(not kyoku["haitei"], "fourth-kan terminal turn is not a last-live-tile turn")
     pending = kyoku["pending_dora"]
     require(pending is None or (pending["timing"] == "after_rinshan_discard" and rinshan_decision),
             "deferred dora marker survives outside the rinshan decision")

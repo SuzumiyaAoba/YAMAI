@@ -405,6 +405,15 @@ def _context(data: dict[str, Any], state: dict[str, Any], fixed: tuple[Meld, ...
     # draw, or relabel the sole normal draw as a later, ordinary win.
     normal_draws = 70 - state["wall_remaining"] - sum(state["kan_counts"])
     require(normal_draws >= 1, "invalid_context", "win precedes the first normal draw")
+    fourth_abort = (sum(state["kan_counts"]) == 4 and max(state["kan_counts"]) < 4
+                    and "suukan_sanra" in rules["abortive_draws"])
+    if fourth_abort:
+        # The fourth rinshan turn ends the round after its discard. There
+        # cannot have been a later normal draw, even in an empty projection.
+        require(not state["last_tile"], "invalid_context",
+                "fourth-kan abortive turn cannot qualify as the last live tile")
+        require(state["rinshan"] if data["win_method"] == "tsumo" else state["kan_counts"][target] > 0,
+                "invalid_context", "fourth-kan abortive win does not follow its rinshan turn")
     if data["win_method"] == "tsumo" and not state["rinshan"] and normal_draws == 1:
         require(not any(state["kan_counts"]) and actor == state["oya"] and state["first_turn"],
                 "invalid_context", "first normal draw must be the dealer's first turn")
