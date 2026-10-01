@@ -148,3 +148,17 @@ private actionの候補検査は、名前付き引数・配列順・入れ子obj
 ## Fatal終了seatの継続
 
 §8.1.2のDETACHEDは新しいwire messageではなく、host内部のseat制御状態である。request_contractとdetached_contractの回帰は、閉鎖前の選択保存、元deadlineでのdefault、以後の単独/全3member判断、通常のbank消費、閉鎖sessionのwire停止と再開/途中交代の拒否を検査する。通常の通信断はDETACHEDにせず再配送履歴を保持する。閉鎖sessionの資源予算を内部game進行へ再利用しないが、game全体の資源枯渇やhost停止を解決するものではない。
+
+## 復旧・局結果の対照回帰
+
+resumeのcaptureでは、元のrequest発行・選択と、同じledgerを再配送した時刻を区別する。過去のaccepted/defaulted ACKや診断を再送するために、新しい接続で元のactionを再入力してはならない。OPEN requestへ再開後に入力する場合も元の時計を使い、再配送でG/T/Bを付与し直さない。交渉順序とreplay範囲の完了前に送られたactionも別途検査する。
+
+再開後の新しい入力・終端処理の時計を照合するcaptureでは、ホストが保持した元の状態を `context.resume_state.request_states` に記録する。request IDをキーとし、値は元の `issued_at_ms` と `selection`（OPENならnull、固定済みなら `action_id`・`source`・`elapsed_ms`・`time_bank_ms`）を持つ。sourceはuserまたはdefaultであり、wireへ追加するmemberではない。この注釈を使用する場合、元の発行時刻、resume checkpointの `context.now_ms` とcaptureの `at_ms` は同じ単調時計を使い、checkpointはjoinとwelcomeの間に置く。
+
+過去のledgerを再送するだけなら、この元入力の注釈は不要である。過去のOPEN snapshotがcheckpoint時点の固定済み選択より前である場合も、元の履歴をそのまま検査する。新しいsnapshotについてはcheckpoint以後・capture以前という範囲を照合し、配送時刻そのものをsnapshot固定時刻と推測しない。元時計を必要とする新しい処理に十分な証拠がないcaptureは不合格とし、再配送を新しい発行として補わない。これは検査用captureの条件であり、注釈がないことだけを理由にwireの相手へerrorを送る要件ではない。
+
+group descriptorはseatとrequest IDの対応を保持し、配列順だけの変更を別groupやrequestの変更と判定しない。lifecycle fixture内のrequest payloadにも、wireのrequest Schemaと同じ型・数値範囲・member制約を適用する。意味検査だけの通過や、期待値が同じ計算実装に従うことを、構造検査の代わりにしない。
+
+数値は有限なJSON値を保存し、指数がPythonのDecimalの範囲を超える場合も、係数と指数を入力長に比例する表現で保持して比較する。指数に比例する整数や0列は展開しない。0の巨大指数表記、有限小数、数値同値性、大小比較、multipleOfとmessage上限の対照回帰を含む。この表現は検査用の比較・整除判定に限定し、任意精度の一般的な算術エンジンとしては扱わない。
+
+局結果の回帰では、最終通常自摸のsnapshotが海底資格を保持すること、同じリーチ宣言打牌へのpenaltyで供託を控除しないこと、全手牌が可視の国士無双に必要な13種が揃うことを検査する。最終嶺上、リーチ成立後の次手番のpenalty、非公開手牌が残るviewは合法な対照例として区別する。これらは観測可能な必要条件の検査であり、受信者による非公開手牌の復元を要求しない。

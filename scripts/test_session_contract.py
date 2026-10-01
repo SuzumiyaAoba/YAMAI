@@ -2429,5 +2429,473 @@ class LedgerLifecycleBindingTests(_LedgerTraceFixture):
             self.check_ledger(trace)
 
 
+class LedgerResumeCaptureTests(_LedgerTraceFixture):
+    def live_trace(self, default=False):
+        name = 'V263_session_timeout_keeps_original_deadline' if default else 'V261_session_immutable_wire_ledger'
+        return deepcopy(self.vectors[name]['positive']['trace'])
+
+    def resume_trace(self, source=None, *, through=8, offset=100000, keep_actions=False, compact=True):
+        trace = deepcopy(source) if source is not None else self.live_trace()
+        old = deepcopy(trace['messages'][2]['message'])
+        join, welcome = trace['messages'][1]['message'], trace['messages'][2]['message']
+        join.pop('seat', None)
+        join.pop('room', None)
+        join['resume'] = {'token': old['resume']['token'], 'last_seq': 0}
+        welcome.update(resumed=True, replay_from_seq=1, replay_through_seq=through)
+        welcome['resume']['token'] = 'rt_BBBBBBBBBBBBBBBBBBBBBB'
+        ended = next((s for s in trace['messages'] if s['message'].get('event', {}).get('type') == 'end_game'), None)
+        if ended is not None and ended['message']['seq'] <= through:
+            welcome['scores'] = deepcopy(ended['message']['event']['scores'])
+        trace['context'] = {'now_ms': offset + 2, 'secure_transport': True, 'resume_state': {
+            'token': old['resume']['token'], 'expires_at_ms': 600000,
+            'highest_seq': through, 'welcome': old, 'scores': deepcopy(welcome['scores'])}}
+        if not keep_actions:
+            trace['messages'] = [s for s in trace['messages'] if s['message']['kind'] != 'action']
+        for index, step in enumerate(trace['messages']):
+            step['at_ms'] = offset + (index if compact else step['at_ms'])
+        return trace
+
+    @staticmethod
+    def retain(trace, selection=None, issued_at_ms=7):
+        trace['context']['resume_state']['request_states'] = {
+            'r1': {'issued_at_ms': issued_at_ms, 'selection': deepcopy(selection)}}
+
+    @staticmethod
+    def selected(elapsed=812, source='user', action_id='a1'):
+        return {'action_id': action_id, 'source': source, 'elapsed_ms': elapsed,
+                'time_bank_ms': 15000 - min(max(0, elapsed - 6000), 15000)}
+
+    def original_clock_trace(self):
+        trace = self.resume_trace(through=4, offset=10000, keep_actions=True, compact=False)
+        self.retain(trace)
+        next(s['message'] for s in trace['messages'] if s['message']['kind'] == 'ack').update(
+            elapsed_ms=10812, time_bank_ms=10188)
+        return trace
+
+    def test_historical_accepted_and_defaulted_ack_replay_needs_no_new_input(self):
+        for default in (False, True):
+            with self.subTest(default=default):
+                original = self.live_trace(default)
+                self.check_ledger(original)
+                trace = self.resume_trace(original)
+                self.check_ledger(trace)
+                self.assertEqual(trace['ledger'], original['ledger'])
+                replay = deepcopy(next(s for s in trace['messages'] if s['message']['kind'] == 'ack'))
+                replay['at_ms'] = trace['messages'][-1]['at_ms']
+                trace['messages'].append(replay)
+                self.check_ledger(trace)
+
+    def test_resumed_open_request_preserves_original_elapsed_and_bank(self):
+        trace = self.original_clock_trace()
+        self.check_ledger(trace)
+        # This exact formerly accepted counterexample reset issuance to the
+        # request's delivery at 10007 instead of its original issue at 7.
+        next(s['message'] for s in trace['messages'] if s['message']['kind'] == 'ack').update(
+            elapsed_ms=812, time_bank_ms=15000)
+        with self.assertRaisesRegex(v.ArtifactError, 'elapsed time differs'):
+            self.check_ledger(trace)
+
+    def test_resumed_open_input_requires_original_state_even_with_group_start(self):
+        for original_hint in (False, True):
+            with self.subTest(original_hint=original_hint):
+                trace = self.original_clock_trace()
+                del trace['context']['resume_state']['request_states']
+                if original_hint:
+                    next(s for s in trace['messages'] if s['message']['kind'] == 'request')['group_start'] = 7
+                with self.assertRaisesRegex(v.ArtifactError, 'lacks original request state'):
+                    self.check_ledger(trace)
+
+    def test_action_waits_for_entire_replay_frontier(self):
+        for unknown in (False, True):
+            with self.subTest(unknown=unknown):
+                trace = self.resume_trace(keep_actions=True)
+                if unknown:
+                    next(s['message'] for s in trace['messages'] if s['message']['kind'] == 'action')['request_id'] = 'unknown'
+                with self.assertRaisesRegex(v.ArtifactError, 'completion of resume replay'):
+                    self.check_ledger(trace)
+        self.check_ledger(self.original_clock_trace())  # seq=4 has now applied.
+
+    def test_request_newly_issued_after_replay_uses_its_new_clock(self):
+        trace = self.resume_trace(through=3, offset=10000, keep_actions=True, compact=False)
+        self.check_ledger(trace)
+        # A duplicate request delivery on the new connection also cannot reset
+        # its clock or regrant G/T/B.
+        repeat = deepcopy(trace['messages'][6])
+        repeat['at_ms'] += 100
+        trace['messages'].insert(7, repeat)
+        self.check_ledger(trace)
+
+    def test_original_timeout_is_not_delayed_by_redelivery(self):
+        trace = self.resume_trace(self.live_trace(default=True), through=4, offset=10000, compact=False)
+        self.retain(trace)
+        for step in trace['messages']:
+            if step['message'].get('seq', 0) >= 5:
+                step['at_ms'] -= 10000
+        self.check_ledger(trace)  # Original deadline remains 21007.
+        trace['messages'][7]['at_ms'] -= 1
+        with self.assertRaisesRegex(v.ArtifactError, 'original deadline'):
+            self.check_ledger(trace)
+        del trace['context']['resume_state']['request_states']
+        with self.assertRaisesRegex(v.ArtifactError, 'lacks original request state'):
+            self.check_ledger(trace)
+
+    def test_fixed_pre_disconnect_selection_survives_delayed_ack_and_retry(self):
+        for retry in (False, True):
+            with self.subTest(retry=retry):
+                trace = self.resume_trace(through=4, offset=10000, keep_actions=retry, compact=False)
+                self.retain(trace, self.selected())
+                self.check_ledger(trace)
+                ack = next(s['message'] for s in trace['messages'] if s['message']['kind'] == 'ack')
+                ack.update(elapsed_ms=10812, time_bank_ms=10188)
+                with self.assertRaisesRegex(v.ArtifactError, 'elapsed time differs'):
+                    self.check_ledger(trace)
+
+    def test_retained_metadata_is_strict_and_matches_historical_ack(self):
+        changes = ({'issued_at_ms': True}, {'issued_at_ms': -1}, {'issued_at_ms': 100003},
+                   {'issued_at_ms': 0.5}, {'selection': {}}, {'selection': []},
+                   {'selection': self.selected(action_id='never-issued')},
+                   {'selection': self.selected(source='cancelled')},
+                   {'selection': dict(self.selected(), source=[])},
+                   {'selection': dict(self.selected(), elapsed_ms=True)},
+                   {'selection': dict(self.selected(), time_bank_ms=15001)},
+                   {'selection': self.selected(elapsed=813)}, {'selection': None})
+        for change in changes:
+            with self.subTest(change=change):
+                trace = self.resume_trace()
+                self.retain(trace, self.selected())
+                trace['context']['resume_state']['request_states']['r1'].update(change)
+                with self.assertRaises(v.ArtifactError):
+                    self.check_ledger(trace)
+        trace = self.resume_trace()
+        self.retain(trace, self.selected())
+        self.check_ledger(trace)
+
+    def test_retained_state_requires_same_clock_axis_and_known_request(self):
+        for checkpoint in (0, 100003, True, 100001.5):
+            with self.subTest(checkpoint=checkpoint):
+                trace = self.resume_trace()
+                self.retain(trace, self.selected())
+                trace['context']['now_ms'] = checkpoint
+                with self.assertRaises(v.ArtifactError):
+                    self.check_ledger(trace)
+        trace = self.resume_trace()
+        self.retain(trace, self.selected())
+        trace['context']['resume_state']['request_states']['unknown'] = trace['context']['resume_state']['request_states'].pop('r1')
+        with self.assertRaisesRegex(v.ArtifactError, 'no restored request'):
+            self.check_ledger(trace)
+
+    def test_fatal_during_replay_does_not_require_retained_request_redelivery(self):
+        trace = self.original_clock_trace()
+        trace['messages'] = trace['messages'][:4]
+        message = {k: trace['messages'][2]['message'][k] for k in ('yamai', 'session_id', 'game_id')}
+        message.update(kind='error', severity='fatal', code='invalid_message', message='Stop this session')
+        trace['messages'].append({'at_ms': 10005, 'direction': 'in', 'client_id': 'peer', 'message': message})
+        self.check_ledger(trace)
+        # Fatal closure suppresses future replay, not metadata validation.
+        trace['context']['resume_state']['request_states']['r1']['issued_at_ms'] = True
+        with self.assertRaisesRegex(v.ArtifactError, 'starts after resume checkpoint'):
+            self.check_ledger(trace)
+
+    def test_historical_open_snapshot_can_precede_latest_fixed_selection(self):
+        original = self.live_trace()
+        snapshot = deepcopy(self.vectors['V18_snapshot_state']['positive'])
+        # V18's OPEN observation was made 3000ms after issuance. The later
+        # original selection is fixed at 4000ms before this new connection.
+        row = {'at_ms': 3007, 'direction': 'out', 'client_id': 'peer',
+               'transaction_id': 'old_snapshot', 'operation_id': 'old_snapshot', 'message': snapshot}
+        original['messages'].insert(7, row)
+        for step in original['messages'][8:]:
+            step['at_ms'] += 4000
+            if 'seq' in step['message']:
+                step['message']['seq'] += 1
+            if step['message']['kind'] == 'ack':
+                step['message']['elapsed_ms'] = 4000
+        trace = self.resume_trace(original, through=9)
+        self.retain(trace, self.selected(elapsed=4000))
+        self.check_ledger(trace)
+        # The historical ACK cannot disagree with the same retained selection.
+        trace['context']['resume_state']['request_states']['r1']['selection']['elapsed_ms'] = 4001
+        with self.assertRaisesRegex(v.ArtifactError, 'historical ACK differs'):
+            self.check_ledger(trace)
+
+    def test_historical_group_lifecycle_keeps_original_inputs_off_new_connection(self):
+        source = deepcopy(self.vectors['V267_session_three_member_group_is_atomic']['positive']['trace'])
+        through = max(s['message'].get('seq', 0) for s in source['messages'])
+        trace = self.resume_trace(source, through=through)
+        self.check_ledger(trace)
+        # The same immutable bytes remain constrained by the supplied complete
+        # lifecycle, even though old player actions are not replayed.
+        trace['request_lifecycles'][0]['steps'][0]['action_id'] = 'n'
+        trace['request_lifecycles'][0]['expected'] = v.evaluate_request_contract(trace['request_lifecycles'][0])[-1]
+        with self.assertRaises(v.ArtifactError):
+            self.check_ledger(trace)
+
+    def test_historical_optional_diagnostic_ids_do_not_waive_new_obligations(self):
+        helper = LedgerLifecycleBindingTests()
+        helper.vectors = self.vectors
+        for lifecycle in (False, True):
+            for omitted in ((), ('request_id',), ('action_id',), ('request_id', 'action_id')):
+                with self.subTest(lifecycle=lifecycle, omitted=omitted):
+                    original = helper.rejected_group()
+                    if not lifecycle:
+                        original.pop('request_lifecycles')
+                    error = next(s for s in original['messages'] if s['message']['kind'] == 'error')
+                    for key in omitted:
+                        error['message'].pop(key)
+                    through = max(s['message'].get('seq', 0) for s in original['messages'])
+                    trace = self.resume_trace(original, through=through)
+                    self.check_ledger(trace)
+                    unsolicited = deepcopy(error)
+                    unsolicited.update(at_ms=trace['messages'][-1]['at_ms'], transaction_id='new_error', operation_id='new_error')
+                    unsolicited['message']['seq'] = through + 1
+                    trace['messages'].append(unsolicited)
+                    with self.assertRaisesRegex(v.ArtifactError, 'diagnostic count'):
+                        self.check_ledger(trace)
+
+    def insert_live_snapshot(self, trace, snapshot, at_ms):
+        trace['messages'].insert(7, {'at_ms': at_ms, 'direction': 'out', 'client_id': 'peer',
+                                   'transaction_id': 'current_snapshot', 'operation_id': 'current_snapshot',
+                                   'message': snapshot})
+        for step in trace['messages'][8:]:
+            if 'seq' in step['message']:
+                step['message']['seq'] += 1
+
+    def test_new_open_snapshot_clock_is_bounded_by_checkpoint_and_capture(self):
+        # 10999 is current; 11005 was fixed at the checkpoint then queued.
+        for remaining, valid in ((10999, True), (11005, True), (18000, False), (10998, False)):
+            with self.subTest(remaining=remaining):
+                trace = self.original_clock_trace()
+                snapshot = deepcopy(self.vectors['V18_snapshot_state']['positive'])
+                snapshot['state']['pending_requests'][0]['remaining_ms'] = remaining
+                self.insert_live_snapshot(trace, snapshot, 10008)
+                if valid:
+                    self.check_ledger(trace)
+                else:
+                    with self.assertRaisesRegex(v.ArtifactError, 'snapshot OPEN clock'):
+                        self.check_ledger(trace)
+
+    def test_new_snapshot_cannot_select_a_future_timeout_or_charge_bank_early(self):
+        for snapshot_at, valid in ((10008, False), (21008, True)):
+            with self.subTest(snapshot_at=snapshot_at):
+                trace = self.original_clock_trace()
+                trace['messages'] = [s for s in trace['messages'] if s['message']['kind'] != 'action']
+                snapshot = deepcopy(self.vectors['V18_snapshot_state']['positive'])
+                snapshot['state']['pending_requests'][0].update(
+                    remaining_ms=0, selection=self.selected(elapsed=21000, source='default'))
+                snapshot['state']['time_bank_ms'] = snapshot['state']['kyoku']['self_state']['time_bank_ms'] = 0
+                self.insert_live_snapshot(trace, snapshot, snapshot_at)
+                for index, step in enumerate(trace['messages'][8:]):
+                    step['at_ms'] = snapshot_at + 1 + index
+                    if step['message']['kind'] == 'ack':
+                        step['message'].update(status='defaulted', elapsed_ms=21000, time_bank_ms=0)
+                if valid:
+                    self.check_ledger(trace)
+                else:
+                    with self.assertRaisesRegex(v.ArtifactError, 'selection occurs after its captured clock'):
+                        self.check_ledger(trace)
+
+    def test_new_snapshot_selection_requires_post_resume_input(self):
+        for captured in (False, True):
+            with self.subTest(captured=captured):
+                trace = self.original_clock_trace()
+                selected = self.selected(elapsed=10000)
+                if captured:
+                    trace['messages'][7]['at_ms'] = 10007
+                else:
+                    trace['messages'] = [s for s in trace['messages'] if s['message']['kind'] != 'action']
+                snapshot = deepcopy(self.vectors['V18_snapshot_state']['positive'])
+                snapshot['state']['pending_requests'][0].update(remaining_ms=0, selection=selected)
+                snapshot['state']['time_bank_ms'] = snapshot['state']['kyoku']['self_state']['time_bank_ms'] = selected['time_bank_ms']
+                position = 8 if captured else 7
+                trace['messages'].insert(position, {'at_ms': 10008, 'direction': 'out', 'client_id': 'peer',
+                                                   'transaction_id': 'current_snapshot', 'operation_id': 'current_snapshot',
+                                                   'message': snapshot})
+                for step in trace['messages'][position + 1:]:
+                    step['message']['seq'] += 1
+                    if step['message']['kind'] == 'ack':
+                        step['message'].update(elapsed_ms=10000, time_bank_ms=selected['time_bank_ms'])
+                if captured:
+                    self.check_ledger(trace)
+                else:
+                    with self.assertRaisesRegex(v.ArtifactError, 'no captured input'):
+                        self.check_ledger(trace)
+
+    def test_new_snapshot_cannot_supply_its_own_missing_original_state(self):
+        trace = self.original_clock_trace()
+        del trace['context']['resume_state']['request_states']
+        trace['messages'] = [s for s in trace['messages'] if s['message']['kind'] != 'action']
+        snapshot = deepcopy(self.vectors['V18_snapshot_state']['positive'])
+        snapshot['state']['pending_requests'][0].update(remaining_ms=0, selection=self.selected())
+        self.insert_live_snapshot(trace, snapshot, 10008)
+        next(s['message'] for s in trace['messages'] if s['message']['kind'] == 'ack').update(
+            elapsed_ms=812, time_bank_ms=15000)
+        with self.assertRaisesRegex(v.ArtifactError, 'new snapshot selection lacks original request state'):
+            self.check_ledger(trace)
+        # The identical selected snapshot in the immutable replay prefix is
+        # legitimate historical evidence, without a new action on this link.
+        trace['context']['resume_state']['highest_seq'] = 5
+        trace['messages'][2]['message']['replay_through_seq'] = 5
+        self.check_ledger(trace)
+
+    def test_retained_snapshot_request_must_exist_before_resume_frontier(self):
+        trace = self.original_clock_trace()
+        trace['messages'][2]['message']['replay_through_seq'] = 2
+        trace['context']['resume_state']['highest_seq'] = 2
+        snapshot = deepcopy(self.vectors['V18_snapshot_state']['positive'])
+        snapshot['state']['pending_requests'][0]['remaining_ms'] = 10999
+        # Its cause is seq=3, which does not yet exist at frontier=2; request
+        # issuance therefore cannot be retained at that older checkpoint.
+        trace['messages'][5:7] = [{'at_ms': 10008, 'direction': 'out', 'client_id': 'peer',
+                                  'transaction_id': 'replacement', 'operation_id': 'replacement',
+                                  'message': snapshot}]
+        for step in trace['messages'][6:]:
+            if 'seq' in step['message']:
+                step['message']['seq'] += 1
+        with self.assertRaisesRegex(v.ArtifactError, 'did not exist at the resume frontier'):
+            self.check_ledger(trace)
+
+    def test_partial_resume_lifecycle_binds_only_new_ingress_suffix(self):
+        for selected in (False, True):
+            with self.subTest(selected=selected):
+                trace = self.original_clock_trace()
+                if selected:
+                    self.retain(trace, self.selected())
+                    next(s['message'] for s in trace['messages'] if s['message']['kind'] == 'ack').update(
+                        elapsed_ms=812, time_bank_ms=15000)
+                request = {k: value for k, value in trace['messages'][6]['message'].items()
+                           if k not in ('yamai', 'kind', 'session_id', 'game_id', 'seq')}
+                rules = trace['messages'][2]['message']['rules']
+                steps = ([{'op': 'submit', 'at_us': 812000, 'request_id': 'r1', 'action_id': 'a1'}] if selected else [])
+                steps += [{'op': 'submit', 'at_us': 10812000, 'request_id': 'r1', 'action_id': 'a1'},
+                          {'op': 'resolve', 'at_us': 10812000}]
+                lifecycle = {'trace_type': 'request_lifecycle', 'grace_ms': rules['time_control']['grace_ms'],
+                             'invalid_action_policy': rules['invalid_action_policy'], 'ron_policy': rules['ron_policy'],
+                             'requests': [request], 'steps': steps}
+                lifecycle['expected'] = v.evaluate_request_contract(lifecycle)[-1]
+                trace['request_lifecycles'] = [lifecycle]
+                self.check_ledger(trace)
+                trace['messages'] = [s for s in trace['messages'] if s['message']['kind'] != 'action']
+                with self.assertRaises(v.ArtifactError):
+                    self.check_ledger(trace)
+
+    def test_new_live_acks_still_require_captured_user_or_original_timeout(self):
+        trace = self.live_trace()
+        trace['messages'] = [s for s in trace['messages'] if s['message']['kind'] != 'action']
+        with self.assertRaisesRegex(v.ArtifactError, 'no user choice was captured'):
+            self.check_ledger(trace)
+        trace = self.live_trace(default=True)
+        trace['messages'][7]['at_ms'] -= 1
+        with self.assertRaisesRegex(v.ArtifactError, 'original deadline'):
+            self.check_ledger(trace)
+
+    def test_retained_group_selection_binds_new_ack_without_lifecycle(self):
+        source = deepcopy(self.vectors['V267_session_three_member_group_is_atomic']['positive']['trace'])
+        source.pop('request_lifecycles')
+        for change in ({}, {'elapsed_ms': 0}, {'action_id': 'n'}, {'source': 'default'}, {'time_bank_ms': 0}):
+            with self.subTest(change=change):
+                trace = self.resume_trace(source, through=5, offset=10000, compact=False)
+                selected = {'action_id': 'h', 'source': 'user', 'elapsed_ms': 1, 'time_bank_ms': 1}
+                selected.update(change)
+                self.retain(trace, selected)
+                if change:
+                    with self.assertRaises(v.ArtifactError):
+                        self.check_ledger(trace)
+                else:
+                    self.check_ledger(trace)
+
+    def test_retained_open_group_new_ack_needs_own_input_or_original_timeout(self):
+        for captured, default, valid in ((True, False, True), (False, False, False), (False, True, True)):
+            with self.subTest(captured=captured, default=default):
+                original = deepcopy(self.vectors['V267_session_three_member_group_is_atomic']['positive']['trace'])
+                original.pop('request_lifecycles')
+                original['allow_open_requests'] = True
+                original['messages'] = [s for s in original['messages'] if s['message'].get('seq', 0) <= 6]
+                trace = self.resume_trace(original, through=5, offset=5, keep_actions=captured)
+                self.retain(trace)
+                for step in trace['messages'][3:]:
+                    message = step['message']
+                    step['at_ms'] = 8 if message['kind'] == 'action' else 9 if message['kind'] == 'ack' else 7
+                    if default and message['kind'] == 'ack':
+                        step['at_ms'] = 10
+                        message.update(status='defaulted', action_id='n', elapsed_ms=3, time_bank_ms=0)
+                if valid:
+                    self.check_ledger(trace)
+                else:
+                    with self.assertRaisesRegex(v.ArtifactError, 'new ACK has no captured input'):
+                        self.check_ledger(trace)
+
+    def test_retained_group_user_or_default_selection_survives_other_seat_chombo(self):
+        for source, action_id, elapsed, bank in (('user', 'h', 1, 1), ('default', 'n', 3, 0)):
+            with self.subTest(source=source):
+                original = deepcopy(self.vectors['V267_session_three_member_group_is_atomic']['positive']['trace'])
+                original.pop('request_lifecycles')
+                original['allow_open_requests'] = True  # Valid prefix before the penalty result.
+                original['messages'] = [s for s in original['messages'] if s['message'].get('seq', 0) <= 6]
+                for step in original['messages']:
+                    message = step['message']
+                    if message['kind'] == 'welcome':
+                        message['rules']['invalid_action_policy'] = 'chombo'
+                    elif message.get('event', {}).get('type') == 'start_game':
+                        message['event']['rules']['invalid_action_policy'] = 'chombo'
+                    elif message['kind'] == 'ack':
+                        message.update(status='stale', action_id=action_id, elapsed_ms=elapsed, time_bank_ms=bank)
+                # The peer may be selected while other members still wait;
+                # their longer common deadline has not expired at checkpoint.
+                next(s['message'] for s in original['messages'] if s['message']['kind'] == 'request')['decision_group_deadline_ms'] = 5
+                trace = self.resume_trace(original, through=5, offset=8)
+                self.retain(trace, {'action_id': action_id, 'source': source, 'elapsed_ms': elapsed, 'time_bank_ms': bank})
+                self.check_ledger(trace)
+                next(s['message'] for s in trace['messages'] if s['message']['kind'] == 'ack')['elapsed_ms'] -= 1
+                with self.assertRaises(v.ArtifactError):
+                    self.check_ledger(trace)
+
+    def cancellation_trace(self):
+        receiver = deepcopy(self.vectors['V338_cancellation_requires_penalty_result']['positive']['trace'])
+        trace = self.live_trace()
+        trace['messages'] = trace['messages'][:3]
+        trace['messages'][2]['message'] = receiver['welcome']
+        for step in receiver['steps']:
+            message = step['message']
+            seq = message['seq']
+            trace['messages'].append({'at_ms': seq + 3 if seq < 5 else 820 + seq - 5,
+                                      'direction': 'out', 'client_id': 'peer', 'message': message,
+                                      'transaction_id': 'tx_' + str(seq) if seq < 6 else 'cancel_tx',
+                                      'operation_id': 'op_' + str(seq) if seq < 6 else 'cancel_op'})
+        return trace
+
+    def test_chombo_history_and_new_invalid_input_preserve_original_clock(self):
+        trace = self.resume_trace(self.cancellation_trace(), through=7)
+        self.check_ledger(trace)
+        self.retain(trace, self.selected(source='cancelled'))
+        with self.assertRaisesRegex(v.ArtifactError, 'invalid retained selection'):
+            self.check_ledger(trace)
+
+        original = self.cancellation_trace()
+        invalid = deepcopy(self.live_trace()['messages'][7])
+        invalid['message']['action_id'] = 'bad'
+        original['messages'].insert(7, invalid)
+        trace = self.resume_trace(original, through=4, offset=10000, compact=False, keep_actions=True)
+        self.retain(trace)
+        for step in trace['messages']:
+            if step['message']['kind'] == 'ack':
+                step['message'].update(elapsed_ms=10812, time_bank_ms=10188)
+        self.check_ledger(trace)
+        stale = next(s['message'] for s in trace['messages'] if s['message'].get('status') == 'stale')
+        stale['elapsed_ms'] -= 1
+        with self.assertRaises(v.ArtifactError):
+            self.check_ledger(trace)
+
+    def test_negotiation_hello_and_join_cannot_overwrite_prior_steps(self):
+        self.check_ledger(self.live_trace())
+        for source_index, insertion_index in ((0, 1), (0, 2), (1, 2), (0, 3), (1, 3)):
+            with self.subTest(source=source_index, insertion=insertion_index):
+                trace = self.live_trace()
+                repeated = deepcopy(trace['messages'][source_index])
+                repeated['at_ms'] = trace['messages'][insertion_index]['at_ms']
+                trace['messages'].insert(insertion_index, repeated)
+                with self.assertRaisesRegex(v.ArtifactError, 'unexpected hello|unexpected join'):
+                    self.check_ledger(trace)
+
+
 if __name__ == '__main__':
     unittest.main()

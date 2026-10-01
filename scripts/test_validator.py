@@ -2,11 +2,16 @@
 
 import unittest
 import random
+import json
+from contextlib import redirect_stdout
 from copy import deepcopy
-from decimal import Decimal, localcontext
+from decimal import Decimal, InvalidOperation, localcontext
 from fractions import Fraction
+from io import StringIO
+from itertools import permutations
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 import validate_artifacts as v
 
@@ -155,6 +160,110 @@ class ValidatorBoundaries(unittest.TestCase):
                 expected = (Fraction(numerator) / Fraction(divisor)).denominator == 1
                 self.assertEqual(v._is_multiple_of(numerator, divisor), expected,
                                  (numerator, divisor))
+
+    def test_huge_exponent_zero_and_fraction_annotations(self):
+        schema = {'$ref': f'urn:yamai:schema:protocol:{v.PROTOCOL}:action'}
+        schemas = v.SchemaSet()
+        prefix = (b'{"yamai":"1.0-draft.1","kind":"action","session_id":"s",'
+                  b'"game_id":"g","request_id":"r","action_id":"a","x_probe_number":')
+        for exponent in (b'1000000000000000000', b'9' * 5000):
+            for sign in (b'', b'-'):
+                for exponent_sign in (b'', b'+', b'-'):
+                    raw = prefix + sign + b'0.000e' + exponent_sign + exponent + b'}'
+                    with self.subTest(sign=sign, exponent_sign=exponent_sign, digits=len(exponent)):
+                        message = v.strict_load_bytes(raw, max_bytes=1048576)
+                        self.assertIs(type(message['x_probe_number']), int)
+                        self.assertEqual(message['x_probe_number'], 0)
+                        schemas.validate(message, schema)
+                for coefficient in (b'1', b'1.2500', b'9007199254740992'):
+                    raw = prefix + sign + coefficient + b'e-' + exponent + b'}'
+                    message = v.strict_load_bytes(raw, max_bytes=1048576)
+                    value = message['x_probe_number']
+                    self.assertTrue(value < 0 if sign else value > 0)
+                    self.assertTrue(-1 < value < 1)
+                    schemas.validate(message, schema)
+                self.assert_error('invalid_json', v.strict_load_bytes,
+                                  sign + b'1e+' + exponent)
+        # Exactly one MiB of legitimate exponent digits remains bounded by
+        # the normal wire limit; exponent magnitude is never expanded.
+        raw = prefix + b'1e-' + b'9' * (1048576 - len(prefix) - 4) + b'}'
+        self.assertEqual(len(raw), 1048576)
+        value = v.strict_load_bytes(raw, max_bytes=1048576)['x_probe_number']
+        self.assertTrue(0 < value < 1)
+        self.assert_error('resource_limit', v.strict_load_bytes, raw + b' ', max_bytes=1048576)
+
+    def test_extreme_decimal_normalization_and_comparison(self):
+        cases = [
+            ('10e-10000000000000000000', '1e-9999999999999999999'),
+            ('1.25e-10000000000000000000', '125e-10000000000000000002'),
+            ('100e-' + '1' + '0' * 5000, '1e-' + '9' * 4999 + '8'),
+        ]
+        for left, right in cases:
+            for sign in ('', '-'):
+                a, b = (v.strict_load_bytes((sign + raw).encode()) for raw in (left, right))
+                self.assertEqual(a, b)
+                self.assertEqual(v.canonical_action({'x_test_value': a}, private_payload=True),
+                                 v.canonical_action({'x_test_value': b}, private_payload=True))
+                self.assertTrue(v._json_equal(a, b))
+        values = [v.strict_load_bytes(raw.encode()) for raw in (
+            '-1', '-1e-1000', '-2e-10000000000000000000',
+            '-1e-10000000000000000000', '0', '1e-10000000000000000001',
+            '1e-10000000000000000000', '1.01e-10000000000000000000',
+            '2e-10000000000000000000', '1e-1000', '1')]
+        for index, left in enumerate(values):
+            for other, right in enumerate(values):
+                self.assertEqual(left < right, index < other)
+                self.assertEqual(left > right, index > other)
+                self.assertEqual(left == right, index == other)
+        with localcontext() as context:
+            context.prec = 1
+            context.traps[InvalidOperation] = False
+            value = v.strict_load_bytes(b'1.2345e-10000000000000000000')
+            self.assertEqual(value.canonical(), '12345e-10000000000000000004')
+
+    def test_extreme_decimal_schema_comparison_and_divisibility(self):
+        schemas = v.SchemaSet()
+        x = v.strict_load_bytes(b'1.25e-10000000000000000000')
+        equal = v.strict_load_bytes(b'125e-10000000000000000002')
+        smaller = v.strict_load_bytes(b'1.24e-10000000000000000000')
+        larger = v.strict_load_bytes(b'1.26e-10000000000000000000')
+        schemas.validate(x, {'type': 'number', 'minimum': smaller, 'maximum': larger,
+                             'const': equal, 'enum': [equal]})
+        for schema in ({'type': 'integer'}, {'minimum': larger}, {'maximum': smaller},
+                       {'const': smaller}, {'enum': [smaller, larger]}):
+            self.assert_error('invalid_message', schemas.validate, x, schema)
+        self.assert_error('invalid_message', schemas.validate, [x, equal], {'uniqueItems': True})
+        schemas.validate([x, True, 0], {'uniqueItems': True})
+        huge = '1' + '0' * 5000
+        cases = [('1.25e-10000000000000000000', '25e-10000000000000000002', True),
+                 ('1.25e-10000000000000000000', '3e-10000000000000000002', False),
+                 ('1e-10000000000000000000', '1e-10000000000000000001', True),
+                 ('1e-10000000000000000001', '1e-10000000000000000000', False),
+                 ('0.5', '1e-' + huge, True), ('0.5', '3e-' + huge, False),
+                 ('1e-' + huge, '0.5', False), ('0', '1e-' + huge, True)]
+        for raw, divisor, expected in cases:
+            for sign in ('', '-'):
+                value = v.strict_load_bytes((sign + raw).encode())
+                multiple = v.strict_load_bytes(divisor.encode())
+                self.assertEqual(v._is_multiple_of(value, multiple), expected)
+        self.assert_error('hash_error', v.canonical, {'x': x})
+
+    def test_compact_exponent_helpers_match_integer_oracle(self):
+        from exact_decimal import exponent_add_small, exponent_compare, bounded_exponent_difference
+        rng = random.Random(8411)
+        for _ in range(1000):
+            a, b = (rng.randrange(-10**50, 10**50) for _ in range(2))
+            offset = rng.randrange(-10000, 10001)
+            self.assertEqual(exponent_add_small(str(a), offset), str(a + offset))
+            self.assertEqual(exponent_compare(str(a), str(b)), (a > b) - (a < b))
+            bound = rng.randrange(1, 10000)
+            high, low = max(a, b), min(a, b)
+            self.assertEqual(bounded_exponent_difference(str(high), str(low), bound), min(high-low, bound))
+            self.assertEqual(bounded_exponent_difference(str(a + abs(offset)), str(a), bound), min(abs(offset), bound))
+        for exponent in ('9'*5000, '-' + '9'*5000, '1' + '0'*5000, '-1' + '0'*5000):
+            for offset in (-999, -1, 0, 1, 999):
+                changed = exponent_add_small(exponent, offset)
+                self.assertEqual(exponent_add_small(changed, -offset), exponent)
 
     def test_id_schema_matches_the_entire_decoded_string(self):
         schemas = v.SchemaSet()
@@ -359,6 +468,177 @@ class ValidatorBoundaries(unittest.TestCase):
     def test_depth_limit_precedes_decoder_recursion_failure(self):
         self.assert_error('resource_limit', v.strict_load_bytes, b'['*2000+b'0'+b']'*2000)
         self.assertEqual(v.strict_load_bytes(b'{"text":"[\\\"{}]"}'), {'text':'["{}]'})
+
+
+class RequestPayloadBoundaries(unittest.TestCase):
+    assert_error = ValidatorBoundaries.assert_error
+
+    @classmethod
+    def setUpClass(cls):
+        cls.manifest = v.strict_load(v.ROOT / f'test-vectors/protocol/{v.PROTOCOL}/manifest.json')
+        cls.vector_path = (v.ROOT / cls.manifest['vectors']).resolve()
+        cls.vectors = v.strict_load(cls.vector_path)
+
+    def trace(self, key='V38_chombo_cancels_offender'):
+        return deepcopy(self.vectors[key]['positive']['trace'])
+
+    def check_single_vector(self, key, trace, *, negative=False):
+        case = deepcopy(self.vectors[key])
+        case['negative' if negative else 'positive'] = {'trace': trace}
+        manifest = dict(self.manifest, cases=[entry for entry in self.manifest['cases'] if entry['id'] == key])
+        original_load = v.strict_load
+        def load(path):
+            return {key: case} if path.resolve() == self.vector_path else original_load(path)
+        with patch.object(v, 'strict_load', load):
+            return v.check_vectors(v.SchemaSet(), manifest)
+
+    def test_group_descriptor_order_is_not_semantic(self):
+        for order in permutations(range(3)):
+            trace = self.trace()
+            for request in trace['requests']:
+                for member in request['decision_group_members']:
+                    member['x_test_detail'] = {'seat_data': [member['seat'], True], 'label': 'kept'}
+            members = trace['requests'][1]['decision_group_members']
+            trace['requests'][1]['decision_group_members'] = [members[i] for i in order]
+            v.semantic_lifecycle_trace(trace)
+            self.assertEqual(self.check_single_vector('V38_chombo_cancels_offender', trace), 1)
+        for change in ('metadata', 'duplicate', 'identity', 'nested_array'):
+            trace = self.trace()
+            for request in trace['requests']:
+                for member in request['decision_group_members']:
+                    member['x_test_detail'] = [True, 1]
+            members = trace['requests'][1]['decision_group_members']
+            if change == 'metadata':
+                members[0]['x_test_detail'] = [1, 1]
+            elif change == 'duplicate':
+                members[0] = deepcopy(members[1])
+            elif change == 'identity':
+                members[0]['request_id'] = 'other'
+            else:
+                members[0]['x_test_detail'].reverse()
+            self.assert_error('invalid_message', v.semantic_lifecycle_trace, trace)
+
+    def test_snapshot_group_descriptor_order_preserves_all_metadata(self):
+        from session_contract import Receiver, SessionError
+        template = next(case['positive']['trace'] for key, case in self.vectors.items()
+                        if key.endswith('_snapshot_group_remaining_cannot_increase'))
+        for change in ('order', 'metadata', 'duplicate', 'identity', 'nested_array'):
+            trace = deepcopy(template)
+            for step in trace['steps']:
+                for member in step['message']['state']['pending_requests'][0]['decision_group_members']:
+                    member['x_test_detail'] = [True, 1]
+            members = trace['steps'][1]['message']['state']['pending_requests'][0]['decision_group_members']
+            members.reverse()
+            if change == 'metadata':
+                members[0]['x_test_detail'] = [1, 1]
+            elif change == 'duplicate':
+                members[0] = deepcopy(members[1])
+            elif change == 'identity':
+                members[0]['request_id'] = 'other'
+            elif change == 'nested_array':
+                members[0]['x_test_detail'].reverse()
+            receiver = Receiver(trace['welcome'], v.strict_load_bytes,
+                                v._session_schema_validator(v.SchemaSet(), self.manifest['profile_hash']))
+            receiver.receive(json.dumps(trace['steps'][0]['message']).encode())
+            raw = json.dumps(trace['steps'][1]['message']).encode()
+            with self.subTest(change=change):
+                if change == 'order':
+                    self.assertEqual(receiver.receive(raw), 'applied')
+                else:
+                    with self.assertRaises((SessionError, v.ArtifactError)) as caught:
+                        receiver.receive(raw)
+                    self.assertEqual(caught.exception.code, 'invalid_message')
+
+    def test_payload_schema_validates_every_request_field(self):
+        schemas = v.SchemaSet()
+        schema = v.request_payload_schema(schemas)
+        request = self.trace()['requests'][0]
+        schemas.validate(request, schema)
+        for field in request:
+            candidate = deepcopy(request)
+            del candidate[field]
+            self.assert_error('invalid_message', schemas.validate, candidate, schema)
+        mutations = [
+            ('request_id', 'bad id'), ('seat', True), ('seat', 4), ('caused_by_seq', 0),
+            ('caused_by_seq', True), ('timeout_ms', -1), ('timeout_ms', 600001),
+            ('timeout_ms', True), ('time_bank_ms', -1), ('time_bank_ms', 600001),
+            ('time_bank_ms', True), ('decision_group_id', ''),
+            ('decision_group_deadline_ms', -1), ('decision_group_deadline_ms', 1200001),
+            ('decision_group_deadline_ms', True), ('decision_group_close', 'changed'),
+            ('default_action_id', ''), ('legal_actions', []), ('unknown', 1),
+            ('x_bad', 1), ('x_test_note\n', 1), ('yamai', 'wrong'), ('kind', 'ack'),
+            ('session_id', ''), ('game_id', ''), ('seq', False), ('seq', 0),
+        ]
+        for field, value in mutations:
+            with self.subTest(field=field, value=value):
+                self.assert_error('invalid_message', schemas.validate, dict(request, **{field: value}), schema)
+        for location in ('member', 'candidate', 'action'):
+            candidate = deepcopy(request)
+            target = (candidate['decision_group_members'][0] if location == 'member' else
+                      candidate['legal_actions'][0] if location == 'candidate' else
+                      candidate['legal_actions'][0]['action'])
+            target['x_test_note'] = {'values': [True, 1]}
+            schemas.validate(candidate, schema)
+            target['unknown'] = 1
+            self.assert_error('invalid_message', schemas.validate, candidate, schema)
+        supplied_envelope = dict(request, yamai=v.PROTOCOL, kind='request', session_id='s', game_id='g', seq=2)
+        schemas.validate(supplied_envelope, schema)
+        schemas.validate(supplied_envelope, {'$ref': f'urn:yamai:schema:protocol:{v.PROTOCOL}:request'})
+
+    def test_public_request_routes_reject_schema_invalid_payloads(self):
+        from request_contract import evaluate
+        for key in ('V38_chombo_cancels_offender', 'V31_group_grace_zero'):
+            for field, value in (('timeout_ms', -1), ('time_bank_ms', True),
+                                 ('decision_group_deadline_ms', 1200001)):
+                trace = self.trace(key)
+                for request in trace['requests'] if field == 'decision_group_deadline_ms' else trace['requests'][:1]:
+                    request[field] = value
+                if trace['trace_type'] == 'request_lifecycle':
+                    trace['expected'] = evaluate(trace)[-1]
+                    trace.pop('checkpoints', None)
+                with self.subTest(key=key, field=field):
+                    self.assert_error('invalid_message', self.check_single_vector, key, trace)
+                    # The same malformed payload on the negative route must
+                    # genuinely fail, even with its observations recomputed.
+                    self.assertEqual(self.check_single_vector(key, trace, negative=True), 1)
+
+    def test_lifecycle_schema_boundaries_remain_legal(self):
+        from request_contract import evaluate
+        for timeout, bank in ((0, 0), (600000, 0), (0, 600000), (600000, 600000)):
+            trace = self.trace()
+            trace['grace_ms'] = 0
+            for request in trace['requests']:
+                request.update(timeout_ms=timeout, time_bank_ms=bank, decision_group_deadline_ms=timeout + bank)
+            trace['expected'] = evaluate(trace)[-1]
+            trace.pop('checkpoints', None)
+            v.semantic_lifecycle_trace(trace)
+            self.assertEqual(self.check_single_vector('V38_chombo_cancels_offender', trace), 1)
+
+    def test_independent_checker_reaches_fixture_request_payloads(self):
+        try:
+            import check_jsonschema
+            from jsonschema import ValidationError
+        except ImportError:
+            self.skipTest('independent schema check requires optional jsonschema package')
+        original_load = v.strict_load
+        for key in ('V38_chombo_cancels_offender', 'V31_group_grace_zero'):
+            case = deepcopy(self.vectors[key])
+            def load(path):
+                return {key: case} if path.resolve() == self.vector_path else original_load(path)
+            for field, value in (('timeout_ms', -1), ('time_bank_ms', True),
+                                 ('decision_group_deadline_ms', 1200001)):
+                case = deepcopy(self.vectors[key])
+                case['positive']['trace']['requests'][0][field] = value
+                with patch.object(v, 'strict_load', load), redirect_stdout(StringIO()):
+                    with self.assertRaises(ValidationError):
+                        check_jsonschema.main()
+                case = deepcopy(self.vectors[key])
+                case['negative']['trace']['requests'][0][field] = value
+                with patch.object(v, 'strict_load', load), redirect_stdout(StringIO()):
+                    check_jsonschema.main()
+                    case['negative_expect'] = 'invalid_action'
+                    with self.assertRaises(AssertionError):
+                        check_jsonschema.main()
 
 
 if __name__ == '__main__':

@@ -63,6 +63,7 @@
   "validator": {
     "path": "scripts/validate_artifacts.py",
     "support_files": [
+      "scripts/exact_decimal.py",
       "scripts/request_contract.py",
       "scripts/detached_contract.py",
       "scripts/test_detached_contract.py",

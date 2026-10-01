@@ -1,12 +1,14 @@
 """Cross-cutting properties for the complete decision and event contracts."""
 import json
 import unittest
+from collections import Counter
 from copy import deepcopy
 from decimal import Decimal, localcontext
 
 import validate_artifacts as v
 from game_contract import EventState, GameError, canonical_action, check_hora_payments, json_equal, legal_actions, next_kyoku
 from session_contract import Receiver, SessionError
+from scoring_reference import ORPHANS, TILES, ScoringError, inventory, score_hand
 
 
 class GameContractTests(unittest.TestCase):
@@ -439,6 +441,304 @@ class GameContractTests(unittest.TestCase):
         return {"mode":"play","seat":seat,"view":"seat","players":[{"seat":i,"name":n} for i,n in enumerate("ABCD")],
                 "scores":state.scores.copy(),"game_phase":"in_kyoku","kyotaku":0,"next_kyoku":None,
                 "final_rankings":None,"time_bank_ms":15000,"pending_requests":[],"kyoku":kyoku}
+
+    def _observer_receiver(self, *, rules=None, mode='spectate', view='public', initial_snapshot=False):
+        welcome = deepcopy(self.vectors['V79_spectate_requires_snapshot']['positive']['trace']['welcome'])
+        welcome.update(mode=mode, view=view, rules=deepcopy(self.rules if rules is None else rules))
+        return Receiver(welcome, v.strict_load_bytes,
+                        v._session_schema_validator(v.SchemaSet(), welcome['profile_hash']),
+                        initial_snapshot=initial_snapshot)
+
+    @staticmethod
+    def _event_message(receiver, event):
+        message = {key: receiver.welcome[key] for key in ('yamai', 'session_id', 'game_id')}
+        message.update(kind='event', seq=receiver.applied + 1, event=event)
+        if receiver.welcome['mode'] == 'replay':
+            message['original_seq'] = receiver.original_seq + 1
+        return message
+
+    def _send_event(self, receiver, event):
+        self.assertEqual(receiver.receive(json.dumps(self._event_message(receiver, event)).encode()), 'applied')
+
+    def _assert_receiver_rejects_atomically(self, receiver, message, pattern):
+        before_game = deepcopy(vars(receiver.game))
+        before = deepcopy({key: value for key, value in vars(receiver).items()
+                           if key not in {'game', 'closed', 'decode', 'validate'}})
+        with self.assertRaisesRegex(SessionError, pattern) as caught:
+            receiver.receive(json.dumps(message).encode())
+        self.assertEqual(caught.exception.code, 'invalid_message')
+        self.assertEqual(vars(receiver.game), before_game)
+        self.assertEqual({key: value for key, value in vars(receiver).items()
+                          if key not in {'game', 'closed', 'decode', 'validate'}}, before)
+        self.assertTrue(receiver.closed)
+
+    def _public_snapshot(self, state):
+        snapshot = deepcopy(self.vectors['V111_initial_observer_has_no_prior_seq']['positive'])
+        snapshot['state'].update(scores=state.scores.copy(), kyotaku=state.kyotaku,
+                                 kyoku=deepcopy(state.round))
+        kyoku = snapshot['state']['kyoku']
+        kyoku['hands'] = [{'count': len(hand['tiles']) if 'tiles' in hand else hand['count']}
+                          for hand in kyoku['hands']]
+        cause = deepcopy(state.last_cause)
+        if cause['type'] == 'tsumo':
+            cause['pai'] = None
+        kyoku['turn'].update(last_event_seq=None, last_event=cause)
+        return snapshot
+
+    def _restore_public_snapshot(self, snapshot, rules=None):
+        rules = self.rules if rules is None else rules
+        v._check_snapshot(snapshot, rules=rules)
+        EventState(rules).restore(snapshot['state'])
+        receiver = self._observer_receiver(rules=rules, initial_snapshot=True)
+        self.assertEqual(receiver.receive(json.dumps(snapshot).encode()), 'applied')
+        return receiver
+
+    def _physical_tiles(self):
+        tiles = [tile for tile in TILES for _ in range(4)]
+        for suit, count in self.rules['red_fives'].items():
+            for _ in range(count):
+                tiles.remove('5' + suit)
+                tiles.append('5' + suit + 'r')
+        return tiles
+
+    def _final_live_draw_witness(self):
+        # Allocate every physical tile: four initial hands, seventy live
+        # draws and fourteen dead-wall tiles. Each earlier draw is discarded.
+        full_hand = ['1m', '2m', '3m', '4m', '5m', '6m', '7p', '8p', '9p',
+                     '2s', '3s', '4s', '5s', '5s']
+        tiles = self._physical_tiles()
+        for tile in ['C', *full_hand]:
+            tiles.remove(tile)
+        draws, rest = tiles[:69] + ['4s'], tiles[69:]
+        before_win = full_hand.copy()
+        before_win.remove('4s')
+        hands = [rest[:13], before_win, rest[13:26], rest[26:39]]
+        dead_wall = ['C', *rest[39:]]
+        self.assertEqual(len(dead_wall), 14)
+        self.assertEqual(Counter([tile for hand in hands for tile in hand] + draws + dead_wall),
+                         Counter(self._physical_tiles()))
+        state = EventState(self.rules)
+        state.apply({'type': 'start_game', 'scores': [25000] * 4, 'rules': self.rules})
+        state.apply({'type': 'start_kyoku', 'bakaze': 'E', 'kyoku': 1, 'oya': 0,
+                     'honba': 0, 'kyotaku': 0, 'extension_round': 0, 'scores': [25000] * 4,
+                     'dora_marker': 'C', 'hands': [{'tiles': hand} for hand in hands]})
+        for turn, tile in enumerate(draws):
+            state.apply({'type': 'tsumo', 'actor': turn % 4, 'pai': tile})
+            if turn < 69:
+                state.apply({'type': 'dahai', 'actor': turn % 4, 'pai': tile, 'tsumogiri': True})
+        self.assertCountEqual(state.round['hands'][1]['tiles'], full_hand)
+        data = {'actor': 1, 'target': 1, 'win_method': 'tsumo', 'winning_tile': '4s',
+                'hand': {'concealed_tiles': before_win, 'melds': []},
+                'dora_markers': ['C'], 'ura_dora_markers': []}
+        context = {'bakaze': 'E', 'oya': 0, 'kyotaku': 0, 'wall_remaining': 0,
+                   'kan_counts': [0] * 4, 'reach_accepted': False, 'double_riichi': False,
+                   'ippatsu': False, 'first_turn': False, 'rinshan': False,
+                   'last_tile': True, 'pending_kan': None, 'furiten': False, 'events': []}
+        score = score_hand(data, context, self.rules)
+        self.assertEqual((score['fu'], score['han'], score['hand_points']), (20, 3, 2700))
+        win = {key: score[key] for key in ('fu', 'han', 'yakus', 'bonuses', 'hand_points')}
+        win.update(actor=1, target=1, pai='4s', pao=[], ura_dora_markers=[],
+                   deltas=[-1300, 2700, -700, -700])
+        return state, win
+
+    def test_final_live_draw_snapshot_requires_haitei_in_every_validation_layer(self):
+        state, _ = self._final_live_draw_witness()
+        for phase in ('awaiting_action', 'resolving'):
+            with self.subTest(phase=phase):
+                snapshot = self._public_snapshot(state)
+                snapshot['state']['kyoku']['turn']['phase'] = phase
+                self._restore_public_snapshot(snapshot)
+                snapshot['state']['kyoku']['haitei'] = False
+                before_snapshot = deepcopy(snapshot)
+                # Standalone validation, negotiated validation and restoration
+                # must agree before Receiver even considers the new wire prefix.
+                for rules in (None, self.rules):
+                    with self.assertRaisesRegex(Exception, 'final live-wall draw'):
+                        v._check_snapshot(snapshot, rules=rules)
+                restored = self._dealt()
+                before = deepcopy(vars(restored))
+                with self.assertRaisesRegex(GameError, 'final live-wall draw'):
+                    restored.restore(snapshot['state'])
+                self.assertEqual(vars(restored), before)
+                receiver = self._observer_receiver(initial_snapshot=True)
+                self._assert_receiver_rejects_atomically(receiver, snapshot, 'final live-wall draw')
+                self.assertEqual(snapshot, before_snapshot)
+
+    def test_final_live_draw_snapshot_preserves_2700_point_win(self):
+        state, win = self._final_live_draw_witness()
+        snapshot = self._public_snapshot(state)
+        for include_haitei in (True, False):
+            with self.subTest(include_haitei=include_haitei):
+                receiver = self._restore_public_snapshot(snapshot)
+                claim = deepcopy(win)
+                if not include_haitei:
+                    claim.update(han=2, hand_points=1500, deltas=[-700, 1500, -400, -400])
+                    claim['yakus'] = [y for y in claim['yakus'] if y['id'] != 'haitei']
+                event = {'type': 'end_kyoku', 'result': {'type': 'hora', 'wins': [claim]},
+                         'deltas': claim['deltas'], 'scores': [25000 + d for d in claim['deltas']],
+                         'next': {'type': 'rotate', 'bakaze': 'E', 'kyoku': 2, 'oya': 1,
+                                  'honba': 0, 'kyotaku': 0, 'extension_round': 0}}
+                if include_haitei:
+                    self._send_event(receiver, event)
+                    self.assertEqual(receiver.game.scores, [23700, 27700, 24300, 24300])
+                else:
+                    self._assert_receiver_rejects_atomically(
+                        receiver, self._event_message(receiver, event), 'situational yaku')
+
+    def test_final_rinshan_draw_and_discard_do_not_require_haitei(self):
+        state = EventState(self.rules)
+        state.apply({'type': 'start_game', 'scores': [25000] * 4, 'rules': self.rules})
+        state.apply({'type': 'start_kyoku', 'bakaze': 'E', 'kyoku': 1, 'oya': 0,
+                     'honba': 0, 'kyotaku': 0, 'extension_round': 0, 'scores': [25000] * 4,
+                     'dora_marker': 'P', 'hands': [{'count': 13} for _ in range(4)]})
+        tiles = self._physical_tiles()
+        for tile in ['C'] * 4 + ['P', 'F', '9s']:
+            tiles.remove(tile)
+        for turn, tile in enumerate(tiles[:68]):
+            state.apply({'type': 'tsumo', 'actor': turn % 4, 'pai': None})
+            state.apply({'type': 'dahai', 'actor': turn % 4, 'pai': tile, 'tsumogiri': True})
+        for event in ({'type': 'tsumo', 'actor': 0, 'pai': None},
+                      {'type': 'ankan_declared', 'actor': 0, 'consumed': ['C'] * 4},
+                      {'type': 'ankan', 'actor': 0, 'consumed': ['C'] * 4},
+                      {'type': 'dora', 'dora_marker': 'F'}):
+            state.apply(event)
+        for event in ({'type': 'tsumo', 'actor': 0, 'pai': None},
+                      {'type': 'dahai', 'actor': 0, 'pai': '9s', 'tsumogiri': True}):
+            state.apply(event)
+            self.assertEqual(state.round['wall_remaining'], 0)
+            self.assertFalse(state.round['haitei'])
+            for resolving in (False, True):
+                with self.subTest(cause=event['type'], resolving=resolving):
+                    snapshot = self._public_snapshot(state)
+                    if resolving:
+                        snapshot['state']['kyoku']['turn']['phase'] = 'resolving'
+                    self._restore_public_snapshot(snapshot)
+
+    def test_penalty_cancels_only_the_unresolved_reach_declaration(self):
+        rules = deepcopy(self.rules)
+        rules['invalid_action_policy'] = 'chombo'
+        acceptance = {'type': 'reach_accepted', 'actor': 0, 'deltas': [-1000, 0, 0, 0],
+                      'scores': [24000, 25000, 25000, 25000], 'kyotaku': 1}
+        draw = {'type': 'tsumo', 'actor': 1, 'pai': None}
+        discard = {'type': 'dahai', 'actor': 1, 'pai': 'E', 'tsumogiri': False}
+        continuations = {
+            'unaccepted': [],
+            'same_reaction': [acceptance],
+            'next_draw': [acceptance, draw],
+            'next_discard': [acceptance, draw, {**discard, 'tsumogiri': True}],
+            'chi_discard': [acceptance, {'type': 'chi', 'actor': 1, 'target': 0,
+                                        'pai': '9s', 'consumed': ['7s', '8s']}, discard],
+            'pon_discard': [acceptance, {'type': 'pon', 'actor': 1, 'target': 0,
+                                        'pai': '9s', 'consumed': ['9s', '9s']}, discard],
+            # A completed daiminkan has advanced out of the declaration
+            # reaction even before drawing rinshan or publishing delayed dora.
+            'daiminkan': [acceptance, {'type': 'daiminkan', 'actor': 1, 'target': 0,
+                                      'pai': '9s', 'consumed': ['9s'] * 3}],
+        }
+        for mode in ('spectate', 'replay'):
+            for name, continuation in continuations.items():
+                with self.subTest(mode=mode, continuation=name):
+                    receiver = self._observer_receiver(rules=rules, mode=mode)
+                    starts = deepcopy(self.vectors['V104_wire_complete_game']['positive']['trace']['steps'][:2])
+                    starts[0]['message']['event']['rules'] = rules
+                    starts[1]['message']['event']['hands'] = [{'count': 13} for _ in range(4)]
+                    for step in starts:
+                        self._send_event(receiver, step['message']['event'])
+                    for event in [{'type': 'tsumo', 'actor': 0, 'pai': None},
+                                  {'type': 'reach', 'actor': 0},
+                                  {'type': 'dahai', 'actor': 0, 'pai': '9s', 'tsumogiri': True},
+                                  *continuation]:
+                        self._send_event(receiver, event)
+                    sticks = int(name != 'unaccepted')
+                    deltas = [2800, -8000, 2600, 2600]
+                    event = {'type': 'end_kyoku', 'result': {
+                                'type': 'penalty', 'reason': 'illegal_action', 'offender': 1,
+                                'penalty': {'payments': [
+                                    {'from': 1, 'to': 0, 'points': 2800},
+                                    {'from': 1, 'to': 2, 'points': 2600},
+                                    {'from': 1, 'to': 3, 'points': 2600}]}},
+                             'deltas': deltas,
+                             'scores': [25000 + d - (1000 * sticks if seat == 0 else 0)
+                                        for seat, d in enumerate(deltas)],
+                             'next': {'type': 'renchan', 'bakaze': 'E', 'kyoku': 1, 'oya': 0,
+                                      'honba': 0, 'kyotaku': sticks, 'extension_round': 0}}
+                    if name == 'same_reaction':
+                        self._assert_receiver_rejects_atomically(
+                            receiver, self._event_message(receiver, event),
+                            'penalty after the reach discard was accepted')
+                    else:
+                        self._send_event(receiver, event)
+                        self.assertEqual(receiver.game.scores, event['scores'])
+                        self.assertEqual(receiver.game.kyotaku, sticks)
+
+    def test_visible_kokushi_requires_every_orphan_kind_without_filling_hidden_hands(self):
+        before_win = ['1m', '9m', '1p', '9p', '1s', 'E', 'S', 'W', 'N', 'P', 'F', 'C', 'E']
+        orphan_kinds = [TILES[tile] for tile in sorted(ORPHANS) if TILES[tile] != '9s']
+        for tsumo in (False, True):
+            for missing in (None, *orphan_kinds, 'hidden'):
+                with self.subTest(tsumo=tsumo, missing=missing):
+                    visible = missing != 'hidden'
+                    hand = before_win.copy()
+                    if missing in orphan_kinds:
+                        replacement = 'S' if missing == 'E' else 'E'
+                        hand = [replacement if tile == missing else tile for tile in hand]
+                    # Both the genuine hand and every counterexample fit the
+                    # physical inventory. The negative is shape, not a fifth tile.
+                    inventory([*hand, '9s', '2p'], self.rules)
+                    receiver = self._observer_receiver(mode='replay', view={'seat': 1} if visible else 'public')
+                    trace = deepcopy(self.vectors['V104_wire_complete_game']['positive']['trace'])
+                    starts = [step['message']['event'] for step in trace['steps'][:2]]
+                    starts[1]['hands'] = [{'count': 13} for _ in range(4)]
+                    if visible:
+                        starts[1]['hands'][1] = {'tiles': hand.copy()}
+                    for event in starts:
+                        self._send_event(receiver, event)
+                    if tsumo:
+                        # Discard once before the winning draw so no first-draw
+                        # yakuman masks the Kokushi claim being tested.
+                        for actor, tile in ((0, '2m'), (1, '2p'), (2, '3m'), (3, '4m'), (0, '6m')):
+                            self._send_event(receiver, {'type': 'tsumo', 'actor': actor,
+                                                       'pai': tile if actor == 1 and visible else None})
+                            self._send_event(receiver, {'type': 'dahai', 'actor': actor,
+                                                       'pai': tile, 'tsumogiri': True})
+                        self._send_event(receiver, {'type': 'tsumo', 'actor': 1,
+                                                   'pai': '9s' if visible else None})
+                    else:
+                        self._send_event(receiver, {'type': 'tsumo', 'actor': 0, 'pai': None})
+                        self._send_event(receiver, {'type': 'dahai', 'actor': 0,
+                                                   'pai': '9s', 'tsumogiri': True})
+                    data = {'actor': 1, 'target': 1 if tsumo else 0,
+                            'win_method': 'tsumo' if tsumo else 'ron', 'winning_tile': '9s',
+                            'hand': {'concealed_tiles': hand, 'melds': []},
+                            'dora_markers': ['2p'], 'ura_dora_markers': []}
+                    context = {'bakaze': 'E', 'oya': 0, 'kyotaku': 0,
+                               'wall_remaining': 64 if tsumo else 69, 'kan_counts': [0] * 4,
+                               'reach_accepted': False, 'double_riichi': False, 'ippatsu': False,
+                               'first_turn': not tsumo, 'rinshan': False, 'last_tile': False,
+                               'pending_kan': None, 'furiten': False, 'events': []}
+                    invalid = missing in orphan_kinds
+                    if invalid:
+                        with self.assertRaises(ScoringError):
+                            score_hand(data, context, self.rules)
+                    else:
+                        score = score_hand(data, context, self.rules)
+                        self.assertEqual(score['hand_points'], 32000)
+                        self.assertEqual(score['yakus'], [{'id': 'kokushi_musou', 'value': 1, 'unit': 'yakuman'}])
+                    event = deepcopy(next(step['message']['event'] for step in trace['steps']
+                                          if step['message'].get('event', {}).get('type') == 'end_kyoku'))
+                    if tsumo:
+                        win = event['result']['wins'][0]
+                        win.update(target=1, deltas=[-16000, 32000, -8000, -8000])
+                        event.update(deltas=win['deltas'], scores=[9000, 57000, 17000, 17000],
+                                     next={'type': 'rotate', 'bakaze': 'E', 'kyoku': 2, 'oya': 1,
+                                           'honba': 0, 'kyotaku': 0, 'extension_round': 0})
+                    if invalid:
+                        self._assert_receiver_rejects_atomically(
+                            receiver, self._event_message(receiver, event),
+                            'thirteen orphans lacks a required terminal or honor kind')
+                    else:
+                        self._send_event(receiver, event)
+                        self.assertEqual(receiver.game.scores, event['scores'])
 
     def test_resolving_snapshot_continues_reaction_result(self):
         source = self._dealt()

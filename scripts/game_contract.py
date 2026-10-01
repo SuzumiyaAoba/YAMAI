@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections import Counter
 from copy import deepcopy
 from decimal import Decimal
+from exact_decimal import ExactDecimal
 from itertools import combinations
 import json
 from typing import Any
@@ -70,6 +71,11 @@ def check_snapshot_rinshan(kyoku: dict, rules: dict | None = None) -> None:
     require(not kyoku["haitei"] or kyoku["wall_remaining"] == 0,
             "last-tile flag without an exhausted live wall")
     require(not (kyoku["rinshan"] and kyoku["haitei"]), "rinshan and last-live-tile flags are mutually exclusive")
+    # A draw window still distinguishes a live-wall draw from rinshan.
+    # After its discard rinshan is cleared, so wall=0 alone cannot prove
+    # houtei: the final live tile may have replenished the dead wall.
+    require(not (rinshan_decision and kyoku["wall_remaining"] == 0 and not kyoku["rinshan"])
+            or kyoku["haitei"], "final live-wall draw is missing its last-tile flag")
     require(not kyoku["rinshan"] or not any(s["ippatsu"] for s in kyoku["reach_status"]),
             "ippatsu survives the kan preceding the rinshan turn")
     require(not kyoku["rinshan"] or (possible_kans and (rinshan_decision or kyoku["pending_kan"] is not None)),
@@ -157,6 +163,8 @@ def canonical_action(action: Any, *, private_payload: bool = False) -> str:
             return [project(x) for x in value]
         return value
     def encode(value: Any) -> str:
+        if isinstance(value, ExactDecimal):
+            return value.canonical()
         if isinstance(value, (int, float, Decimal)) and not isinstance(value, bool):
             # Use decimal coefficient/exponent tuples rather than normalize():
             # normalize() rounds through the current Decimal context. Emitting
@@ -347,6 +355,8 @@ def check_hora_visible_tiles(win: dict, kyoku: dict) -> None:
     # knowable only when this view exposes the complete concealed hand.
     complete_kinds = len(melds) == 4 or "tiles" in hand
     if complete_kinds:
+        require("kokushi_musou" not in ids or ORPHANS <= known,
+                "thirteen orphans lacks a required terminal or honor kind")
         has_honors = any(tile >= 27 for tile in known)
         has_numbers = any(tile < 27 for tile in known)
         require("chanta" not in ids or has_honors,
@@ -1182,6 +1192,11 @@ class EventState:
                 check_hora_payments(result["wins"], r, self.rules)
             elif result["type"] == "penalty":
                 require(self.rules["invalid_action_policy"] == "chombo", "penalty is disabled")
+                cause = self.last_cause
+                if phase == "awaiting_responses" and cause["type"] == "dahai":
+                    river = r["rivers"][cause["actor"]]
+                    require(not (river and river[-1]["reach"] and r["reach_status"][cause["actor"]]["state"] == "accepted"),
+                            "penalty after the reach discard was accepted")
                 offender = result["offender"]
                 amount = self.rules["chombo"]["penalty_points"]
                 others = [seat for seat in range(4) if seat != offender]

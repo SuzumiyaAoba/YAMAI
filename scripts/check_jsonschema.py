@@ -9,11 +9,19 @@ from referencing import Registry, Resource
 import validate_artifacts as v
 
 
+def request_payloads(trace):
+    """Yield real fixture payloads, including lifecycles bound to a ledger."""
+    yield from trace.get("requests", [])
+    for lifecycle in trace.get("request_lifecycles", []):
+        yield from request_payloads(lifecycle)
+
+
 def main():
     schemas = v.SchemaSet()
     registry = Registry().with_resources((sid, Resource.from_contents(schema)) for sid, schema in schemas.schemas.items())
     for schema in schemas.schemas.values():
         Draft202012Validator.check_schema(schema)
+    request_validator = Draft202012Validator(v.request_payload_schema(schemas), registry=registry)
     def check(data, sid):
         Draft202012Validator({"$ref":sid}, registry=registry).validate(data)
     protocol = f"urn:yamai:schema:protocol:{v.PROTOCOL}:"
@@ -39,6 +47,23 @@ def main():
                     raise AssertionError("Schema accepted a designated negative message")
                 count += 1
         trace = positive.get("trace", {})
+        for request in request_payloads(trace):
+            request_validator.validate(request)
+            count += 1
+        negatives = [case.get("negative", {}), *case.get("negative_variants", []), *case.get("negative_messages", [])]
+        for negative in negatives:
+            negative_trace = negative.get("trace", {})
+            request_errors = []
+            for request in request_payloads(negative_trace):
+                request_errors.extend(request_validator.iter_errors(request))
+                count += 1
+            # A negative trace can fail a semantic assertion after its
+            # payloads pass schema validation. A payload schema failure is
+            # evidence only for the designated invalid_message outcome.
+            if request_errors and case["negative_expect"] != "invalid_message":
+                raise AssertionError("Negative trace request schema failed with a different expected outcome")
+            if negative_trace and case.get("schema_negative", False) and not request_errors:
+                raise AssertionError("Schema accepted designated negative trace request payloads")
         if trace.get("trace_type") == "session":
             check(trace, protocol + "stateful-trace")
             count += 1

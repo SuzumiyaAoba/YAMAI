@@ -19,13 +19,14 @@ import sys
 from collections import Counter
 from copy import deepcopy
 from decimal import Decimal, InvalidOperation
+from exact_decimal import ExactDecimal, parse_real, number_parts, exponent_compare, bounded_exponent_difference
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Sequence, Tuple
 
 from request_contract import evaluate as evaluate_request_contract
 from scoring_reference import ScoringError, basic_points, normal_payments, validate_score_bounds, MAX_GAME_EVENTS, MAX_HAND_POINTS, calculate_fixture as calculate_scoring_fixture, tile_index
 from scoring_reference import NORMAL_YAKU_HAN, validate_win_declarations
-from session_contract import SessionError, Receiver, negotiate, check_token_trace, replay_plan, resource_trace, classify_player_input, check_clock, check_snapshot_clock
+from session_contract import SessionError, Receiver, negotiate, check_token_trace, replay_plan, resource_trace, classify_player_input, check_clock, check_snapshot_clock, group_members_equal
 from game_contract import GameError, EventState, next_kyoku, legal_actions, canonical_action, furiten, furiten_step, abortive_reason, kan_sequence, validate_snapshot_state
 
 
@@ -91,12 +92,7 @@ def _reject_constant(value: str) -> Any:
 
 
 def _parse_real(raw: str) -> Any:
-    value = Decimal(raw)
-    if value == value.to_integral_value():
-        if not -MAX_INT <= value <= MAX_INT:
-            raise ArtifactError("invalid_json", "integer outside IEEE-754 safe range")
-        return int(value)
-    return value
+    return parse_real(raw, MAX_INT)
 
 
 def _walk_json(value: Any, depth: int = 0, path: str = "$") -> None:
@@ -110,10 +106,10 @@ def _walk_json(value: Any, depth: int = 0, path: str = "$") -> None:
         if value < -MAX_INT or value > MAX_INT:
             raise ArtifactError("invalid_json", "integer outside IEEE-754 safe range at " + path)
         return
-    if isinstance(value, (float, Decimal)):
+    if isinstance(value, (float, Decimal, ExactDecimal)):
         # Decimal may represent a finite fraction outside binary64's range.
         # Converting it through math.isfinite would turn that value into inf.
-        finite = value.is_finite() if isinstance(value, Decimal) else math.isfinite(value)
+        finite = value.is_finite() if isinstance(value, (Decimal, ExactDecimal)) else math.isfinite(value)
         if not finite:
             raise ArtifactError("invalid_json", "non-finite number at " + path)
         return
@@ -185,10 +181,10 @@ def strict_load(path: Path) -> Any:
 
 def _is_multiple_of(value: Any, divisor: Any) -> bool:
     """Exact decimal divisibility without context rounding or exponent expansion."""
-    def decimal(number: Any) -> Decimal:
-        return number if isinstance(number, Decimal) else Decimal(str(number)) if isinstance(number, float) else Decimal(number)
+    def decimal(number: Any) -> Decimal | ExactDecimal:
+        return number if isinstance(number, (Decimal, ExactDecimal)) else Decimal(str(number)) if isinstance(number, float) else Decimal(number)
 
-    if isinstance(divisor, bool) or not isinstance(divisor, (int, float, Decimal)):
+    if isinstance(divisor, bool) or not isinstance(divisor, (int, float, Decimal, ExactDecimal)):
         raise ArtifactError("schema_error", "multipleOf must be a positive number")
     denominator = decimal(divisor)
     if not denominator.is_finite() or denominator <= 0:
@@ -196,26 +192,25 @@ def _is_multiple_of(value: Any, divisor: Any) -> bool:
     numerator = decimal(value)
     if not numerator.is_finite():
         return False
-    if numerator.is_zero():
+    if numerator == 0:
         return True
 
-    def parts(number: Decimal) -> Tuple[int, int]:
-        _, digits, exponent = number.as_tuple()
-        end = len(digits)
-        while digits[end - 1] == 0:
-            end -= 1
-            exponent += 1
+    def parts(number: Decimal | ExactDecimal) -> Tuple[int, str]:
+        _, digits, exponent = number_parts(number)
         # Decimal-to-int conversion has no string-to-int digit-limit artifact.
-        coefficient = int(Decimal((0, digits[:end], 0)))
+        coefficient = int(Decimal(digits))
         return coefficient, exponent
 
     a, a_exponent = parts(numerator)
     b, b_exponent = parts(denominator)
-    difference = a_exponent - b_exponent
-    if difference < 0:
+    if exponent_compare(a_exponent, b_exponent) < 0:
         # The normalized numerator lacks a factor of ten; an extra factor of
         # ten in the denominator therefore cannot divide it.
         return False
+    # Once the exponent covers every possible factor 2 or 5 in b, further
+    # powers of ten cannot change divisibility. The bound is coefficient-
+    # sized, even for an exponent with hundreds of thousands of digits.
+    difference = bounded_exponent_difference(a_exponent, b_exponent, b.bit_length())
     return ((a % b) * pow(10, difference, b)) % b == 0
 
 
@@ -229,7 +224,7 @@ def _json_type(value: Any, name: str) -> bool:
     if name == "integer":
         return isinstance(value, int) and not isinstance(value, bool)
     if name == "number":
-        return isinstance(value, (int, float, Decimal)) and not isinstance(value, bool)
+        return isinstance(value, (int, float, Decimal, ExactDecimal)) and not isinstance(value, bool)
     if name == "boolean":
         return isinstance(value, bool)
     if name == "null":
@@ -240,7 +235,7 @@ def _json_type(value: Any, name: str) -> bool:
 def _json_equal(left: Any, right: Any) -> bool:
     if isinstance(left, bool) or isinstance(right, bool):
         return type(left) is type(right) and left == right
-    if isinstance(left, (int, float, Decimal)) and isinstance(right, (int, float, Decimal)):
+    if isinstance(left, (int, float, Decimal, ExactDecimal)) and isinstance(right, (int, float, Decimal, ExactDecimal)):
         return left == right
     if type(left) is not type(right):
         return False
@@ -399,7 +394,7 @@ class SchemaSet:
             types = typ if isinstance(typ, list) else [typ]
             if not any(_json_type(value, item) for item in types):
                 raise ArtifactError("invalid_message", f"type mismatch at {path}")
-        if isinstance(value, (int, float, Decimal)) and not isinstance(value, bool):
+        if isinstance(value, (int, float, Decimal, ExactDecimal)) and not isinstance(value, bool):
             if "minimum" in schema and value < schema["minimum"]:
                 raise ArtifactError("invalid_message", f"minimum mismatch at {path}")
             if "maximum" in schema and value > schema["maximum"]:
@@ -892,7 +887,7 @@ def check_release_manifest(manifest: Dict[str, Any], p: Dict[str, Any], r: Dict[
     if not isinstance(validator, Mapping) or validator.get("path") != "scripts/validate_artifacts.py" or validator.get("command") != "python3 scripts/validate_artifacts.py":
         raise ArtifactError("release_error", "release validator metadata mismatch")
     _repo_file(validator.get("path"), "validator.path")
-    if validator.get("support_files") != ["scripts/request_contract.py", "scripts/detached_contract.py", "scripts/test_detached_contract.py", "scripts/scoring_reference.py", "scripts/session_contract.py", "scripts/game_contract.py", "scripts/resource_contract.py", "scripts/test_scoring_reference.py", "scripts/test_session_contract.py", "scripts/test_game_contract.py", "scripts/test_resource_contract.py", "scripts/test_validator.py", "scripts/check_jsonschema.py", "scripts/score_oracle.py", "scripts/render_docs.py", "scripts/test_tooling.py", "tests/test_regressions.py"]:
+    if validator.get("support_files") != ["scripts/exact_decimal.py", "scripts/request_contract.py", "scripts/detached_contract.py", "scripts/test_detached_contract.py", "scripts/scoring_reference.py", "scripts/session_contract.py", "scripts/game_contract.py", "scripts/resource_contract.py", "scripts/test_scoring_reference.py", "scripts/test_session_contract.py", "scripts/test_game_contract.py", "scripts/test_resource_contract.py", "scripts/test_validator.py", "scripts/check_jsonschema.py", "scripts/score_oracle.py", "scripts/render_docs.py", "scripts/test_tooling.py", "tests/test_regressions.py"]:
         raise ArtifactError("release_error", "release validator support files mismatch")
     _repo_file_list(validator.get("support_files"), "validator.support_files")
 
@@ -1558,20 +1553,36 @@ def _trace_grace_ms(trace: Mapping[str, Any]) -> int | None:
     return values[0] if values else None
 
 
+def request_payload_schema(schemas: SchemaSet) -> Dict[str, Any]:
+    """Use the wire request assertions on an envelope-free fixture payload.
+
+    Only the five wire envelope fields may be absent. If a fixture supplies
+    any of them it must satisfy the original schema as well. No envelope is
+    fabricated, and all payload requirements, unknown-member restrictions,
+    extension patterns and conditional group assertions remain unchanged.
+    """
+    schema = schemas.schemas[f"urn:yamai:schema:protocol:{PROTOCOL}:request"]
+    envelope = {"yamai", "kind", "session_id", "game_id", "seq"}
+    return {**schema, "required": [key for key in schema["required"] if key not in envelope]}
+
+
 def semantic_request_trace(trace: Mapping[str, Any]) -> None:
     requests = trace.get("requests")
     _require(isinstance(requests, list), "invalid_message", "request trace is invalid")
     seats = []
     groups: Dict[str, Mapping[str, Any]] = {}
     grace_ms = _trace_grace_ms(trace)
+    schemas = SchemaSet()
+    payload_schema = request_payload_schema(schemas)
     for request in requests:
+        schemas.validate(request, payload_schema)
         _check_request(request, grace_ms=grace_ms)
         seats.append(request["seat"])
         group_id = request.get("decision_group_id")
         if group_id is not None:
             _require(isinstance(group_id, str), "invalid_message", "decision group id is invalid")
             reference = groups.setdefault(group_id, request)
-            _require(request.get("decision_group_members") == reference.get("decision_group_members"), "invalid_message", "group members differ across requests")
+            _require(group_members_equal(request.get("decision_group_members"), reference.get("decision_group_members")), "invalid_message", "group members differ across requests")
             _require(request.get("decision_group_deadline_ms") == reference.get("decision_group_deadline_ms"), "invalid_message", "group deadline differs across requests")
             _require(request.get("decision_group_close") == reference.get("decision_group_close"), "invalid_message", "group close policy differs across requests")
     _require(len(seats) == len(set(seats)), "invalid_message", "a seat has duplicate pending requests")
@@ -1923,6 +1934,22 @@ def semantic_ledger_trace(trace: Mapping[str, Any], expected_hash: str) -> None:
 
     Shared group choices are verified by request_lifecycle traces. This peer
     capture cannot observe another session's private requests or ACKs.
+
+    A resumed welcome's replay_through_seq separates historical ledger output
+    from new issuance/ingress. Delivery timestamps never restart old clocks.
+    For an old OPEN request that receives new input or a new terminal ACK,
+    context.resume_state.request_states must supply its retained host state:
+    {request_id: {issued_at_ms: <original host clock>, selection: null | {
+        action_id: ..., source: "user" | "default", elapsed_ms: ...,
+        time_bank_ms: ...}}}. These are capture annotations, not wire members.
+    With these annotations all times share at_ms's monotonic clock;
+    context.now_ms is the resume checkpoint between captured join and welcome.
+    Without them, historical-only captures may retain a separate capture clock.
+    A replayed step's optional group_start must agree with retained state when
+    provided; it alone never substitutes for that state. Historical
+    outputs alone need no original-input annotations.
+    Terminal chombo cancellations are replayed as historical ACKs/results;
+    "cancelled" is not a retained pending selection annotation.
     """
     schemas = SchemaSet()
     schemas.validate(trace, {"$ref": f"urn:yamai:schema:protocol:{PROTOCOL}:stateful-trace"})
@@ -1945,15 +1972,44 @@ def semantic_ledger_trace(trace: Mapping[str, Any], expected_hash: str) -> None:
                 finished_transactions.add(current_transaction)
             current_transaction = tx
         ledger[seq], previous = entry, seq
-    hello = join = receiver = None
+    hello = join = receiver = join_at = None
     now, seen = -1, set()
     starts, selections = {}, {}
+    resumed_requests, retained_states, checked_retained = set(), {}, set()
+    replay_through, resume_at = 0, None
     diagnostic_obligations, captured_diagnostics = [], []
     untracked_action_diagnostics = False
     untracked_actions = []
     lifecycle_ingress = {}
     pending_transaction = None
     fatal_at = None
+
+    def restore_request(request: Mapping[str, Any]) -> None:
+        rid = request["request_id"]
+        resumed_requests.add(rid)
+        if rid not in retained_states:
+            return
+        if rid in checked_retained:
+            return
+        _require(request["caused_by_seq"] < replay_through,
+                 "invalid_message", "retained request did not exist at the resume frontier")
+        state = retained_states[rid]
+        start, selection = state["issued_at_ms"], state["selection"]
+        grace = receiver.welcome["rules"]["time_control"]["grace_ms"]
+        deadline = grace + request["timeout_ms"] + request["time_bank_ms"]
+        if selection is None:
+            _require(resume_at - start < deadline, "invalid_message", "retained OPEN request already reached its original deadline")
+        else:
+            _require(selection["action_id"] in {c["action_id"] for c in request["legal_actions"]}
+                     and (selection["source"] == "user" or selection["action_id"] == request["default_action_id"]),
+                     "invalid_message", "retained selection differs from original candidates")
+            check_clock(dict(request), selection, grace, user=selection["source"] == "user",
+                        timeout=selection["source"] == "default" and receiver.welcome["rules"]["invalid_action_policy"] != "default")
+            _require(selection["elapsed_ms"] <= resume_at - start, "invalid_message", "retained selection occurs after resume checkpoint")
+            selections[rid] = (selection["action_id"], selection["source"], selection["elapsed_ms"])
+        starts[rid] = start
+        checked_retained.add(rid)
+
     try:
         for capture_index, step in enumerate(trace["messages"]):
             _require(step["at_ms"] >= now, "invalid_message", "capture clock moved backwards")
@@ -1963,18 +2019,42 @@ def semantic_ledger_trace(trace: Mapping[str, Any], expected_hash: str) -> None:
             _require(_json_equal(strict_load_bytes(raw, max_bytes=1048576), msg), "sequence_conflict", "captured bytes differ from decoded message")
             kind = msg["kind"]
             if kind == "hello":
-                _require(step["direction"] == "out" and receiver is None, "invalid_message", "unexpected hello")
+                _require(step["direction"] == "out" and hello is None and join is None and receiver is None, "invalid_message", "unexpected hello")
                 validate("hello", msg)
                 hello = msg
             elif kind == "join":
-                _require(step["direction"] == "in" and hello is not None and receiver is None, "invalid_message", "unexpected join")
+                _require(step["direction"] == "in" and hello is not None and join is None and receiver is None, "invalid_message", "unexpected join")
                 join = msg
+                join_at = now
             elif kind == "welcome":
                 _require(step["direction"] == "out" and join is not None and receiver is None, "invalid_message", "unexpected welcome")
                 negotiate(hello, join, msg, trace.get("context", {}), validate, PROTOCOL, PROFILE_REVISION, expected_hash)
                 _require(all(msg[k] == client[k] for k in ("mode", "view", "seat")), "invalid_message", "capture descriptor differs from welcome")
                 _require(msg["session_id"] == trace["session_id"] and msg["game_id"] == trace["game_id"], "invalid_message", "welcome differs from capture identity")
                 receiver = Receiver(msg, strict_load_bytes, _session_schema_validator(schemas, expected_hash, rules=msg["rules"]), initial_snapshot=msg["mode"] == "spectate" and trace.get("context", {}).get("game_started", False))
+                previous_state = trace.get("context", {}).get("resume_state", {})
+                retained_states = previous_state.get("request_states", {}) if isinstance(previous_state, dict) else {}
+                _require(isinstance(retained_states, dict) and (msg["resumed"] or not retained_states),
+                         "invalid_message", "retained request states require a resumed capture")
+                if msg["resumed"]:
+                    replay_through = msg["replay_through_seq"]
+                    resume_at = trace["context"]["now_ms"]
+                    _require(type(resume_at) is int and 0 <= resume_at <= MAX_INT
+                             and (not retained_states or join_at <= resume_at <= now <= MAX_INT),
+                             "invalid_message", "resume checkpoint differs from the capture clock")
+                for rid, state in retained_states.items():
+                    _require(isinstance(rid, str) and ID_RE.fullmatch(rid) and isinstance(state, dict)
+                             and set(state) == {"issued_at_ms", "selection"}, "invalid_message", "invalid retained request state")
+                    _require(type(state["issued_at_ms"]) is int and 0 <= state["issued_at_ms"] <= resume_at,
+                             "invalid_message", "retained request starts after resume checkpoint")
+                    selection = state["selection"]
+                    if selection is not None:
+                        _require(isinstance(selection, dict) and set(selection) == {"action_id", "source", "elapsed_ms", "time_bank_ms"}
+                                 and isinstance(selection["action_id"], str) and ID_RE.fullmatch(selection["action_id"])
+                                 and isinstance(selection["source"], str) and selection["source"] in {"user", "default"}
+                                 and all(type(selection[k]) is int and 0 <= selection[k] <= MAX_INT
+                                         for k in ("elapsed_ms", "time_bank_ms")),
+                                 "invalid_message", "invalid retained selection")
             elif step["direction"] == "in":
                 _require(receiver is not None, "invalid_message", "input before welcome")
                 if receiver.closed:
@@ -1990,6 +2070,7 @@ def semantic_ledger_trace(trace: Mapping[str, Any], expected_hash: str) -> None:
                     fatal_at = now
                     continue
                 if kind == "action":
+                    _require(receiver.applied >= replay_through, "invalid_message", "action precedes completion of resume replay")
                     rid = msg["request_id"]
                     if receiver.ended:
                         continue  # Well-formed post-game input has no response.
@@ -2005,15 +2086,18 @@ def semantic_ledger_trace(trace: Mapping[str, Any], expected_hash: str) -> None:
                                                        "index": capture_index, "rejected": False})
                         continue  # Diagnostics must not reserve or create a request.
                     request = receiver.requests[rid]
+                    _require(rid not in resumed_requests or rid not in receiver.active_requests
+                             or rid in starts or request.get("selection") is not None,
+                             "invalid_message", "resumed OPEN action lacks original request state")
                     lifecycle_ingress.setdefault(rid, []).append((capture_index, msg["action_id"], now))
-                    if rid not in starts or "decision_group_id" in request:
+                    if (rid not in starts and rid not in selections) or "decision_group_id" in request:
                         # Group lifecycles and snapshot-restored ingress clocks
                         # remain outside this single-request capture check.
                         untracked_action_diagnostics = True
                         untracked_actions.append({"request_id": rid, "action_id": msg["action_id"], "index": capture_index})
                     selection = selections.get(rid)
                     terminal = receiver.terminal_acks.get(rid)
-                    if (rid in starts and "decision_group_id" not in request
+                    if ("decision_group_id" not in request
                             and selection is not None and selection[1] == "user"
                             and (terminal is None or terminal["status"] != "stale")):
                         if msg["action_id"] != selection[0]:
@@ -2021,7 +2105,8 @@ def semantic_ledger_trace(trace: Mapping[str, Any], expected_hash: str) -> None:
                                                            "index": capture_index, "rejected": False,
                                                            "code": "request_conflict"})
                         continue  # Same-ID resubmission is silent, not a new choice.
-                    if rid in starts and rid in receiver.active_requests and rid not in selections and "decision_group_id" not in request:
+                    if (rid in starts and rid in receiver.active_requests and rid not in selections
+                            and ("decision_group_id" not in request or rid in retained_states)):
                         grace = receiver.welcome["rules"]["time_control"]["grace_ms"]
                         deadline = grace + request["timeout_ms"] + request["time_bank_ms"]
                         elapsed = max(0, now - starts[rid])
@@ -2033,7 +2118,7 @@ def semantic_ledger_trace(trace: Mapping[str, Any], expected_hash: str) -> None:
                             selections[rid] = (request["default_action_id"], "default", elapsed)
                         elif receiver.welcome["rules"]["invalid_action_policy"] == "chombo":
                             selections[rid] = (request["default_action_id"], "cancelled", elapsed)
-                        else:
+                        elif "decision_group_id" not in request:
                             diagnostic_obligations.append({"request_id": rid, "action_id": msg["action_id"],
                                                            "index": capture_index, "rejected": True,
                                                            "elapsed_ms": elapsed})
@@ -2044,13 +2129,52 @@ def semantic_ledger_trace(trace: Mapping[str, Any], expected_hash: str) -> None:
                 _require(seq in ledger and raw.decode("utf-8") == ledger[seq]["wire"], "sequence_conflict", "wire retransmission differs from immutable ledger")
                 _require(all(step.get(k) == ledger[seq][k] for k in ("transaction_id", "operation_id")), "invalid_message", "message changed its transaction or operation")
                 duplicate = seq in seen
+                historical = seq <= replay_through
                 terminalizing = kind == "ack" and msg["request_id"] in receiver.active_requests and msg["status"] != "rejected"
                 if not duplicate and pending_transaction is not None and not (kind == "error" and msg.get("severity") == "fatal"):
                     _require(kind == "event" and (step["transaction_id"], step["operation_id"]) == pending_transaction, "invalid_message", "terminal ACK and result events belong to different transactions")
                 if kind == "request" and not duplicate:
-                    starts[msg["request_id"]] = step.get("group_start", now)
-                    _require(starts[msg["request_id"]] >= now, "invalid_message", "group clock starts before request recording")
-                if kind == "ack" and not duplicate and msg["request_id"] in starts:
+                    if historical:
+                        restore_request(msg)
+                        _require("group_start" not in step or msg["request_id"] not in starts
+                                 or step["group_start"] == starts[msg["request_id"]],
+                                 "invalid_message", "replayed group_start differs from original request state")
+                    else:
+                        starts[msg["request_id"]] = step.get("group_start", now)
+                        _require(starts[msg["request_id"]] >= now, "invalid_message", "group clock starts before request recording")
+                if kind == "ack" and not duplicate and msg["request_id"] in receiver.active_requests:
+                    rid = msg["request_id"]
+                    _require(historical or rid not in resumed_requests or rid in starts
+                             or receiver.requests[rid].get("selection") is not None,
+                             "invalid_message", "resumed OPEN ACK lacks original request state")
+                    if historical and rid in retained_states:
+                        selected = retained_states[rid]["selection"]
+                        _require(msg["elapsed_ms"] <= resume_at - starts[rid]
+                                 and (msg["status"] != "rejected" or selected is None or msg["elapsed_ms"] <= selected["elapsed_ms"]),
+                                 "invalid_message", "historical ACK clock exceeds retained checkpoint")
+                    if historical and rid in retained_states and msg["status"] != "rejected":
+                        selected = retained_states[rid]["selection"]
+                        _require(selected is not None and all(msg[k] == selected[k] for k in ("action_id", "elapsed_ms", "time_bank_ms"))
+                                 and (msg["status"] == "stale" or (msg["status"] == "defaulted") == (selected["source"] == "default")),
+                                 "invalid_message", "historical ACK differs from retained selection")
+                    if (not historical and rid in retained_states and rid not in selections
+                            and msg["status"] in {"accepted", "passed", "superseded", "defaulted"}):
+                        request = receiver.requests[rid]
+                        deadline = receiver.welcome["rules"]["time_control"]["grace_ms"] + request["timeout_ms"] + request["time_bank_ms"]
+                        _require(msg["status"] == "defaulted" and now >= starts[rid] + deadline,
+                                 "invalid_message", "new ACK has no captured input or precedes its original deadline")
+                        selections[rid] = (request["default_action_id"], "default", deadline)
+                    if not historical and rid in selections:
+                        selected = selections[rid]
+                        _require(msg["status"] != "rejected" or selected[1] == "cancelled",
+                                 "invalid_message", "rejected ACK follows a fixed selection")
+                    if not historical and rid in selections and msg["status"] != "rejected":
+                        selected = selections[rid]
+                        _require((msg["action_id"], msg["elapsed_ms"]) == (selected[0], selected[2])
+                                 and (selected[1] != "cancelled" or msg["status"] == "stale")
+                                 and (msg["status"] == "stale" or (msg["status"] == "defaulted") == (selected[1] == "default")),
+                                 "invalid_message", "ACK changed the fixed selection or elapsed time differs")
+                if kind == "ack" and not duplicate and not historical and msg["request_id"] in starts:
                     request = receiver.requests[msg["request_id"]]
                     if "decision_group_id" not in request:
                         grace = receiver.welcome["rules"]["time_control"]["grace_ms"]
@@ -2078,7 +2202,51 @@ def semantic_ledger_trace(trace: Mapping[str, Any], expected_hash: str) -> None:
                 if receiver.closed:
                     fatal_at = now
                 if not duplicate:
-                    if kind == "error" and msg["code"] in {"invalid_action", "request_conflict"} and msg["severity"] == "recoverable":
+                    if kind == "snapshot" and receiver.welcome["resumed"]:
+                        for request in msg["state"].get("pending_requests", []):
+                            rid = request["request_id"]
+                            if rid not in starts or rid in resumed_requests:
+                                restore_request(request)
+                            selected = request["selection"]
+                            if rid in retained_states:
+                                # Creation follows the fixed replay frontier,
+                                # but queueing may delay capture. Bound the
+                                # snapshot instant, never infer it from delivery.
+                                observed_at = resume_at if historical else now
+                                upper = observed_at - starts[rid]
+                                grace = receiver.welcome["rules"]["time_control"]["grace_ms"]
+                                deadline = grace + request["timeout_ms"] + request["time_bank_ms"]
+                                if selected is None:
+                                    elapsed = deadline - request["remaining_ms"]
+                                    _require(elapsed <= upper and (historical or elapsed >= resume_at - starts[rid]),
+                                             "invalid_message", "snapshot OPEN clock lies outside retained capture interval")
+                                    prior_selection = retained_states[rid]["selection"]
+                                    _require(not historical or prior_selection is None or elapsed <= prior_selection["elapsed_ms"],
+                                             "invalid_message", "historical OPEN snapshot follows retained selection")
+                                else:
+                                    _require(selected["elapsed_ms"] <= upper,
+                                             "invalid_message", "snapshot selection occurs after its captured clock")
+                                if request.get("decision_group_remaining_ms", 0) > 0:
+                                    elapsed = request["decision_group_deadline_ms"] - request["decision_group_remaining_ms"]
+                                    _require(elapsed <= upper and (historical or elapsed >= resume_at - starts[rid]),
+                                             "invalid_message", "snapshot group clock lies outside retained capture interval")
+                            _require(historical or selected is not None or rid not in selections,
+                                     "invalid_message", "snapshot reopened a retained selection")
+                            if selected is not None:
+                                value = (selected["action_id"], selected["source"], selected["elapsed_ms"])
+                                _require(historical or rid not in resumed_requests or rid in retained_states or rid in selections,
+                                         "invalid_message", "new snapshot selection lacks original request state")
+                                if not historical and rid in retained_states and rid not in selections:
+                                    _require(selected["source"] == "default" and selected["elapsed_ms"] == deadline,
+                                             "invalid_message", "new snapshot selection has no captured input or original timeout")
+                                _require(rid not in selections or selections[rid] == value,
+                                         "invalid_message", "snapshot changed the retained selection")
+                                _require(not historical or rid not in retained_states or retained_states[rid]["selection"] is not None,
+                                         "invalid_message", "snapshot selection contradicts retained OPEN state")
+                                selections[rid] = value
+                    if historical and kind == "ack" and msg["status"] in {"accepted", "passed", "superseded", "defaulted"}:
+                        selections[msg["request_id"]] = (msg["action_id"], "default" if msg["status"] == "defaulted" else "user", msg["elapsed_ms"])
+                    if not historical and kind == "error" and msg["code"] in {"invalid_action", "request_conflict"} and msg["severity"] == "recoverable":
                         if msg["code"] == "request_conflict":
                             terminal = receiver.terminal_acks.get(msg["request_id"])
                             if terminal is not None:
@@ -2094,6 +2262,7 @@ def semantic_ledger_trace(trace: Mapping[str, Any], expected_hash: str) -> None:
                         pending_transaction = None
                 seen.add(seq)
         _require(receiver is not None and set(ledger) == seen, "invalid_message", "capture omits ledger messages")
+        _require(receiver.closed or set(retained_states) == checked_retained, "invalid_message", "retained request state has no restored request")
         _require(receiver.closed or not any(o["rejected"] for o in diagnostic_obligations), "invalid_message", "capture omits a required rejected ACK")
         if not untracked_action_diagnostics and not receiver.closed:
             _require(len(captured_diagnostics) == len(diagnostic_obligations), "invalid_message",
@@ -2140,18 +2309,42 @@ def semantic_ledger_trace(trace: Mapping[str, Any], expected_hash: str) -> None:
             _require(bool(bound), "invalid_message", "lifecycle has no request in this capture")
             for request in bound:
                 actual_request = receiver.requests[request["request_id"]]
-                _require(all(_json_equal(actual_request.get(k), value) for k, value in request.items()), "invalid_message", "lifecycle request differs from captured wire")
+                _require(all((group_members_equal if k == "decision_group_members" else _json_equal)(actual_request.get(k), value)
+                             for k, value in request.items()), "invalid_message", "lifecycle request differs from captured wire")
                 rid = request["request_id"]
                 submitted = [(s["action_id"], s["at_us"] // 1000) for s in lifecycle["steps"] if s["op"] == "submit" and s["request_id"] == rid]
-                _require(rid in starts, "invalid_message", "lifecycle has no captured request clock")
                 ingress = lifecycle_ingress.get(rid, [])
                 bound_input_indices.update(index for index, _, _ in ingress)
-                if fatal_at is not None and starts[rid] > fatal_at:
+                _require(rid in starts or rid in resumed_requests and not ingress, "invalid_message", "lifecycle has no original request clock")
+                if fatal_at is not None and rid in starts and starts[rid] > fatal_at:
                     # Before group_start input is only buffered (§9.1). A
                     # fatal first discards it rather than fixing a selection.
                     ingress = []
                 captured = [(aid, max(0, at_ms - starts[rid])) for _, aid, at_ms in ingress]
-                _require(submitted == captured, "invalid_message", "lifecycle submissions differ from captured actions")
+                historical_count = len(submitted) - len(captured) if rid in resumed_requests else 0
+                _require(historical_count >= 0 and submitted[historical_count:] == captured,
+                         "invalid_message", "lifecycle submissions differ from captured actions")
+                if rid in resumed_requests and rid in starts:
+                    _require(all(starts[rid] + elapsed <= resume_at for _, elapsed in submitted[:historical_count]),
+                             "invalid_message", "uncaptured lifecycle submission occurs after resume checkpoint")
+                    # Full lifecycles may describe input from the old transport.
+                    # Its checkpoint must agree with the retained host state;
+                    # only the remaining suffix binds this connection's input.
+                    prefix, old_submits = [], 0
+                    for lifecycle_step in lifecycle["steps"]:
+                        own_input = lifecycle_step["op"] == "submit" and lifecycle_step["request_id"] == rid
+                        if own_input and old_submits == historical_count:
+                            break
+                        if lifecycle_step["at_us"] > (resume_at - starts[rid]) * 1000:
+                            break
+                        prefix.append(lifecycle_step)
+                        old_submits += int(own_input)
+                    prefix.append({"op": "advance", "at_us": (resume_at - starts[rid]) * 1000})
+                    checkpoint = evaluate_request_contract({**lifecycle, "steps": prefix})[-1]["requests"][rid]
+                    retained = retained_states[rid]["selection"]
+                    _require(checkpoint["phase"] == "OPEN" if retained is None else
+                             all(checkpoint.get(k) == value for k, value in retained.items()),
+                             "invalid_message", "lifecycle differs from retained request state")
                 expected_outputs = lifecycle["expected"]["messages"][rid]
                 _require(rid not in lifecycle_outputs or _json_equal(lifecycle_outputs[rid], expected_outputs),
                          "invalid_message", "lifecycle bindings disagree about request outputs")
@@ -2159,13 +2352,15 @@ def semantic_ledger_trace(trace: Mapping[str, Any], expected_hash: str) -> None:
                 # Match generation order as well as values. Millisecond capture
                 # timestamps cannot distinguish sub-ms lifecycle times, so use
                 # floor conversion plus the local ingress capture index.
-                ready, consumed, previous_count, last_input = [], 0, 0, -1
+                ready, consumed, previous_count, last_input, own_submits = [], 0, 0, -1, 0
                 for step, observation in zip(lifecycle["steps"], evaluate_request_contract(dict(lifecycle))):
                     if step["op"] == "submit" and step["request_id"] == rid:
-                        last_input = ingress[consumed][0]
-                        consumed += 1
+                        if own_submits >= historical_count:
+                            last_input = ingress[consumed][0]
+                            consumed += 1
+                        own_submits += 1
                     count = len(observation["messages"][rid])
-                    ready.extend([(starts[rid] + step["at_us"] // 1000, last_input)] * (count - previous_count))
+                    ready.extend([(starts.get(rid, 0) + step["at_us"] // 1000, last_input)] * (count - previous_count))
                     previous_count = count
                 if rid in lifecycle_ready:
                     ready = [(max(a[0], b[0]), max(a[1], b[1])) for a, b in zip(ready, lifecycle_ready[rid])]
@@ -2201,7 +2396,8 @@ def semantic_ledger_trace(trace: Mapping[str, Any], expected_hash: str) -> None:
                         if cursor == len(outputs):
                             continue
                         ready_at, input_index = lifecycle_ready[rid][cursor]
-                        if step["at_ms"] < ready_at or index <= input_index:
+                        if (message["seq"] > replay_through and (rid in resumed_requests and rid not in starts
+                                or step["at_ms"] < ready_at) or index <= input_index):
                             continue
                         expected = outputs[cursor]
                         if ack:
@@ -2217,6 +2413,10 @@ def semantic_ledger_trace(trace: Mapping[str, Any], expected_hash: str) -> None:
                             next_cursors[lane] += 1
                             following.add((tuple(next_cursors), used))
                     if diagnostic:
+                        if message["seq"] <= replay_through:
+                            # Other historical requests may have diagnostic
+                            # output without a lifecycle annotation here.
+                            following.add((cursors, used))
                         for obligation_index, obligation in enumerate(generic):
                             if (obligation_index not in used and index > obligation["index"]
                                     and message["code"] == obligation.get("code", "invalid_action")

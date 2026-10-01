@@ -23,6 +23,19 @@ def require(condition: bool, code: str, message: str, severity: str = "fatal") -
         raise SessionError(code, message, severity)
 
 
+def group_members_equal(left: Any, right: Any) -> bool:
+    """Compare unordered descriptors without discarding private member data.
+
+    Shape and uniqueness are checked before comparison by the request
+    validator. Sorting only the outer descriptor array leaves all nested
+    values (including private arrays and JSON scalar types) intact.
+    """
+    if left is None or right is None:
+        return left is right
+    key = lambda member: (member["seat"], member["request_id"])
+    return json_equal(sorted(left, key=key), sorted(right, key=key))
+
+
 def check_clock(request: dict, clock: dict, grace: int, *, user: bool = False, timeout: bool = False) -> None:
     deadline = grace + request["timeout_ms"] + request["time_bank_ms"]
     elapsed = clock["elapsed_ms"]
@@ -524,7 +537,9 @@ class Receiver:
                 if request["request_id"] in self.requests:
                     old = self.requests[request["request_id"]]
                     immutable = ("seat", "caused_by_seq", "timeout_ms", "time_bank_ms", "legal_actions", "default_action_id", "decision_group_id", "decision_group_members", "decision_group_deadline_ms", "decision_group_close")
-                    require(all(json_equal(request.get(key), old.get(key)) for key in immutable), "invalid_message", "snapshot changed an issued request")
+                    require(all((group_members_equal if key == "decision_group_members" else json_equal)
+                                (request.get(key), old.get(key)) for key in immutable),
+                            "invalid_message", "snapshot changed an issued request")
                     if "remaining_ms" in old:
                         require(request["remaining_ms"] <= old["remaining_ms"], "invalid_message",
                                 "snapshot increased the remaining request time")
