@@ -922,6 +922,83 @@ class SessionInvariants(unittest.TestCase):
                                    replay_from_seq=receiver.applied + 1, replay_through_seq=20))
         self.assert_rejected_atomically(receiver, snapshot)
 
+    def test_compacted_late_ack_clock_is_frozen_across_recovery(self):
+        for checkpoint in ('none', 'resume', 'snapshot'):
+            for change in ({}, {'elapsed_ms': 7001}, {'time_bank_ms': 13999}):
+                with self.subTest(checkpoint=checkpoint, change=change):
+                    trace = self.trace('request_cause_uses_current_event_sequence')
+                    receiver = self.receiver(trace['welcome'])
+                    for step in trace['steps'][:9]:
+                        receiver.receive(self.raw(step['message']))
+                    receiver.receive(self.raw(self.request_identity_snapshot(receiver)))
+                    first = deepcopy(trace['steps'][9]['message'])
+                    first.update(seq=receiver.applied + 1, request_id='hidden-prior',
+                                 action_id='first-late', status='stale',
+                                 elapsed_ms=7000, time_bank_ms=14000)
+                    self.assertEqual(receiver.receive(self.raw(first)), 'applied')
+                    self.assertEqual(receiver.receive(self.raw(first)), 'duplicate')
+                    if checkpoint == 'resume':
+                        receiver.begin_resume(dict(trace['welcome'], resumed=True,
+                                                   replay_from_seq=receiver.applied + 1,
+                                                   replay_through_seq=receiver.applied))
+                    elif checkpoint == 'snapshot':
+                        receiver.receive(self.raw(self.request_identity_snapshot(receiver)))
+                    before = deepcopy((vars(receiver.game), receiver.active_requests,
+                                       receiver.time_bank_ms, receiver.terminal_acks))
+                    later = dict(first, seq=receiver.applied + 1, action_id='different-late', **change)
+                    if change:
+                        self.assert_rejected_atomically(receiver, later)
+                    else:
+                        self.assertEqual(receiver.receive(self.raw(later)), 'applied')
+                    self.assertEqual((vars(receiver.game), receiver.active_requests,
+                                      receiver.time_bank_ms, receiver.terminal_acks), before)
+
+    def test_compacted_terminal_ack_keeps_observed_request_clock(self):
+        cases = [
+            ('reject', None, {'elapsed_ms': 21000, 'time_bank_ms': 0}, True),
+            ('reject', None, {'elapsed_ms': 7000, 'time_bank_ms': 14000}, False),
+            ('reject', 'default', {'elapsed_ms': 21000, 'time_bank_ms': 0}, True),
+            ('reject', 'default', {'elapsed_ms': 20000, 'time_bank_ms': 1000}, False),
+            ('default', 'default', {'elapsed_ms': 7000, 'time_bank_ms': 14000}, True),
+            ('default', 'default', {'elapsed_ms': 7001, 'time_bank_ms': 13999}, False),
+            ('chombo', 'user', {'elapsed_ms': 7000, 'time_bank_ms': 14000}, True),
+            ('chombo', 'user', {'elapsed_ms': 7001, 'time_bank_ms': 13999}, False),
+            ('reject', 'user', {'elapsed_ms': 7000, 'time_bank_ms': 14000}, False),
+        ]
+        for policy, source, clock, valid in cases:
+            with self.subTest(policy=policy, source=source, clock=clock):
+                trace = self.trace('request_cause_uses_current_event_sequence')
+                trace['welcome']['rules']['invalid_action_policy'] = policy
+                trace['steps'][0]['message']['event']['rules']['invalid_action_policy'] = policy
+                receiver = self.receiver(trace['welcome'])
+                for step in trace['steps'][:9]:
+                    receiver.receive(self.raw(step['message']))
+                if source is not None:
+                    selected = self.request_identity_snapshot(receiver)
+                    request = selected['state']['pending_requests'][0]
+                    elapsed, bank = (21000, 0) if source == 'default' and policy != 'default' else (7000, 14000)
+                    request.update(remaining_ms=0, decision_group_remaining_ms=0,
+                                   selection=dict(action_id=request['default_action_id'], source=source,
+                                                  elapsed_ms=elapsed, time_bank_ms=bank))
+                    selected['state']['time_bank_ms'] = selected['state']['kyoku']['self_state']['time_bank_ms'] = bank
+                    receiver.receive(self.raw(selected))
+                # A recovery jump may cover the terminal ACK and all subsequent
+                # events, but must not erase facts learned before the gap.
+                snapshot = deepcopy(self.vectors['V58_snapshot_ended_rankings']['positive'])
+                snapshot.update(seq=22, replaces_through_seq=21)
+                snapshot['state'].update(players=trace['welcome']['players'], time_bank_ms=0)
+                receiver.begin_resume(dict(trace['welcome'], resumed=True,
+                                           replay_from_seq=receiver.applied + 1, replay_through_seq=21))
+                self.assertEqual(receiver.receive(self.raw(snapshot)), 'applied')
+                self.assertNotIn('reaction1', receiver.terminal_acks)
+                late = {key: trace['welcome'][key] for key in ('yamai', 'session_id', 'game_id')}
+                late.update(kind='ack', seq=23, request_id='reaction1', action_id='late', status='stale', **clock)
+                if valid:
+                    self.assertEqual(receiver.receive(self.raw(late)), 'applied')
+                    self.assertEqual(receiver.time_bank_ms, 0)
+                else:
+                    self.assert_rejected_atomically(receiver, late)
+
     def snapshot_history(self):
         trace = self.trace('wire_complete_game')
         messages = [step['message'] for step in trace['steps'][:4]]
@@ -1317,7 +1394,7 @@ class SessionInvariants(unittest.TestCase):
     def assert_rejected_atomically(self, receiver, message):
         def state():
             return (receiver.applied, receiver.time_bank_ms, receiver.requests,
-                    receiver.request_clock_floor,
+                    receiver.request_clock_floor, receiver.late_ack_clocks, receiver.late_attempts,
                     receiver.terminal_acks, receiver.expected_effects,
                     receiver.active_requests, receiver.known, receiver.event_seq_floor,
                     receiver.request_ids, receiver.observed_request_ids,

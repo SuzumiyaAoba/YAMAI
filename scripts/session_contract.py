@@ -220,6 +220,9 @@ class Receiver:
         self.request_clock_floor: dict[str, int] = {}
         self.terminal_acks: dict[str, dict] = {}
         self.late_attempts: set[tuple[str, str]] = set()
+        # Even if a snapshot hid the terminal ACK, all subsequently observed
+        # late attempts must report the same frozen terminal clock.
+        self.late_ack_clocks: dict[str, tuple[int, int]] = {}
         self.expected_effects: list[dict] = []
         self.unadopted_reaction: dict | None = None
         self.time_bank_ms = welcome["rules"]["time_control"]["bank_ms"]
@@ -663,6 +666,25 @@ class Receiver:
                         require(self.terminal_acks[rid]["status"] in {"defaulted", "stale"},
                                 "invalid_message", "late stale ACK follows an explicit terminal selection")
                         require(all(message[key] == self.terminal_acks[rid][key] for key in ("elapsed_ms", "time_bank_ms")), "invalid_message", "late ACK changed the original clock")
+                    elif rid in self.requests:
+                        # A recovery snapshot may cover the terminal ACK, but
+                        # it cannot invalidate clocks/selections already seen.
+                        request = self.requests[rid]
+                        policy = self.welcome["rules"]["invalid_action_policy"]
+                        grace = self.welcome["rules"]["time_control"]["grace_ms"]
+                        require(message["elapsed_ms"] >= self.request_clock_floor.get(rid, 0),
+                                "invalid_message", "late ACK clock precedes an observed request clock")
+                        check_clock(request, message, grace, timeout=policy == "reject")
+                        selection = request.get("selection")
+                        if selection is not None:
+                            require(selection["source"] != "user" or policy == "chombo",
+                                    "invalid_message", "late stale ACK follows an explicit selection without cancellation")
+                            require(all(message[key] == selection[key] for key in ("elapsed_ms", "time_bank_ms")),
+                                    "invalid_message", "late ACK changed the frozen selection clock")
+                    clock = (message["elapsed_ms"], message["time_bank_ms"])
+                    require(rid not in self.late_ack_clocks or clock == self.late_ack_clocks[rid],
+                            "invalid_message", "late ACK changed the observed terminal clock")
+                    self.late_ack_clocks[rid] = clock
                     self.late_attempts.add(attempt)
                     # A stale ACK after snapshot compaction can reveal an
                     # otherwise unknown terminal own-seat request. Its cause

@@ -488,14 +488,28 @@ def furiten(position: dict, rules: dict, hand: dict | None = None) -> dict:
     return {"waits": [TILES[t] for t in sorted(waiting)], **flags, "ron_forbidden": any(flags.values())}
 
 
+def reaction_completes_hand(hand: dict, tile: str, cause_type: str, rules: dict) -> bool:
+    """Shape-based pass eligibility, restricted to permitted kan robbery."""
+    if cause_type == "ankan_declared":
+        if rules["ankan_chankan"] == "never":
+            return False
+        counts, fixed, _ = hand_parts(hand, rules)
+        complete = list(counts)
+        complete[tile_index(tile)] += 1
+        return any(form == "kokushi" for form, _, _ in shapes(tuple(complete), fixed))
+    return tile_index(tile) in waits(hand, rules)
+
+
 def furiten_step(position: dict, operation: dict, rules: dict) -> dict:
     p = deepcopy(position)
     kind = operation["type"]
     if kind == "draw":
         p["temporary_furiten"] = False
     elif kind == "reaction":
-        # This is a shape check, even when hora was absent for lack of yaku.
-        if tile_index(operation["pai"]) in waits(p["hand"], rules) and operation["selected"] != "hora":
+        # Lack of yaku still counts as a pass, but a forbidden ankan rob
+        # is not a winning opportunity under either furiten transition.
+        if (operation["selected"] != "hora"
+                and reaction_completes_hand(p["hand"], operation["pai"], p["cause"]["type"], rules)):
             p["riichi_furiten" if p["reach_accepted"] else "temporary_furiten"] = True
     elif kind not in {"call", "discard"}:
         raise GameError("unknown furiten transition")
@@ -770,6 +784,15 @@ def validate_snapshot_state(snapshot: dict, rules: dict | None = None) -> None:
                                     for m in kyoku["melds"][actor]),
                             "kakan declaration has no matching pon")
                 check_kan_declaration_hand(kyoku["hands"][actor], cause)
+                if (cause_type == "ankan_declared" and rules is not None
+                        and kyoku["reach_status"][actor]["state"] == "accepted"
+                        and "tiles" in kyoku["hands"][actor]):
+                    # The prior draw is not in this checkpoint, but every
+                    # tile of the declared kind gives the same shape test.
+                    hand = {"concealed_tiles": kyoku["hands"][actor]["tiles"],
+                            "melds": scoring_melds(kyoku["melds"][actor])}
+                    require(riichi_ankan(hand, cause["consumed"][0], rules),
+                            "snapshot riichi kan changes the visible hand's waits or shape")
         # Self furiten flags follow public state: riichi furiten exists
         # only under an accepted declaration, and a seat's own draw
         # clears its temporary furiten (§10.4, §13.3).
@@ -947,15 +970,7 @@ class EventState:
             return
         hand = self._scoring_hand(self.self_seat)
         tile = cause["consumed"][0] if cause["type"] == "ankan_declared" else cause["pai"]
-        if cause["type"] == "ankan_declared":
-            if self.rules["ankan_chankan"] == "never":
-                return
-            counts, fixed, _ = hand_parts(hand,self.rules)
-            full = list(counts)
-            full[tile_index(tile)] += 1
-            if not any(form == "kokushi" for form,_,_ in shapes(tuple(full),fixed)):
-                return
-        if tile_index(tile) in waits(hand, self.rules):
+        if reaction_completes_hand(hand, tile, cause["type"], self.rules):
             flag = "riichi_furiten" if self.round["reach_status"][self.self_seat]["state"] == "accepted" else "temporary_furiten"
             self.round["self_state"][flag] = True
 

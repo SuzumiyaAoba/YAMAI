@@ -530,6 +530,33 @@ class ScoringInvariants(unittest.TestCase):
                         calculate_fixture(fixture, self.rules)
                     self.assertEqual(error.exception.code, 'invalid_context')
 
+    def test_houtei_projection_requires_the_final_drawers_first_discard(self):
+        original = self.fixtures['yaku_houtei']
+        self.assertEqual(calculate_fixture(original, self.rules), original['expected'])
+        # The final discard can be taken from the hand rather than drawn.
+        tedashi = deepcopy(original)
+        tedashi['state']['events'][0]['pai'] = '9p'
+        tedashi['state']['events'][-1]['tsumogiri'] = False
+        self.assertEqual(calculate_fixture(tedashi, self.rules), original['expected'])
+
+        for case in ('missing_draw', 'wrong_discarder', 'second_discard', 'later_discarder'):
+            with self.subTest(case=case):
+                fixture = deepcopy(original)
+                state = fixture['state']
+                if case == 'missing_draw':
+                    state['pre_state'].update(wall_remaining=0, last_tile=True)
+                    state['events'].pop(0)
+                elif case == 'wrong_discarder':
+                    fixture['input']['target'] = state['events'][-1]['actor'] = 2
+                else:
+                    discard = deepcopy(state['events'][-1])
+                    if case == 'later_discarder':
+                        fixture['input']['target'] = discard['actor'] = 2
+                    state['events'].append(discard)
+                with self.assertRaisesRegex(ScoringError, 'houtei does not immediately follow') as error:
+                    calculate_fixture(fixture, self.rules)
+                self.assertEqual(error.exception.code, 'invalid_context')
+
     def test_fourth_kan_abort_preserves_its_forced_rinshan_win_context(self):
         for method in ('tsumo', 'ron'):
             for enabled in (False, True):

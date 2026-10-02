@@ -449,6 +449,14 @@ def _context(data: dict[str, Any], state: dict[str, Any], fixed: tuple[Meld, ...
         expected_kind = "tsumo" if data["win_method"] == "tsumo" else pending["kind"] + "_declared" if pending else "dahai"
         require(source["type"] == expected_kind and source["actor"] == target and source.get("pai") == data["winning_tile"],
                 "invalid_context", "winning tile differs from the final projected source event")
+        if state["last_tile"] and data["win_method"] == "ron":
+            # A nonempty houtei projection must contain the final live-wall
+            # draw and that same player's immediately following discard.
+            # Keeping last_tile true through arbitrary later discards would
+            # turn them into another houtei opportunity.
+            previous = state["events"][-2] if len(state["events"]) >= 2 else {}
+            require(previous.get("type") == "tsumo" and previous.get("actor") == target,
+                    "invalid_context", "houtei does not immediately follow the final live-wall draw")
     dora, ura = data["dora_markers"], data["ura_dora_markers"]
     if pending:
         # All four copies belong to the declarer's hand/pon. The virtual

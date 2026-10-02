@@ -1063,6 +1063,9 @@ def _check_request(message: Mapping[str, Any], *, grace_ms: int | None = None, e
         kind = candidate["action"]["type"]
         if kind in extension_contexts:
             _require(context in extension_contexts[kind], "invalid_message", "extension action is not allowed in this decision context")
+        elif context == "turn":
+            _require(kind in {"dahai", "reach", "ankan", "kakan", "hora", "ryukyoku"},
+                     "invalid_message", "turn request contains a reaction-only action")
     grouped = any(x in message for x in GROUP_FIELDS)
     _require(not grouped or isinstance(group, str), "invalid_message", "decision group fields require an id")
     if group is not None:

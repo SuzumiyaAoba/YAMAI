@@ -22,6 +22,35 @@ class ValidatorBoundaries(unittest.TestCase):
             operation(*args, **kwargs)
         self.assertEqual(caught.exception.code, code)
 
+    def test_turn_request_rejects_reaction_only_candidates_without_cause(self):
+        request = {"request_id": "r", "seat": 0, "caused_by_seq": 1,
+                   "timeout_ms": 100, "time_bank_ms": 0,
+                   "legal_actions": [{"action_id": "d", "action": {
+                       "type": "dahai", "actor": 0, "pai": "1m", "tsumogiri": True}}],
+                   "default_action_id": "d"}
+        schemas = v.SchemaSet()
+        schema = v.request_payload_schema(schemas)
+        v._check_request(request)
+        for kind in ("chi", "pon", "daiminkan"):
+            action = {"type": kind, "actor": 0, "target": 3, "pai": "1m",
+                      "consumed": ["2m", "3m"] if kind == "chi" else ["1m"] * (3 if kind == "daiminkan" else 2)}
+            if kind != "daiminkan":
+                action["dahai"] = {"type": "dahai", "actor": 0, "pai": "2p", "tsumogiri": False}
+            candidate = deepcopy(request)
+            candidate["legal_actions"].append({"action_id": "call", "action": action})
+            with self.subTest(kind=kind):
+                # The shape is legal; decision context must still be checked
+                # when the cause event is absent from a partial capture.
+                schemas.validate(candidate, schema)
+                self.assert_error("invalid_message", v._check_request, candidate)
+        for kind in ("hora", "ryukyoku", "x_acme_choice"):
+            candidate = deepcopy(request)
+            candidate["legal_actions"].append({"action_id": "choice", "action": {"type": kind, "actor": 0}})
+            with self.subTest(kind=kind):
+                v._check_request(candidate, extension_contexts={"x_acme_choice": ["turn"]})
+        self.assert_error("invalid_message", v._check_request, candidate,
+                          extension_contexts={"x_acme_choice": ["reaction"]})
+
     def test_static_resource_deadline_covers_both_backlog_limits(self):
         for backlog_bytes, backlog_messages in ((8388608, 1), (1000, 1024), (8388608, 1024)):
             trace = {'trace_type': 'resource', 'peer_reads': False,

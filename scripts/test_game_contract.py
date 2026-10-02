@@ -6,7 +6,7 @@ from copy import deepcopy
 from decimal import Decimal, localcontext
 
 import validate_artifacts as v
-from game_contract import EventState, GameError, canonical_action, check_hora_payments, json_equal, legal_actions, next_kyoku
+from game_contract import EventState, GameError, canonical_action, check_hora_payments, furiten_step, json_equal, legal_actions, next_kyoku
 from session_contract import Receiver, SessionError
 from scoring_reference import ORPHANS, TILES, ScoringError, inventory, score_hand
 
@@ -83,6 +83,45 @@ class GameContractTests(unittest.TestCase):
         p["hand"]["concealed_tiles"].reverse()
         self.assertEqual(actual, {canonical_action(a) for a in legal_actions(p, self.rules)})
         self.assertEqual(actual, {canonical_action(a) for a in trace["expected"]})
+
+    def test_furiten_transitions_only_count_permitted_ankan_robbery(self):
+        position = deepcopy(self.vectors['V204_no_yaku_pass_still_temporary_furiten']['positive']['trace']['input']['position'])
+        ordinary = deepcopy(position['hand'])
+        kokushi = {'concealed_tiles': [TILES[t] for t in sorted(ORPHANS) if TILES[t] != 'E'] + ['S'],
+                   'melds': []}
+        for hand, tile in ((ordinary, '2s'), (kokushi, 'E')):
+            for cause_type in ('dahai', 'kakan_declared', 'ankan_declared'):
+                for ankan_rule in ('never', 'kokushi_only'):
+                    for riichi in (False, True):
+                        with self.subTest(kokushi=hand == kokushi, cause=cause_type,
+                                          ankan_rule=ankan_rule, riichi=riichi):
+                            rules = deepcopy(self.rules)
+                            rules['ankan_chankan'] = ankan_rule
+                            p = deepcopy(position)
+                            cause = {'type': cause_type, 'actor': 2}
+                            if cause_type == 'ankan_declared':
+                                cause['consumed'] = [tile] * 4
+                            elif cause_type == 'kakan_declared':
+                                cause.update(pai=tile, consumed=[tile] * 3)
+                            else:
+                                cause.update(pai=tile, tsumogiri=False)
+                            p.update(hand=deepcopy(hand), reach_accepted=riichi, cause=cause)
+                            eligible = cause_type != 'ankan_declared' or (ankan_rule == 'kokushi_only' and hand == kokushi)
+                            expected = {'temporary_furiten': eligible and not riichi,
+                                        'riichi_furiten': eligible and riichi}
+                            self.assertEqual(furiten_step(p, {'type': 'reaction', 'pai': tile, 'selected': 'none'}, rules), expected)
+                            self.assertEqual(furiten_step(p, {'type': 'reaction', 'pai': tile, 'selected': 'hora'}, rules),
+                                             {'temporary_furiten': False, 'riichi_furiten': False})
+                            # The standalone and wire ACK paths must agree.
+                            state = EventState(rules, self_seat=p['seat'])
+                            state.round = {'hands': [{'tiles': hand['concealed_tiles']} for _ in range(4)],
+                                           'melds': [[] for _ in range(4)],
+                                           'reach_status': [{'state': 'accepted' if riichi else 'none'} for _ in range(4)],
+                                           'self_state': {'temporary_furiten': False, 'riichi_furiten': False}}
+                            state.last_cause = p['cause']
+                            state.acknowledge({'legal_actions': [{'action_id': 'pass', 'action': {'type': 'none'}}]},
+                                              {'status': 'passed', 'action_id': 'pass'})
+                            self.assertEqual(state.round['self_state'], expected)
 
     def test_immutable_json_equality_preserves_types_and_private_members(self):
         for left, right in ((True, 1), (False, 0), ('1', 1), (None, False),
@@ -217,6 +256,8 @@ class GameContractTests(unittest.TestCase):
         self.assertEqual({canonical_action(rotate(a)) for a in actions}, {canonical_action(a) for a in legal_actions(p, self.rules)})
 
     def test_riichi_ankan_must_consume_the_drawn_tile_kind(self):
+        from game_contract import validate_snapshot_state
+
         state = self._dealt(seat=0)
         state.round['hands'][0] = {'tiles': ['E'] * 3 + ['1m'] * 4 + ['2m', '3p', '4p', '5p', '9s', '9s']}
         state.apply({'type': 'tsumo', 'actor': 0, 'pai': 'N'})
@@ -234,12 +275,31 @@ class GameContractTests(unittest.TestCase):
             candidate = deepcopy(state)
             event = {'type': 'ankan_declared', 'actor': 0, 'consumed': [tile] * 4}
             with self.subTest(tile=tile):
+                snapshot = self._snapshot(state, dict(actor=0, phase='awaiting_responses',
+                                                       last_event_seq=1, last_event=event), seat=0)
+                snapshot['kyotaku'] = state.kyotaku
+                snapshot['kyoku']['pending_kan'] = event
                 if tile == '1m':
                     with self.assertRaises(GameError):
                         candidate.apply(event)
+                    with self.assertRaisesRegex(GameError, 'riichi kan changes'):
+                        validate_snapshot_state(snapshot, self.rules)
+                    restored = EventState(self.rules)
+                    before = deepcopy(vars(restored))
+                    with self.assertRaisesRegex(GameError, 'riichi kan changes'):
+                        restored.restore(snapshot)
+                    self.assertEqual(vars(restored), before)
                 else:
                     candidate.apply(event)
                     self.assertEqual(candidate.round['pending_kan'], event)
+                    validate_snapshot_state(snapshot, self.rules)
+                    EventState(self.rules).restore(snapshot)
+                # A public view cannot infer the concealed shape; ownership
+                # and physical inventory checks continue to apply instead.
+                snapshot.update(mode='spectate', view='public', seat=None)
+                snapshot['kyoku'].pop('self_state')
+                snapshot['kyoku']['hands'][0] = {'count': 14}
+                validate_snapshot_state(snapshot, self.rules)
 
     def test_pao_event_allows_namespaced_annotations(self):
         trace = self.vectors['V250_pao_between_third_pon_and_discard']['positive']['trace']
