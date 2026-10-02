@@ -336,6 +336,11 @@ def check_hora_yaku_context(win: dict, kyoku: dict, cause: dict, rules: dict) ->
                 "three concealed triplets conflict with public open melds")
     sequences = sum(m["type"] == "chi" for m in melds)
     triplets = len(melds) - sequences
+    # The two terminal kinds must also supply the pair. A quad exhausts
+    # one kind, leaving three sequences plus the pair needing five of the
+    # other; two triplets likewise leave no physical terminal pair.
+    require(not {"chinitsu", "junchan"} <= ids or (triplets <= 1 and quads == 0),
+            "one-suit pure outside hand exceeds the public terminal kind capacity")
     require(minimum_yaku_sequences(ids) <= 4 - triplets
             and all(YAKU_MIN_TRIPLETS.get(name, 0) <= 4 - sequences for name in ids),
             "yaku shape conflicts with the committed melds")

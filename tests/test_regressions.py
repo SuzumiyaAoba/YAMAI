@@ -1493,6 +1493,49 @@ class ProtocolRegressionTests(unittest.TestCase):
                 with self.assertRaisesRegex(GameError, "shape conflicts"):
                     check_hora_yaku_context(win, kyoku, cause, SCORING["rules"])
 
+    def test_one_suit_pure_outside_hand_respects_public_terminal_capacity(self):
+        from game_contract import check_hora_yaku_context
+        from scoring_reference import score_hand
+        for suit in "mps":
+            for terminal, other in ((1, 9), (9, 1)):
+                for kinds in (("pon",), ("ankan",), ("daiminkan",), ("kakan",),
+                              ("pon", "pon"), ("pon", "ankan"), ("ankan", "ankan")):
+                    with self.subTest(suit=suit, terminal=terminal, kinds=kinds):
+                        closed = all(kind == "ankan" for kind in kinds)
+                        tile = f"{other if len(kinds) == 1 else 2}{suit}"
+                        win = self._win(actor=1, target=0, pai=tile,
+                                        fu=110 if any(kind != "pon" for kind in kinds) else 30,
+                                        han=9 if closed else 7,
+                                        yakus=[{"id": "chinitsu", "unit": "han", "value": 6 if closed else 5},
+                                               {"id": "junchan", "unit": "han", "value": 3 if closed else 2}])
+                        melds = [{"type": kind, "actor": 1,
+                                  "consumed": [f"{rank}{suit}"] * {"pon": 2, "ankan": 4, "daiminkan": 3, "kakan": 3}[kind],
+                                  **({"pai": f"{rank}{suit}", "target": 0} if kind != "ankan" else {})}
+                                 for kind, rank in zip(kinds, (terminal, other))]
+                        kyoku = {"oya": 0, "bakaze": "E", "melds": [[], melds, [], []],
+                                 "hands": [{"count": 13 - 3 * len(melds) if seat == 1 else 13}
+                                           for seat in range(4)], "rinshan": False,
+                                 "haitei": False, "first_turn_eligible": [False] * 4,
+                                 "reach_status": [{"state": "none", "double": False, "ippatsu": False}
+                                                  for _ in range(4)]}
+                        cause = {"type": "dahai", "actor": 0, "pai": tile, "tsumogiri": True}
+                        if kinds == ("pon",):
+                            # 111 + 123 + 789 + 789 + 99 (or its reversal)
+                            # is a physical one-pon witness in every suit.
+                            runs = ("123", "789", "789") if terminal == 1 else ("789", "123", "123")
+                            data = copy.deepcopy(FIXTURES["yaku_shousangen"]["input"])
+                            data.update(winning_tile=tile, dora_markers=["P"], hand={
+                                "concealed_tiles": [f"{rank}{suit}" for run in runs for rank in run] + [tile],
+                                "melds": [{"kind": "pon", "open": True, "source": 0,
+                                           "tiles": [f"{terminal}{suit}"] * 3}]})
+                            computed = score_hand(data, FIXTURES["yaku_shousangen"]["state"], SCORING["rules"])
+                            self.assertEqual(computed["yakus"], win["yakus"])
+                            self.assertEqual((computed["fu"], computed["han"]), (win["fu"], win["han"]))
+                            check_hora_yaku_context(win, kyoku, cause, SCORING["rules"])
+                        else:
+                            with self.assertRaisesRegex(GameError, "terminal kind"):
+                                check_hora_yaku_context(win, kyoku, cause, SCORING["rules"])
+
     def test_public_hora_payment_amounts_are_recomputed(self):
         trace = VECTORS["V104_wire_complete_game"]["positive"]["trace"]
         for mutation in ("hand_points", "deltas"):
