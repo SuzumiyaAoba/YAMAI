@@ -1110,8 +1110,8 @@ class GameContractTests(unittest.TestCase):
                                         'pai': '9s', 'consumed': ['7s', '8s']}, discard],
             'pon_discard': [acceptance, {'type': 'pon', 'actor': 1, 'target': 0,
                                         'pai': '9s', 'consumed': ['9s', '9s']}, discard],
-            # A completed daiminkan has advanced out of the declaration
-            # reaction even before drawing rinshan or publishing delayed dora.
+            # A completed daiminkan has no new OPEN decision until the
+            # rinshan draw, even though the old reach reaction has finished.
             'daiminkan': [acceptance, {'type': 'daiminkan', 'actor': 1, 'target': 0,
                                       'pai': '9s', 'consumed': ['9s'] * 3}],
         }
@@ -1130,13 +1130,18 @@ class GameContractTests(unittest.TestCase):
                                   *continuation]:
                         self._send_event(receiver, event)
                     sticks = int(name != 'unaccepted')
-                    deltas = [2800, -8000, 2600, 2600]
+                    # After seat 1's discard, only the other three seats
+                    # have reaction requests eligible to cause chombo.
+                    offender = 0 if name in {'next_discard', 'chi_discard', 'pon_discard'} else 1
+                    others = [seat for seat in range(4) if seat != offender]
+                    deltas = [-8000 if seat == offender else 2800 if seat == others[0] else 2600
+                              for seat in range(4)]
                     event = {'type': 'end_kyoku', 'result': {
-                                'type': 'penalty', 'reason': 'illegal_action', 'offender': 1,
+                                'type': 'penalty', 'reason': 'illegal_action', 'offender': offender,
                                 'penalty': {'payments': [
-                                    {'from': 1, 'to': 0, 'points': 2800},
-                                    {'from': 1, 'to': 2, 'points': 2600},
-                                    {'from': 1, 'to': 3, 'points': 2600}]}},
+                                    {'from': offender, 'to': seat,
+                                     'points': 2800 if seat == others[0] else 2600}
+                                    for seat in others]}},
                              'deltas': deltas,
                              'scores': [25000 + d - (1000 * sticks if seat == 0 else 0)
                                         for seat, d in enumerate(deltas)],
@@ -1146,6 +1151,10 @@ class GameContractTests(unittest.TestCase):
                         self._assert_receiver_rejects_atomically(
                             receiver, self._event_message(receiver, event),
                             'penalty after the reach discard was accepted')
+                    elif name == 'daiminkan':
+                        self._assert_receiver_rejects_atomically(
+                            receiver, self._event_message(receiver, event),
+                            'penalty outside its decision window')
                     else:
                         self._send_event(receiver, event)
                         self.assertEqual(receiver.game.scores, event['scores'])

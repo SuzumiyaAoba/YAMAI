@@ -307,7 +307,12 @@ class Receiver:
         if ack["status"] == "stale":
             require(self.welcome["rules"]["invalid_action_policy"] == "chombo",
                     "invalid_message", "request cancellation is not enabled")
+            require(request.get("selection") is None
+                    or ("decision_group_id" in request and request["decision_group_remaining_ms"] > 0),
+                    "invalid_message", "selected decision has no open request to cause chombo")
             self.expected_effects = [{"type": "end_kyoku", "result_type": "penalty"}]
+            if request.get("selection") is not None:
+                self.expected_effects[0]["excluded_offender"] = request["seat"]
             return
         chosen = next(c["action"] for c in request["legal_actions"] if c["action_id"] == ack["action_id"])
         if "decision_group_id" in request and (ack["status"] in {"passed", "superseded"}
@@ -394,6 +399,8 @@ class Receiver:
         elif "result_type" in expected:
             require(event["result"]["type"] == expected["result_type"],
                     "invalid_message", "cancelled decision did not end with a penalty")
+            require(event["result"].get("offender") != expected.get("excluded_offender"),
+                    "invalid_message", "selected request cannot trigger a chombo penalty")
         elif expected["type"] in {"dora", "reach_accepted"}:
             require(all(event.get(k) == value for k, value in expected.items()), "invalid_message", "derived event differs from acknowledged action")
         else:
@@ -679,6 +686,9 @@ class Receiver:
                         if selection is not None:
                             require(selection["source"] != "user" or policy == "chombo",
                                     "invalid_message", "late stale ACK follows an explicit selection without cancellation")
+                            require(selection["source"] != "user" or ("decision_group_id" in request
+                                    and request["decision_group_remaining_ms"] > 0),
+                                    "invalid_message", "observed selected decision could not later be cancelled")
                             require(all(message[key] == selection[key] for key in ("elapsed_ms", "time_bank_ms")),
                                     "invalid_message", "late ACK changed the frozen selection clock")
                     clock = (message["elapsed_ms"], message["time_bank_ms"])

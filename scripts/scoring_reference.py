@@ -77,6 +77,14 @@ def allowed_yaku_tiles(ids: set[str]) -> set[int]:
     return allowed
 
 
+def minimum_yaku_sequences(ids: set[str]) -> int:
+    """Count shared sequences, including a duplicate of one of three bases."""
+    minimum = max((YAKU_MIN_SEQUENCES.get(name, 0) for name in ids), default=0)
+    if "iipeikou" in ids and ids & {"sanshoku_doujun", "ikkitsuukan"}:
+        minimum = max(minimum, 4)
+    return minimum
+
+
 class ScoringError(ValueError):
     def __init__(self, code: str, message: str):
         super().__init__(message)
@@ -118,18 +126,31 @@ def validate_win_declarations(win: dict, rules: dict | None = None, *, closed: b
     require(not ids & {"shousuushii", "daisuushii"} or WINDS <= allowed, "invalid_message",
             "four winds conflicts with the allowed tiles")
     if not any(yaku["unit"] == "yakuman" for yaku in win["yakus"]):
-        sequences = max((YAKU_MIN_SEQUENCES.get(name, 0) for name in ids), default=0)
+        sequences = minimum_yaku_sequences(ids)
         triplets = max((YAKU_MIN_TRIPLETS.get(name, 0) for name in ids), default=0)
-        dragon_triplets = max(len(ids & {"yakuhai_haku", "yakuhai_hatsu", "yakuhai_chun"}),
-                              2 if "shousangen" in ids else 0)
+        dragon_triplets = len(ids & {"yakuhai_haku", "yakuhai_hatsu", "yakuhai_chun"})
+        # §7.6.3 requires both dragon yakuhai alongside shousangen; the
+        # third dragon is its pair and cannot also supply a triplet.
+        require("shousangen" not in ids or dragon_triplets == 2, "invalid_message",
+                "small three dragons requires exactly two dragon yakuhai declarations")
+        require(dragon_triplets < 3, "invalid_message",
+                "three dragon yakuhai require the big three dragons yakuman")
+        require(not {"menzen_tsumo", "toitoi"} <= ids, "invalid_message",
+                "closed all-triplets tsumo requires the four concealed triplets yakuman")
+        require(not {"chinitsu", "honroutou"} <= ids, "invalid_message",
+                "one-suit terminals cannot provide enough tile kinds for a hand")
         wind_triplets = int(bool(ids & {"seat_wind", "round_wind"}))
         triplets = max(triplets, dragon_triplets + wind_triplets
                        + (3 if "sanshoku_doukou" in ids else 0))
         require(sequences + triplets <= 4, "invalid_message", "yaku claims require more than four melds")
+        require(not {"chinitsu", "junchan"} <= ids or triplets <= 1, "invalid_message",
+                "one-suit pure outside hand has only one terminal kind available for triplets")
         require("chiitoitsu" not in ids or sequences + triplets == 0, "invalid_message",
                 "seven pairs cannot combine with meld-based yaku")
         require("honroutou" not in ids or sequences == 0, "invalid_message",
                 "all terminals and honors cannot contain a sequence")
+        require("honroutou" not in ids or bool(ids & {"toitoi", "chiitoitsu"}), "invalid_message",
+                "all terminals and honors requires all triplets or seven pairs")
         honors = {"yakuhai_haku", "yakuhai_hatsu", "yakuhai_chun", "seat_wind",
                   "round_wind", "shousangen", "chanta", "honitsu"}
         require(not (ids & {"tanyao", "junchan", "chinitsu"} and ids & honors),

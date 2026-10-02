@@ -19,7 +19,7 @@ from scoring_reference import (
     Meld, ORPHANS, TILES, ScoringError, hand_parts, inventory,
     score_hand, shapes, tile_index, waits, pao_assignments,
     basic_points, normal_payments, settle_win, validate_win_declarations,
-    YAKU_MIN_SEQUENCES, YAKU_MIN_TRIPLETS, DRAGONS, WINDS, TERMINALS, allowed_yaku_tiles,
+    YAKU_MIN_TRIPLETS, DRAGONS, WINDS, TERMINALS, allowed_yaku_tiles, minimum_yaku_sequences,
 )
 
 
@@ -336,8 +336,8 @@ def check_hora_yaku_context(win: dict, kyoku: dict, cause: dict, rules: dict) ->
                 "three concealed triplets conflict with public open melds")
     sequences = sum(m["type"] == "chi" for m in melds)
     triplets = len(melds) - sequences
-    require(all(YAKU_MIN_SEQUENCES.get(name, 0) <= 4 - triplets
-                and YAKU_MIN_TRIPLETS.get(name, 0) <= 4 - sequences for name in ids),
+    require(minimum_yaku_sequences(ids) <= 4 - triplets
+            and all(YAKU_MIN_TRIPLETS.get(name, 0) <= 4 - sequences for name in ids),
             "yaku shape conflicts with the committed melds")
     require(not ids & {"honroutou", "tsuuiisou", "chinroutou"} or sequences == 0,
             "all terminals or honors cannot contain a public sequence")
@@ -440,6 +440,15 @@ def check_hora_visible_tiles(win: dict, kyoku: dict) -> None:
                        "seat_wind": 27 + (actor - kyoku["oya"]) % 4,
                        "round_wind": 27 + "ESWN".index(kyoku["bakaze"])}
         required = {tile for name, tile in honor_roles.items() if name in ids}
+        # Seat and round wind may share a triplet only when the public
+        # coordinates name the same wind. Honor triplets cannot share the
+        # suited triplets of sanshoku_doukou or any required sequence.
+        sequences_needed = minimum_yaku_sequences(ids)
+        suited_triplets = 3 if "sanshoku_doukou" in ids else 0
+        require(len(required) + suited_triplets + sequences_needed <= 4,
+                "yaku required melds exceed four after resolving the winds")
+        require("shousangen" not in ids or len(required) < 4,
+                "small dragons and four honor triplets force an all honors yakuman")
         require(len(required - triplets) <= free,
                 "honor yaku lack room for their required melds")
         require(all(name in ids for name, tile in honor_roles.items() if tile in triplets),
@@ -727,6 +736,20 @@ def validate_snapshot_state(snapshot: dict, rules: dict | None = None) -> None:
                         "declaration discard is unmarked or carries ippatsu")
                 require(s["double"] == (len(river) == 1 and not any(kyoku["melds"])),
                         "double flag differs from declaration-time eligibility")
+                # This checkpoint is still in the declaration discard's
+                # reaction window: no later draw or deposit can explain
+                # missing prerequisites. Accepted declarations may have
+                # spent their deposit and survived many subsequent draws.
+                require(kyoku["wall_remaining"] >= 4,
+                        "snapshot reach declared with fewer than four live tiles")
+                if rules is not None:
+                    require(snapshot["scores"][a] >= rules["riichi_stick_value"],
+                            "snapshot reach declaration cannot fund its deposit")
+                    hand = kyoku["hands"][a]
+                    if "tiles" in hand:
+                        require(bool(waits({"concealed_tiles": hand["tiles"],
+                                            "melds": scoring_melds(kyoku["melds"][a])}, rules)),
+                                "snapshot reach declaration is not tenpai")
             else:
                 require(any(t["reach"] for t in river), "accepted reach has no marked discard")
                 require(not s["double"] or river[0]["reach"],
@@ -736,6 +759,15 @@ def validate_snapshot_state(snapshot: dict, rules: dict | None = None) -> None:
                 require(not s["ippatsu"] or river[-1]["reach"], "ippatsu survives a post-reach discard")
                 require(s["ippatsu"] or not (river[-1]["reach"] and not any(kyoku["melds"])),
                         "ippatsu flag differs from the open reach window")
+                hand = kyoku["hands"][a]
+                if (rules is not None and "tiles" in hand
+                        and len(hand["tiles"]) + 3 * len(kyoku["melds"][a]) == 13):
+                    # Accepted riichi preserves a waiting thirteen-tile
+                    # shape. Do not infer the earlier draw from fourteen
+                    # tiles in an active turn or pending kan declaration.
+                    require(bool(waits({"concealed_tiles": hand["tiles"],
+                                        "melds": scoring_melds(kyoku["melds"][a])}, rules)),
+                            "snapshot accepted riichi hand is not tenpai")
         cause = kyoku["turn"]["last_event"]
         # The turn actor and projected state follow the committed cause:
         # a round start fixes the dealer and a fresh board, while a
@@ -1270,11 +1302,19 @@ class EventState:
             elif result["type"] == "penalty":
                 require(self.rules["invalid_action_policy"] == "chombo", "penalty is disabled")
                 cause = self.last_cause
+                require(r["turn"]["phase"] != "resolving",
+                        "penalty has no open request after decision linearization")
+                require(cause["type"] in {"tsumo", "dahai", "ankan_declared", "kakan_declared"},
+                        "penalty has no open decision source")
+                require(phase == ("awaiting_action" if cause["type"] == "tsumo" else "awaiting_responses"),
+                        "penalty outside its decision window")
                 if phase == "awaiting_responses" and cause["type"] == "dahai":
                     river = r["rivers"][cause["actor"]]
                     require(not (river and river[-1]["reach"] and r["reach_status"][cause["actor"]]["state"] == "accepted"),
                             "penalty after the reach discard was accepted")
                 offender = result["offender"]
+                require((offender == cause["actor"]) == (cause["type"] == "tsumo"),
+                        "penalty offender has no request in this decision")
                 amount = self.rules["chombo"]["penalty_points"]
                 others = [seat for seat in range(4) if seat != offender]
                 base, remainder = amount // 300 * 100, amount % 300

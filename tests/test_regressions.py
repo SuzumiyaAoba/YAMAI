@@ -701,19 +701,19 @@ class ProtocolRegressionTests(unittest.TestCase):
         rules = copy.deepcopy(SCORING["rules"])
         rules["invalid_action_policy"] = "chombo"
         state = self._dealt(rules)
-        self._open_reaction(state)
+        state.apply({"type": "tsumo", "actor": 0, "pai": None})
         wrong = [{"from": 0, "to": 1, "points": 2700}, {"from": 0, "to": 2, "points": 2700},
                  {"from": 0, "to": 3, "points": 2600}]
         with self.assertRaises(GameError):
             state.apply(penalty(wrong, [-8000, 2700, 2700, 2600], [17000, 27700, 27700, 27600]))
         state = self._dealt(rules)
-        self._open_reaction(state)
+        state.apply({"type": "tsumo", "actor": 0, "pai": None})
         duplicated = [{"from": 0, "to": 1, "points": 2800}, {"from": 0, "to": 1, "points": 2600},
                       {"from": 0, "to": 3, "points": 2600}]
         with self.assertRaises(GameError):
             state.apply(penalty(duplicated, [-8000, 5400, 0, 2600], [17000, 30400, 25000, 27600]))
         state = self._dealt(rules)
-        self._open_reaction(state)
+        state.apply({"type": "tsumo", "actor": 0, "pai": None})
         canonical = [{"from": 0, "to": 1, "points": 2800}, {"from": 0, "to": 2, "points": 2600},
                      {"from": 0, "to": 3, "points": 2600}]
         state.apply(penalty(canonical, [-8000, 2800, 2600, 2600], [17000, 27800, 27600, 27600]))
@@ -1265,6 +1265,117 @@ class ProtocolRegressionTests(unittest.TestCase):
                 message["state"]["scores"][seat] -= 1000
                 self.check_snapshot_layers(message, SCORING["rules"], valid=False)
 
+    def _late_reach_snapshot(self, wall, *, visible):
+        # Keep a physical witness for every discard, the visible ready hand,
+        # the other three initial hands and the complete dead wall.
+        rules = SCORING["rules"]
+        ready = ["1m", "2m", "3m", "4m", "5m", "6m", "7p", "8p", "9p",
+                 "2s", "3s", "4s", "E"]
+        tiles = [tile for suit in "mps" for rank in range(1, 10)
+                 for tile in ([f"5{suit}"] * (4 - rules["red_fives"][suit])
+                              + [f"5{suit}r"] * rules["red_fives"][suit]
+                              if rank == 5 else [f"{rank}{suit}"] * 4)]
+        tiles.extend(tile for tile in "ESWNPFC" for _ in range(4))
+        for tile in [*ready, "2p"]:
+            tiles.remove(tile)
+        drawn = tiles[:70]
+        self.assertEqual(len(tiles[70:]), 3 * 13 + 13)
+        actor = (69 - wall) % 4
+        game = EventState(rules, self_seat=actor if visible else None)
+        game.apply(dict(type="start_game", scores=[25000] * 4, rules=rules))
+        hands = [{"count": 13} for _ in range(4)]
+        if visible:
+            hands[actor] = {"tiles": ready}
+        game.apply(dict(type="start_kyoku", bakaze="E", kyoku=1, oya=0, honba=0,
+                        kyotaku=0, extension_round=0, scores=[25000] * 4,
+                        dora_marker="2p", hands=hands))
+        for turn, tile in enumerate(drawn[:70 - wall]):
+            seat = turn % 4
+            game.apply(dict(type="tsumo", actor=seat, pai=tile if visible and seat == actor else None))
+            game.apply(dict(type="dahai", actor=seat, pai=tile, tsumogiri=True))
+        message = self._reach_window_snapshot()
+        state = message["state"]
+        state["kyoku"] = game.round
+        kyoku = state["kyoku"]
+        kyoku["rivers"][actor][-1]["reach"] = True
+        kyoku["reach_status"][actor].update(state="declared", double=False)
+        last_seq = 2 + 2 * (70 - wall) + 1  # include the declaration event
+        message.update(seq=last_seq + 1, replaces_through_seq=last_seq)
+        kyoku["turn"].update(last_event=game.last_cause, last_event_seq=last_seq)
+        state.update(mode="play" if visible else "spectate", seat=actor if visible else None,
+                     view="seat" if visible else "public")
+        if not visible:
+            state.pop("time_bank_ms")
+            state.pop("pending_requests")
+        return message
+
+    def test_snapshot_declared_reach_requires_deposit_and_four_live_tiles(self):
+        for stick in (0, 1000, 2000):
+            rules = {**SCORING["rules"], "riichi_stick_value": stick}
+            for visible in (False, True):
+                for wall in (3, 4):
+                    for points in sorted({0, max(0, stick - 100), stick}):
+                        with self.subTest(stick=stick, visible=visible, wall=wall, points=points):
+                            message = self._late_reach_snapshot(wall, visible=visible)
+                            actor = message["state"]["kyoku"]["turn"]["actor"]
+                            scores = message["state"]["scores"]
+                            scores[(actor + 1) % 4] += scores[actor] - points
+                            scores[actor] = points
+                            self.check_snapshot_layers(message, rules,
+                                                       valid=wall >= 4 and points >= stick)
+
+    def test_snapshot_declared_reach_requires_visible_tenpai(self):
+        from scoring_reference import waits
+        for visible in (False, True):
+            for noten in (False, True):
+                with self.subTest(visible=visible, noten=noten):
+                    message = self._late_reach_snapshot(4, visible=visible)
+                    kyoku = message["state"]["kyoku"]
+                    actor = kyoku["turn"]["actor"]
+                    if visible and noten:
+                        hand = kyoku["hands"][actor]["tiles"]
+                        # Exchange two physical tiles with a past discard so
+                        # only the ready-hand prerequisite becomes false.
+                        river = next(t for row in kyoku["rivers"] for t in row
+                                     if t["pai"] == "2m")
+                        hand[0], river["pai"] = river["pai"], hand[0]
+                        self.assertFalse(waits({"concealed_tiles": hand, "melds": []}, SCORING["rules"]))
+                    self.check_snapshot_layers(message, SCORING["rules"], valid=not (visible and noten))
+
+    def test_snapshot_accepted_reach_does_not_reapply_declaration_thresholds(self):
+        # The deposit is already gone and later draws can leave fewer than
+        # four live tiles; neither fact cancels an accepted declaration.
+        message = self._late_reach_snapshot(3, visible=True)
+        state, kyoku = message["state"], message["state"]["kyoku"]
+        actor = kyoku["turn"]["actor"]
+        kyoku["reach_status"][actor].update(state="accepted", ippatsu=False)
+        kyoku["rivers"][actor][-1]["reach"] = False
+        kyoku["rivers"][actor][-2]["reach"] = True
+        kyoku["kyotaku"] = state["kyotaku"] = 1
+        state["scores"][actor] = 0
+        state["scores"][(actor + 1) % 4] += 24000
+        self.check_snapshot_layers(message, SCORING["rules"], valid=True)
+
+    def test_snapshot_accepted_reach_visible_waiting_hand_stays_tenpai(self):
+        from scoring_reference import waits
+        message = self._accepted_reach_snapshot(ippatsu_window=True)
+        message["state"]["scores"][0] -= SCORING["rules"]["riichi_stick_value"]
+        self.check_snapshot_layers(message, SCORING["rules"], valid=True)
+        kyoku = message["state"]["kyoku"]
+        self.assertNotEqual(kyoku["turn"]["actor"], message["state"]["seat"])
+        hand = kyoku["hands"][0]["tiles"]
+        hand[0] = "2s"
+        self.assertFalse(waits({"concealed_tiles": hand, "melds": []}, SCORING["rules"]))
+        self.check_snapshot_layers(message, SCORING["rules"], valid=False)
+
+        # A public checkpoint cannot determine an unseen hand's waits.
+        message["state"].update(mode="spectate", seat=None, view="public")
+        message["state"].pop("pending_requests")
+        message["state"].pop("time_bank_ms")
+        kyoku.pop("self_state")
+        kyoku["hands"][0] = {"count": 13}
+        self.check_snapshot_layers(message, SCORING["rules"], valid=True)
+
     def test_snapshot_pending_kan_counts_revealed_tiles(self):
         base = copy.deepcopy(VECTORS["V293_snapshot_kan_declaration_cause"]["positive"])
         self.check_snapshot_layers(base, SCORING["rules"], valid=True)
@@ -1328,6 +1439,59 @@ class ProtocolRegressionTests(unittest.TestCase):
                             receiver.receive(self.raw(trace["steps"][1]["message"]))
                         self.assertEqual(caught.exception.code, "invalid_message")
                         self.assertEqual((vars(receiver.game), receiver.applied, receiver.known), before)
+
+    def test_hidden_yaku_meld_budget_counts_distinct_seat_and_round_winds(self):
+        from game_contract import check_hora_yaku_context
+        from scoring_reference import validate_win_declarations
+        values = {"chanta": 2, "honitsu": 3, "round_wind": 1, "sanankou": 2,
+                  "seat_wind": 1, "shousangen": 2, "yakuhai_haku": 1, "yakuhai_hatsu": 1}
+        win = self._win(actor=1, target=0, pai="C", fu=70, han=sum(values.values()),
+                        yakus=[{"id": name, "unit": "han", "value": value}
+                               for name, value in sorted(values.items())])
+        # The role IDs alone permit the seat and round wind to share a
+        # triplet. Public coordinates decide whether that sharing is real.
+        validate_win_declarations(win, SCORING["rules"], closed=True)
+        kyoku = {"oya": 0, "bakaze": "S", "melds": [[] for _ in range(4)],
+                 "hands": [{"count": 13} for _ in range(4)], "rinshan": False,
+                 "haitei": False, "first_turn_eligible": [False] * 4,
+                 "reach_status": [{"state": "none", "double": False, "ippatsu": False}
+                                  for _ in range(4)]}
+        cause = {"type": "dahai", "actor": 0, "pai": "C", "tsumogiri": True}
+        check_hora_yaku_context(win, kyoku, cause, SCORING["rules"])
+        kyoku["bakaze"] = "E"
+        # Two distinct wind triplets plus two dragon triplets leave no
+        # fifth meld for chanta's mandatory sequence, even with hidden hands.
+        with self.assertRaisesRegex(GameError, "required melds"):
+            check_hora_yaku_context(win, kyoku, cause, SCORING["rules"])
+
+        # Without chanta's sequence, the four required honor triplets and
+        # shousangen's remaining dragon pair force tsuuiisou instead. The
+        # receiver can reject ordinary roles from these declarations alone.
+        win["yakus"] = [y for y in win["yakus"] if y["id"] not in {"chanta", "honitsu", "sanankou"}]
+        win["han"] = sum(y["value"] for y in win["yakus"])
+        with self.assertRaisesRegex(GameError, "all honors"):
+            check_hora_yaku_context(win, kyoku, cause, SCORING["rules"])
+        kyoku["bakaze"] = "S"
+        check_hora_yaku_context(win, kyoku, cause, SCORING["rules"])
+
+    def test_public_ankan_conflicts_with_combined_four_sequence_roles(self):
+        from game_contract import check_hora_yaku_context
+        for role in ("sanshoku_doujun", "ikkitsuukan"):
+            with self.subTest(role=role):
+                win = self._win(actor=1, target=0, pai="9m", fu=50, han=3,
+                                yakus=[{"id": "iipeikou", "unit": "han", "value": 1},
+                                       {"id": role, "unit": "han", "value": 2}])
+                kyoku = {"oya": 0, "bakaze": "E", "melds": [[] for _ in range(4)],
+                         "hands": [{"count": 13} for _ in range(4)], "rinshan": False,
+                         "haitei": False, "first_turn_eligible": [False] * 4,
+                         "reach_status": [{"state": "none", "double": False, "ippatsu": False}
+                                          for _ in range(4)]}
+                cause = {"type": "dahai", "actor": 0, "pai": "9m", "tsumogiri": True}
+                check_hora_yaku_context(win, kyoku, cause, SCORING["rules"])
+                kyoku["melds"][1] = [{"type": "ankan", "actor": 1, "consumed": ["2s"] * 4}]
+                kyoku["hands"][1] = {"count": 10}
+                with self.assertRaisesRegex(GameError, "shape conflicts"):
+                    check_hora_yaku_context(win, kyoku, cause, SCORING["rules"])
 
     def test_public_hora_payment_amounts_are_recomputed(self):
         trace = VECTORS["V104_wire_complete_game"]["positive"]["trace"]

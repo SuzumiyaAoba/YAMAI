@@ -1,5 +1,6 @@
 """Scoring invariants beyond the individual official goldens."""
 from copy import deepcopy
+from itertools import combinations
 import json
 from pathlib import Path
 import unittest
@@ -107,6 +108,210 @@ class ScoringInvariants(unittest.TestCase):
                 win = deepcopy(self.fixtures['yakuman_daisangen']['expected']['wins'][0])
                 win['yakus'] = [dict(id=name, value=1, unit='yakuman') for name in sorted(roles)]
                 validate_win_declarations(win)
+
+    def test_shousangen_requires_exactly_two_dragon_yakuhai_ids(self):
+        fixture = self.fixtures['yaku_shousangen']
+        kyoku, cause = self.public_context(fixture['input'], fixture['state'])
+        # No meld or concealed tile discloses which dragons are present.
+        # The declared shousangen alone requires both dragon yakuhai IDs.
+        kyoku['melds'] = [[] for _ in range(4)]
+        kyoku['hands'] = [{'count': 13} for _ in range(4)]
+        dragons = ('yakuhai_haku', 'yakuhai_hatsu', 'yakuhai_chun')
+        for count in range(4):
+            for roles in combinations(dragons, count):
+                win = deepcopy(fixture['expected']['wins'][0])
+                win['yakus'] = [dict(id=name, value=2 if name == 'shousangen' else 1, unit='han')
+                                for name in sorted(('shousangen', *roles))]
+                win.update(pai='3m', han=2 + count)
+                checks = (
+                    ('declarations_only', lambda: validate_win_declarations(win)),
+                    ('with_rules', lambda: validate_win_declarations(win, self.rules)),
+                    ('hidden_hand', lambda: check_hora_yaku_context(win, kyoku, cause, self.rules)),
+                )
+                for context, check in checks:
+                    with self.subTest(roles=roles, context=context):
+                        if count == 2:
+                            check()
+                        else:
+                            with self.assertRaisesRegex(ScoringError, 'exactly two dragon yakuhai') as error:
+                                check()
+                            self.assertEqual(error.exception.code, 'invalid_message')
+
+    def test_each_small_dragon_pair_remains_valid_open_or_closed(self):
+        dragon_roles = {'P': 'yakuhai_haku', 'F': 'yakuhai_hatsu', 'C': 'yakuhai_chun'}
+        for pair in dragon_roles:
+            for closed in (False, True):
+                with self.subTest(pair=pair, closed=closed):
+                    fixture = deepcopy(self.fixtures['yaku_shousangen'])
+                    data = fixture['input']
+                    triplets = [tile for tile in dragon_roles if tile != pair]
+                    data['hand'] = dict(concealed_tiles=['1m', '2m', '3m', '4p', '5p', '6p', pair],
+                                        melds=[])
+                    data['winning_tile'] = pair
+                    for tile in triplets:
+                        if closed:
+                            data['hand']['concealed_tiles'].extend([tile] * 3)
+                        else:
+                            data['hand']['melds'].append(dict(kind='pon', open=True, source=data['target'],
+                                                             tiles=[tile] * 3))
+                    win = calculate_fixture(fixture, self.rules)['wins'][0]
+                    self.assertEqual({y['id'] for y in win['yakus']},
+                                     {'shousangen', *(dragon_roles[tile] for tile in triplets)})
+                    validate_win_declarations(win, self.rules, closed=closed)
+                    win['pai'] = pair
+                    kyoku, cause = self.public_context(data, fixture['state'])
+                    check_hora_yaku_context(win, kyoku, cause, self.rules)
+
+    def test_three_dragon_yakuhai_require_daisangen_instead(self):
+        fixture = self.fixtures['yaku_shousangen']
+        kyoku, cause = self.public_context(fixture['input'], fixture['state'])
+        kyoku['melds'] = [[] for _ in range(4)]
+        kyoku['hands'] = [{'count': 13} for _ in range(4)]
+        dragons = ('yakuhai_haku', 'yakuhai_hatsu', 'yakuhai_chun')
+        for count in (1, 2, 3):
+            for roles in combinations(dragons, count):
+                win = deepcopy(fixture['expected']['wins'][0])
+                win['yakus'] = [dict(id=name, value=1, unit='han') for name in sorted(roles)]
+                win.update(pai='3m', han=count)
+                checks = (
+                    ('declarations_only', lambda: validate_win_declarations(win)),
+                    ('with_rules', lambda: validate_win_declarations(win, self.rules)),
+                    ('hidden_hand', lambda: check_hora_yaku_context(win, kyoku, cause, self.rules)),
+                )
+                for context, check in checks:
+                    with self.subTest(roles=roles, context=context):
+                        if count < 3:
+                            check()
+                        else:
+                            with self.assertRaisesRegex(ScoringError, 'require the big three dragons yakuman') as error:
+                                check()
+                            self.assertEqual(error.exception.code, 'invalid_message')
+
+    def test_impossible_normal_yaku_combinations_are_rejected(self):
+        cases = [
+            {'menzen_tsumo': 1, 'toitoi': 2},
+            {'menzen_tsumo': 1, 'sanankou': 2, 'toitoi': 2},
+            {'chinitsu': 6, 'honroutou': 2},
+            {'chinitsu': 6, 'honroutou': 2, 'toitoi': 2},
+            {'chinitsu': 6, 'junchan': 3, 'sanankou': 2},
+            {'chinitsu': 6, 'junchan': 3, 'sankantsu': 2},
+        ]
+        for sequences in ('sanshoku_doujun', 'ikkitsuukan'):
+            for honor in ('yakuhai_haku', 'yakuhai_hatsu', 'yakuhai_chun', 'seat_wind', 'round_wind'):
+                cases.append({'iipeikou': 1, sequences: 2, honor: 1})
+        for roles in cases:
+            fixture = self.fixtures['yaku_menzen_tsumo']
+            win = deepcopy(fixture['expected']['wins'][0])
+            tsumo = 'menzen_tsumo' in roles
+            win.update(pai='1m', fu=40, han=sum(roles.values()), target=win['actor'] if tsumo else 0)
+            win['yakus'] = [dict(id=name, value=value, unit='han') for name, value in sorted(roles.items())]
+            kyoku, _ = self.public_context(fixture['input'], fixture['state'])
+            kyoku['hands'] = [{'count': 13} for _ in range(4)]
+            cause = dict(type='tsumo' if tsumo else 'dahai')
+            checks = (
+                ('declarations_only', lambda: validate_win_declarations(win)),
+                ('with_rules', lambda: validate_win_declarations(win, self.rules)),
+                ('hidden_hand', lambda: check_hora_yaku_context(win, kyoku, cause, self.rules)),
+            )
+            for context, check in checks:
+                with self.subTest(roles=roles, context=context):
+                    with self.assertRaises(ScoringError) as error:
+                        check()
+                    self.assertEqual(error.exception.code, 'invalid_message')
+
+    def test_triplet_ron_and_open_tsumo_do_not_require_suuankou(self):
+        for closed, tsumo in ((True, False), (False, False), (False, True)):
+            with self.subTest(closed=closed, tsumo=tsumo):
+                fixture = deepcopy(self.fixtures['yaku_toitoi_sanankou'])
+                data = fixture['input']
+                if closed:
+                    data['hand'] = dict(concealed_tiles=['1m'] * 3 + ['2m'] * 3 + ['3p'] * 3
+                                        + ['4s'] * 2 + ['5s'] * 2, melds=[])
+                    data['winning_tile'] = '4s'
+                data.update(win_method='tsumo' if tsumo else 'ron', target=data['actor'] if tsumo else 0)
+                win = calculate_fixture(fixture, self.rules)['wins'][0]
+                self.assertEqual({y['id'] for y in win['yakus']}, {'sanankou', 'toitoi'})
+                validate_win_declarations(win, self.rules, closed=closed)
+                win['pai'] = data['winning_tile']
+                kyoku, cause = self.public_context(data, fixture['state'])
+                check_hora_yaku_context(win, kyoku, cause, self.rules)
+
+    def test_four_sequence_combinations_remain_possible(self):
+        for role, tiles in (
+            ('sanshoku_doujun', ['4m', '5m', '6m'] * 2 + ['4p', '5p', '6p', '4s', '5s', '6s']),
+            ('ikkitsuukan', ['1m', '2m', '3m'] * 2 + ['4m', '5m', '6m', '7m', '8m', '9m']),
+        ):
+            with self.subTest(role=role):
+                fixture = deepcopy(self.fixtures['yaku_shousangen'])
+                data = fixture['input']
+                data['hand'] = dict(concealed_tiles=tiles + ['E'], melds=[])
+                data['winning_tile'] = 'E'
+                win = calculate_fixture(fixture, self.rules)['wins'][0]
+                self.assertTrue({'iipeikou', role} <= {y['id'] for y in win['yakus']})
+                validate_win_declarations(win, self.rules, closed=True)
+                win['pai'] = 'E'
+                kyoku, cause = self.public_context(data, fixture['state'])
+                check_hora_yaku_context(win, kyoku, cause, self.rules)
+
+    def test_half_flush_all_terminals_and_honors_remains_possible(self):
+        fixture = deepcopy(self.fixtures['yaku_honroutou'])
+        fixture['input']['hand']['concealed_tiles'] = ['9m'] * 3 + ['P'] * 3 + ['F'] * 3 + ['E']
+        for case in (fixture, self.fixtures['yaku_chinitsu']):
+            with self.subTest(fixture=case['id']):
+                win = calculate_fixture(case, self.rules)['wins'][0]
+                expected = {'honitsu', 'honroutou'} if case is fixture else {'chinitsu'}
+                self.assertTrue(expected <= {y['id'] for y in win['yakus']})
+                validate_win_declarations(win, self.rules)
+                win['pai'] = case['input']['winning_tile']
+                kyoku, cause = self.public_context(case['input'], case['state'])
+                check_hora_yaku_context(win, kyoku, cause, self.rules)
+
+    def test_all_terminals_and_honors_declares_its_hand_form(self):
+        for form, tsumo in (('toitoi', False), ('chiitoitsu', False), ('chiitoitsu', True)):
+            fixture = deepcopy(self.fixtures['yaku_honroutou'])
+            data = fixture['input']
+            if form == 'chiitoitsu':
+                data['hand'] = dict(concealed_tiles=[tile for tile in ('1m', '9m', '1p', '9p', '1s', '9s')
+                                                     for _ in range(2)] + ['E'], melds=[])
+            data.update(win_method='tsumo' if tsumo else 'ron', target=data['actor'] if tsumo else 0)
+            win = calculate_fixture(fixture, self.rules)['wins'][0]
+            self.assertTrue({'honroutou', form} <= {y['id'] for y in win['yakus']})
+            win['pai'] = 'E'
+            kyoku, cause = self.public_context(data, fixture['state'])
+            kyoku['hands'] = [{'count': 13} for _ in range(4)]
+            checks = (
+                ('declarations_only', lambda: validate_win_declarations(win)),
+                ('with_rules', lambda: validate_win_declarations(win, self.rules)),
+                ('hidden_hand', lambda: check_hora_yaku_context(win, kyoku, cause, self.rules)),
+            )
+            for _, check in checks:
+                check()
+            win['yakus'] = [y for y in win['yakus'] if y['id'] != form]
+            win['han'] -= 2
+            win['fu'] = 40  # Do not reject just because 25 fu implies seven pairs.
+            for context, check in checks:
+                with self.subTest(form=form, tsumo=tsumo, context=context):
+                    with self.assertRaisesRegex(ScoringError, 'requires all triplets or seven pairs') as error:
+                        check()
+                    self.assertEqual(error.exception.code, 'invalid_message')
+
+    def test_one_suit_pure_outside_hand_can_have_one_terminal_triplet(self):
+        for triplet, pair, sequence, repeated in (
+            ('1m', '9m', ['1m', '2m', '3m'], ['7m', '8m', '9m']),
+            ('9m', '1m', ['7m', '8m', '9m'], ['1m', '2m', '3m']),
+        ):
+            with self.subTest(triplet=triplet, pair=pair):
+                fixture = deepcopy(self.fixtures['yaku_chinitsu'])
+                data = fixture['input']
+                data['hand'] = dict(concealed_tiles=[triplet] * 3 + sequence + repeated * 2 + [pair],
+                                    melds=[])
+                data['winning_tile'] = pair
+                win = calculate_fixture(fixture, self.rules)['wins'][0]
+                self.assertEqual({y['id'] for y in win['yakus']}, {'chinitsu', 'junchan', 'iipeikou'})
+                validate_win_declarations(win, self.rules, closed=True)
+                win['pai'] = pair
+                kyoku, cause = self.public_context(data, fixture['state'])
+                check_hora_yaku_context(win, kyoku, cause, self.rules)
 
     def test_public_tiles_constrain_roles_without_revealing_the_hand(self):
         cases = (('yaku_tanyao', '1m'), ('yakuman_tsuuiisou', '9s'),

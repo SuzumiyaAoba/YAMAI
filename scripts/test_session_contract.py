@@ -977,7 +977,7 @@ class SessionInvariants(unittest.TestCase):
                     selected = self.request_identity_snapshot(receiver)
                     request = selected['state']['pending_requests'][0]
                     elapsed, bank = (21000, 0) if source == 'default' and policy != 'default' else (7000, 14000)
-                    request.update(remaining_ms=0, decision_group_remaining_ms=0,
+                    request.update(remaining_ms=0, decision_group_remaining_ms=21000 - elapsed,
                                    selection=dict(action_id=request['default_action_id'], source=source,
                                                   elapsed_ms=elapsed, time_bank_ms=bank))
                     selected['state']['time_bank_ms'] = selected['state']['kyoku']['self_state']['time_bank_ms'] = bank
@@ -1847,9 +1847,9 @@ class SessionInvariants(unittest.TestCase):
     def test_ack_preserves_frozen_selection_source_and_decision_kind(self):
         for source, status, valid in (
             ('user', 'accepted', True), ('user', 'defaulted', False),
-            ('user', 'superseded', False), ('user', 'stale', True),
+            ('user', 'superseded', False), ('user', 'stale', False),
             ('default', 'defaulted', True), ('default', 'accepted', False),
-            ('default', 'superseded', False), ('default', 'stale', True),
+            ('default', 'superseded', False), ('default', 'stale', False),
         ):
             with self.subTest(source=source, status=status):
                 trace = self.trace('snapshot_validates_selection_clock')
@@ -2482,6 +2482,19 @@ class LedgerLifecycleBindingTests(_LedgerTraceFixture):
                     with self.assertRaisesRegex(v.ArtifactError, 'ACK precedes its request clock start'):
                         self.check_ledger(trace)
 
+    def test_group_ack_cannot_claim_future_elapsed_time_without_lifecycle(self):
+        for elapsed, valid in ((0, True), (1, False)):
+            with self.subTest(elapsed=elapsed):
+                trace = self.group_trace()
+                trace.pop('request_lifecycles')
+                trace['messages'][7]['group_start'] = 9
+                trace['messages'][9]['message']['elapsed_ms'] = elapsed
+                if valid:
+                    self.check_ledger(trace)
+                else:
+                    with self.assertRaisesRegex(v.ArtifactError, 'ACK clock exceeds the time'):
+                        self.check_ledger(trace)
+
     def test_live_group_reject_diagnostics_allow_optional_ids(self):
         for omitted in ((), ('request_id',), ('action_id',), ('request_id', 'action_id')):
             with self.subTest(omitted=omitted):
@@ -3082,7 +3095,7 @@ class LedgerResumeCaptureTests(_LedgerTraceFixture):
             self.check_ledger(trace)
         trace = self.live_trace(default=True)
         trace['messages'][7]['at_ms'] -= 1
-        with self.assertRaisesRegex(v.ArtifactError, 'original deadline'):
+        with self.assertRaisesRegex(v.ArtifactError, 'ACK clock exceeds the time'):
             self.check_ledger(trace)
 
     def test_retained_group_selection_binds_new_ack_without_lifecycle(self):
@@ -3192,6 +3205,182 @@ class LedgerResumeCaptureTests(_LedgerTraceFixture):
                 trace['messages'].insert(insertion_index, repeated)
                 with self.assertRaisesRegex(v.ArtifactError, 'unexpected hello|unexpected join'):
                     self.check_ledger(trace)
+
+
+class PenaltyDecisionBindings(unittest.TestCase):
+    """Chombo is possible only for a seat with the current OPEN decision."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.schemas = v.SchemaSet()
+        manifest = v.strict_load(v.ROOT / f'test-vectors/protocol/{v.PROTOCOL}/manifest.json')
+        cls.digest = manifest['profile_hash']
+        cls.vectors = v.strict_load(v.ROOT / manifest['vectors'])
+
+    trace = SessionInvariants.trace
+    receiver = SessionInvariants.receiver
+    raw = staticmethod(SessionInvariants.raw)
+    assert_rejected_atomically = SessionInvariants.assert_rejected_atomically
+
+    def prepare(self, context, mode):
+        suffix = 'wire_call_compound_flow' if context == 'reaction' else 'cancellation_requires_penalty_result'
+        trace = self.trace(suffix)
+        welcome = trace['welcome']
+        welcome['rules']['invalid_action_policy'] = 'chombo'
+        if mode != 'play':
+            welcome.update(mode=mode, view='public', seat=None, capabilities=['snapshot'])
+            welcome.pop('resume', None)
+        receiver = self.receiver(welcome)
+        messages = [step['message'] for step in trace['steps'][:2 if context == 'none' else 6]]
+        if context == 'reaction':
+            messages[-1].update(status='stale', action_id='n')
+        for message in messages:
+            if mode != 'play' and message['kind'] != 'event':
+                continue
+            message['seq'] = receiver.applied + 1
+            if message['kind'] == 'event':
+                event = message['event']
+                if event['type'] == 'start_game':
+                    event['rules'] = deepcopy(welcome['rules'])
+                if mode != 'play':
+                    if event['type'] == 'start_kyoku':
+                        event['hands'] = [{'count': 13} for _ in range(4)]
+                    elif event['type'] == 'tsumo':
+                        event['pai'] = None
+                if mode == 'replay':
+                    message['original_seq'] = message['seq']
+            self.assertEqual(receiver.receive(self.raw(message)), 'applied')
+        return receiver
+
+    def penalty(self, receiver, offender):
+        message = deepcopy(self.trace('cancellation_requires_penalty_result')['steps'][-1]['message'])
+        message['seq'] = receiver.applied + 1
+        if receiver.welcome['mode'] == 'replay':
+            message['original_seq'] = receiver.original_seq + 1
+        event = message['event']
+        others = [seat for seat in range(4) if seat != offender]
+        event['result']['offender'] = offender
+        event['result']['penalty']['payments'] = [
+            {'from': offender, 'to': seat, 'points': 2800 if seat == others[0] else 2600}
+            for seat in others]
+        event['deltas'] = [-8000 if seat == offender else 2800 if seat == others[0] else 2600
+                           for seat in range(4)]
+        event['scores'] = [score + delta for score, delta in zip(receiver.game.scores, event['deltas'])]
+        return message
+
+    def check_compacted_late(self, receiver, ack, *, valid):
+        receiver = deepcopy(receiver)
+        snapshot = deepcopy(self.vectors['V58_snapshot_ended_rankings']['positive'])
+        snapshot.update(seq=receiver.applied + 10, replaces_through_seq=receiver.applied + 9)
+        snapshot['state'].update(players=receiver.welcome['players'], time_bank_ms=0)
+        receiver.begin_resume(dict(receiver.welcome, resumed=True,
+                                   replay_from_seq=receiver.applied + 1,
+                                   replay_through_seq=snapshot['replaces_through_seq']))
+        self.assertEqual(receiver.receive(self.raw(snapshot)), 'applied')
+        late = dict(ack, seq=receiver.applied + 1, action_id='late-attempt')
+        if valid:
+            self.assertEqual(receiver.receive(self.raw(late)), 'applied')
+            self.assertEqual(receiver.time_bank_ms, 0)
+        else:
+            self.assert_rejected_atomically(receiver, late)
+
+    def test_solitary_chombo_can_charge_only_the_drawer(self):
+        for mode in ('play', 'spectate', 'replay'):
+            for offender in range(4):
+                with self.subTest(mode=mode, offender=offender):
+                    receiver = self.prepare('turn', mode)
+                    message = self.penalty(receiver, offender)
+                    if offender == 0:
+                        self.assertEqual(receiver.receive(self.raw(message)), 'applied')
+                        self.assertEqual(receiver.game.scores, message['event']['scores'])
+                    else:
+                        self.assert_rejected_atomically(receiver, message)
+
+    def test_reaction_chombo_cannot_charge_the_discarder(self):
+        for mode in ('play', 'spectate', 'replay'):
+            for offender in range(4):
+                with self.subTest(mode=mode, offender=offender):
+                    receiver = self.prepare('reaction', mode)
+                    message = self.penalty(receiver, offender)
+                    if offender != 0:
+                        self.assertEqual(receiver.receive(self.raw(message)), 'applied')
+                        self.assertEqual(receiver.game.scores, message['event']['scores'])
+                    else:
+                        self.assert_rejected_atomically(receiver, message)
+
+    def test_chombo_requires_a_decision_after_the_deal(self):
+        for mode in ('play', 'spectate', 'replay'):
+            with self.subTest(mode=mode):
+                receiver = self.prepare('none', mode)
+                self.assert_rejected_atomically(receiver, self.penalty(receiver, 0))
+
+    def test_linearized_snapshot_has_no_open_request_for_chombo(self):
+        for mode in ('spectate', 'replay'):
+            for context in ('turn', 'reaction'):
+                with self.subTest(mode=mode, context=context):
+                    receiver = self.prepare(context, mode)
+                    snapshot = SessionInvariants.request_identity_snapshot(self, receiver)
+                    snapshot['state'].pop('pending_requests')
+                    snapshot['state'].pop('time_bank_ms')
+                    if mode == 'replay':
+                        snapshot['state']['original_seq'] = receiver.original_seq
+                    snapshot['state']['kyoku']['turn']['phase'] = 'resolving'
+                    self.assertEqual(receiver.receive(self.raw(snapshot)), 'applied')
+                    self.assert_rejected_atomically(receiver, self.penalty(receiver, 0 if context == 'turn' else 1))
+
+    def test_frozen_selection_cancellation_needs_another_open_group_member(self):
+        for grouped in (False, True):
+            for source in ('user', 'default'):
+                with self.subTest(grouped=grouped, source=source):
+                    suffix = ('request_cause_uses_current_event_sequence' if grouped
+                              else 'snapshot_validates_selection_clock')
+                    trace = self.trace(suffix)
+                    trace['welcome']['rules']['invalid_action_policy'] = 'chombo'
+                    trace['steps'][0]['message']['event']['rules']['invalid_action_policy'] = 'chombo'
+                    if grouped:
+                        # Peers may still be OPEN after this seat's timeout.
+                        trace['steps'][8]['message']['decision_group_deadline_ms'] = 22000
+                    receiver = self.receiver(trace['welcome'])
+                    for step in trace['steps'][:9 if grouped else 4]:
+                        receiver.receive(self.raw(step['message']))
+                    snapshot = (SessionInvariants.request_identity_snapshot(self, receiver) if grouped
+                                else trace['steps'][4]['message'])
+                    request = snapshot['state']['pending_requests'][0]
+                    elapsed, bank = (7000, 14000) if source == 'user' else (21000, 0)
+                    request.update(remaining_ms=0, selection={
+                        'action_id': request['default_action_id'], 'source': source,
+                        'elapsed_ms': elapsed, 'time_bank_ms': bank})
+                    if grouped:
+                        request['decision_group_remaining_ms'] = 22000 - elapsed
+                    snapshot['state']['time_bank_ms'] = bank
+                    snapshot['state']['kyoku']['self_state']['time_bank_ms'] = bank
+                    self.assertEqual(receiver.receive(self.raw(snapshot)), 'applied')
+                    ack = {key: trace['welcome'][key] for key in ('yamai', 'session_id', 'game_id')}
+                    ack.update(kind='ack', seq=receiver.applied + 1, request_id=request['request_id'],
+                               action_id=request['default_action_id'], status='stale',
+                               elapsed_ms=elapsed, time_bank_ms=bank)
+                    if grouped:
+                        # A closed/expired group cannot acquire a new OPEN
+                        # offender even if the pending snapshot keeps its
+                        # awaiting_responses phase and fixed selection.
+                        closed = deepcopy(receiver)
+                        checkpoint = deepcopy(snapshot)
+                        checkpoint.update(seq=closed.applied + 1, replaces_through_seq=closed.applied)
+                        checkpoint['state']['pending_requests'][0]['decision_group_remaining_ms'] = 0
+                        self.assertEqual(closed.receive(self.raw(checkpoint)), 'applied')
+                        self.check_compacted_late(closed, ack, valid=source == 'default')
+                        self.assert_rejected_atomically(closed, dict(ack, seq=closed.applied + 1))
+                        self.assertEqual(receiver.receive(self.raw(ack)), 'applied')
+                        # The selected seat cannot itself cause cancellation,
+                        # even when it belongs to the reaction group.
+                        selected_offender = deepcopy(receiver)
+                        self.assert_rejected_atomically(selected_offender, self.penalty(selected_offender, 0))
+                        # Cause actor 1 and selected own seat 0 cannot offend;
+                        # another member, seat 2, can cancel the reaction.
+                        self.assertEqual(receiver.receive(self.raw(self.penalty(receiver, 2))), 'applied')
+                    else:
+                        self.check_compacted_late(receiver, ack, valid=source == 'default')
+                        self.assert_rejected_atomically(receiver, ack)
 
 
 if __name__ == '__main__':
