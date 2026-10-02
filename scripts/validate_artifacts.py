@@ -2189,6 +2189,8 @@ def semantic_ledger_trace(trace: Mapping[str, Any], expected_hash: str) -> None:
                                  and (msg["status"] == "stale" or (msg["status"] == "defaulted") == (selected[1] == "default")),
                                  "invalid_message", "ACK changed the fixed selection or elapsed time differs")
                 if kind == "ack" and not duplicate and not historical and msg["request_id"] in starts:
+                    _require(now >= starts[msg["request_id"]], "invalid_message",
+                             "ACK precedes its request clock start")
                     request = receiver.requests[msg["request_id"]]
                     if "decision_group_id" not in request:
                         grace = receiver.welcome["rules"]["time_control"]["grace_ms"]

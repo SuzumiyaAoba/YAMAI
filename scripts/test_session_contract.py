@@ -2233,6 +2233,62 @@ class _LedgerTraceFixture(unittest.TestCase):
         v.semantic_ledger_trace(trace, self.digest)
 
 
+class LedgerStartClockTests(_LedgerTraceFixture):
+    def buffered_turn(self, start):
+        trace = deepcopy(self.vectors['V261_session_immutable_wire_ledger']['positive']['trace'])
+        trace['messages'][6]['group_start'] = start
+        ack = trace['messages'][8]['message']
+        ack['elapsed_ms'] = 0
+        ack['time_bank_ms'] = trace['messages'][6]['message']['time_bank_ms']
+        return trace
+
+    def test_buffered_turn_ack_waits_for_clock_start(self):
+        # Input at 819 is buffered until the implicit decision starts at 820.
+        self.check_ledger(self.buffered_turn(820))
+        with self.assertRaisesRegex(v.ArtifactError, 'ACK precedes its request clock start'):
+            self.check_ledger(self.buffered_turn(821))
+
+    def test_early_default_policy_ack_waits_for_clock_start(self):
+        for start, valid in ((820, True), (821, False)):
+            with self.subTest(start=start):
+                trace = self.buffered_turn(start)
+                for step in trace['messages']:
+                    message = step['message']
+                    if message['kind'] == 'welcome':
+                        message['rules']['invalid_action_policy'] = 'default'
+                    elif message.get('event', {}).get('type') == 'start_game':
+                        message['event']['rules']['invalid_action_policy'] = 'default'
+                trace['messages'][7]['message']['action_id'] = 'unknown'
+                trace['messages'][8]['message']['status'] = 'defaulted'
+                if valid:
+                    self.check_ledger(trace)
+                else:
+                    with self.assertRaisesRegex(v.ArtifactError, 'ACK precedes its request clock start'):
+                        self.check_ledger(trace)
+
+    def test_rejected_buffered_input_waits_for_clock_start(self):
+        for start, valid in ((820, True), (821, False)):
+            with self.subTest(start=start):
+                trace = self.buffered_turn(start)
+                trace['messages'] = trace['messages'][:9]
+                trace['allow_open_requests'] = True
+                trace['messages'][7]['message']['action_id'] = 'unknown'
+                ack_step = trace['messages'][8]
+                ack_step['message'].update(action_id='unknown', status='rejected')
+                error = deepcopy(ack_step)
+                error['message'] = {key: ack_step['message'][key]
+                                    for key in ('yamai', 'session_id', 'game_id')}
+                error['message'].update(kind='error', seq=6, code='invalid_action',
+                                        severity='recoverable', message='Unknown action',
+                                        request_id='r1', action_id='unknown')
+                trace['messages'].append(error)
+                if valid:
+                    self.check_ledger(trace)
+                else:
+                    with self.assertRaisesRegex(v.ArtifactError, 'ACK precedes its request clock start'):
+                        self.check_ledger(trace)
+
+
 class LedgerPlayerFatalTests(_LedgerTraceFixture):
     def player_fatal_ledger(self, *, after_ack=False):
         trace = deepcopy(self.vectors["V261_session_immutable_wire_ledger"]["positive"]["trace"])
@@ -2412,6 +2468,19 @@ class LedgerLifecycleBindingTests(_LedgerTraceFixture):
                     replay['at_ms'] = repeated['messages'][-1]['at_ms']
                     repeated['messages'].append(replay)
                     self.check_ledger(repeated)
+
+    def test_group_ack_waits_for_start_without_lifecycle_annotation(self):
+        for start, valid in ((9, True), (10, False)):
+            with self.subTest(start=start):
+                trace = self.group_trace()
+                trace.pop('request_lifecycles')
+                trace['messages'][7]['group_start'] = start
+                trace['messages'][9]['message']['elapsed_ms'] = 0
+                if valid:
+                    self.check_ledger(trace)
+                else:
+                    with self.assertRaisesRegex(v.ArtifactError, 'ACK precedes its request clock start'):
+                        self.check_ledger(trace)
 
     def test_live_group_reject_diagnostics_allow_optional_ids(self):
         for omitted in ((), ('request_id',), ('action_id',), ('request_id', 'action_id')):
