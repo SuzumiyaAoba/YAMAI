@@ -3,7 +3,7 @@
   "protocol_version": "1.0-draft.1",
   "profile": "riichi-4p",
   "profile_revision": "1.0-draft.1",
-  "profile_hash": "sha256:228a0e7fbb17503506a090e8afa791495d5f5344e9ec991b9d0315a2a55e4265",
+  "profile_hash": "sha256:d1155725db73c24f83c7e0954fc9e9d63ff946c2d13176038683f4591ec29024",
   "registry": [
     "registry/protocol/1.0-draft.1/registry.json",
     "registry/riichi-4p/1.0-draft.1/registry.json"
@@ -2596,6 +2596,36 @@
       "area": "snapshot-selection-evidence",
       "expect_positive": "valid",
       "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V430_snapshot_generation_needs_recovery",
+      "area": "snapshot-generation-authority",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V431_chombo_rejected_requires_cancellation",
+      "area": "session-contract",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V432_sanchaho_requires_yaku_for_visible_hands",
+      "area": "visible-sanchaho-yaku",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V433_observer_actions_are_fatal_even_after_game_end",
+      "area": "session-mode",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V434_backlog_deadline_remains_expired",
+      "area": "resource-deadline",
+      "expect_positive": "valid",
+      "expect_negative": "resource_limit"
     }
   ]
 }

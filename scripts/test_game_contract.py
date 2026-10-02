@@ -1744,6 +1744,356 @@ class GameContractTests(unittest.TestCase):
                     receiver.welcome['scores'] = message['state']['scores'].copy()
                 self._assert_receiver_rejects_atomically(receiver, message, pattern)
 
+    def _physical_reach_snapshot_history(self, fixed_hands, draws, following, markers=('C',)):
+        """Allocate a complete legal deal, without relying on hidden-hand leniency."""
+        hands = [list(fixed_hands.get(seat, [])) for seat in range(4)]
+        deck = self._physical_tiles()
+        for tile in [tile for hand in hands for tile in hand] + list(draws) + list(markers):
+            deck.remove(tile)
+        for hand in hands:
+            needed = 13 - len(hand)
+            hand.extend(deck[:needed])
+            del deck[:needed]
+        events = [dict(type='start_game', scores=[25000] * 4, rules=self.rules),
+                  dict(type='start_kyoku', bakaze='E', kyoku=1, oya=0, honba=0, kyotaku=0,
+                       extension_round=0, scores=[25000] * 4, dora_marker=markers[0],
+                       hands=[{'tiles': hand} for hand in hands]), *following]
+        state = EventState(self.rules)
+        for event in events:
+            state.apply(event)
+        return state, events
+
+    def _reach_call_snapshot_history(self, kind, *, ordinary=False, declaration_called=False,
+                                     pending_only=False):
+        dealer = ['1m', '2m', '3m', '4m', '5m', '6m', '7p', '8p', '9p', 'E', 'E', 'E', '5s']
+        following, draws = [], []
+        if ordinary:
+            for actor, tile in enumerate(('2p', '3p', '4p', '6p')):
+                draws.append(tile)
+                following.extend([dict(type='tsumo', actor=actor, pai=tile),
+                                  dict(type='dahai', actor=actor, pai=tile, tsumogiri=True)])
+        draws.append('1s')
+        following.extend([dict(type='tsumo', actor=0, pai='1s'), dict(type='reach', actor=0),
+                          dict(type='dahai', actor=0, pai='1s', tsumogiri=True),
+                          dict(type='reach_accepted', actor=0, deltas=[-1000, 0, 0, 0],
+                               scores=[24000, 25000, 25000, 25000], kyotaku=1)])
+        caller = 1 if declaration_called or kind == 'ankan' else 2
+        tile = '1s' if declaration_called else '4s'
+        consumed = (['2s', '3s'] if declaration_called else ['5s', '6s']) if kind == 'chi' else [tile] * (2 if kind == 'pon' else 3)
+        fixed = {0: dealer, caller: consumed + (['9s'] if kind in {'chi', 'pon'} else [])}
+        if not declaration_called:
+            draws.append(tile)
+            following.append(dict(type='tsumo', actor=1, pai=tile))
+            if kind != 'ankan':
+                following.append(dict(type='dahai', actor=1, pai=tile, tsumogiri=True))
+        if kind == 'ankan':
+            following.append(dict(type='ankan_declared', actor=caller, consumed=[tile] * 4))
+            if pending_only:
+                return self._physical_reach_snapshot_history(fixed, draws, following)
+            following.append(dict(type='ankan', actor=caller, consumed=[tile] * 4))
+        else:
+            following.append(dict(type=kind, actor=caller, target=0 if declaration_called else 1,
+                                  pai=tile, consumed=consumed))
+        markers = ['C']
+        if kind in {'ankan', 'daiminkan'}:
+            markers.append('F')
+            draws.append('9s')
+            replacement = [dict(type='dora', dora_marker='F'),
+                           dict(type='tsumo', actor=caller, pai='9s')]
+            following.extend(replacement if self.rules['kan_dora_timing'][kind] == 'before_rinshan'
+                             else reversed(replacement))
+        following.append(dict(type='dahai', actor=caller, pai='9s',
+                              tsumogiri=kind in {'ankan', 'daiminkan'}))
+        return self._physical_reach_snapshot_history(fixed, draws, following, markers)
+
+    def _check_reach_snapshot_views(self, state, events, *, rejection=None, reach_changes=None, reach_seat=0):
+        for view in ('public', 'full', {'seat': 0}, {'seat': 1}, {'seat': 2}, {'seat': 3}):
+            with self.subTest(view=view):
+                message = self._public_snapshot(state)
+                initial = view == 'public'
+                receiver = self._observer_receiver(mode='spectate' if initial else 'replay',
+                                                   view=view, initial_snapshot=initial)
+                if initial:
+                    receiver.welcome['scores'] = state.scores.copy()
+                else:
+                    for event in deepcopy(events[:2]):
+                        if event['type'] == 'start_game':
+                            event['players'] = receiver.welcome['players']
+                        else:
+                            event['hands'] = [hand if view == 'full' or view == {'seat': seat}
+                                              else {'count': 13} for seat, hand in enumerate(event['hands'])]
+                        self._send_event(receiver, event)
+                    message.update(seq=len(events) + 1, replaces_through_seq=len(events))
+                    snapshot = message['state']
+                    snapshot.update(mode='replay', view=view, original_seq=len(events))
+                    kyoku = snapshot['kyoku']
+                    kyoku['hands'] = [deepcopy(hand) if view == 'full' or view == {'seat': seat}
+                                      else {'count': len(hand['tiles'])}
+                                      for seat, hand in enumerate(state.round['hands'])]
+                    kyoku['turn'].update(last_event_seq=len(events), last_event=deepcopy(state.last_cause))
+                    cause = kyoku['turn']['last_event']
+                    if cause['type'] == 'tsumo' and view != 'full' and view != {'seat': cause['actor']}:
+                        cause['pai'] = None
+                    gap = self._event_message(receiver, deepcopy(cause))
+                    gap.update(seq=len(events), original_seq=len(events))
+                    self.assertEqual(receiver.receive(json.dumps(gap).encode()), 'sequence_gap')
+                if rejection:
+                    message['state']['kyoku']['reach_status'][reach_seat].update(
+                        {'ippatsu': True} if reach_changes is None else reach_changes)
+                v.SchemaSet().validate(message, {'$ref': f'urn:yamai:schema:protocol:{v.PROTOCOL}:snapshot'})
+                restored = EventState(self.rules)
+                if rejection:
+                    before = deepcopy(vars(restored))
+                    with self.assertRaisesRegex(GameError, rejection):
+                        restored.restore(message['state'])
+                    self.assertEqual(vars(restored), before)
+                    with self.assertRaisesRegex(v.ArtifactError, rejection) as caught:
+                        v._check_snapshot(message, rules=self.rules)
+                    self.assertEqual(caught.exception.code, 'invalid_message')
+                    self._assert_receiver_rejects_atomically(receiver, message, rejection)
+                else:
+                    v._check_snapshot(message, rules=self.rules)
+                    restored.restore(message['state'])
+                    self.assertEqual(receiver.receive(json.dumps(message).encode()), 'applied')
+
+    def test_snapshot_double_riichi_survives_called_first_declaration(self):
+        for kind in ('chi', 'pon', 'daiminkan'):
+            with self.subTest(kind=kind):
+                state, events = self._reach_call_snapshot_history(kind, declaration_called=True)
+                self.assertEqual(sum(map(len, state.round['melds'])), 1)
+                self.assertEqual(state.round['reach_status'][0],
+                                 dict(state='accepted', double=True, ippatsu=False))
+                self._check_reach_snapshot_views(state, events)
+                self._check_reach_snapshot_views(state, events, rejection='double flag differs',
+                                                 reach_changes={'double': False})
+
+    def test_snapshot_dealer_first_reach_requires_double_without_own_ankan(self):
+        for kind in ('chi', 'pon', 'ankan', 'daiminkan'):
+            with self.subTest(kind=kind):
+                state, events = self._reach_call_snapshot_history(kind)
+                self.assertFalse(state.round['melds'][0])
+                self.assertIsNone(state.round['rivers'][0][0]['called_by'])
+                self._check_reach_snapshot_views(state, events)
+                self._check_reach_snapshot_views(state, events, rejection='double flag differs',
+                                                 reach_changes={'double': False})
+
+    def test_snapshot_double_riichi_survives_repeated_called_tile(self):
+        # Both indistinguishable 4s/target/caller occurrences follow seat 1's
+        # first declaration. No particular meld-to-river pairing is needed.
+        ready = ['1m', '2m', '3m', '4m', '5m', '6m', '7p', '8p', '9p', 'E', 'E', 'E', '5s']
+        following = [dict(type='tsumo', actor=0, pai='7p'),
+                     dict(type='dahai', actor=0, pai='7p', tsumogiri=True),
+                     dict(type='tsumo', actor=1, pai='4s'), dict(type='reach', actor=1),
+                     dict(type='dahai', actor=1, pai='4s', tsumogiri=True),
+                     dict(type='reach_accepted', actor=1, deltas=[0, -1000, 0, 0],
+                          scores=[25000, 24000, 25000, 25000], kyotaku=1),
+                     dict(type='chi', actor=2, target=1, pai='4s', consumed=['2s', '3s']),
+                     dict(type='dahai', actor=2, pai='9s', tsumogiri=False)]
+        for actor, tile in ((3, '7s'), (0, '8s'), (1, '4s')):
+            following.extend([dict(type='tsumo', actor=actor, pai=tile),
+                              dict(type='dahai', actor=actor, pai=tile, tsumogiri=True)])
+        following.extend([dict(type='chi', actor=2, target=1, pai='4s', consumed=['5s', '6s']),
+                          dict(type='dahai', actor=2, pai='9m', tsumogiri=False)])
+        state, events = self._physical_reach_snapshot_history(
+            {1: ready, 2: ['2s', '3s', '5s', '6s', '9s', '9m']},
+            ['7p', '4s', '7s', '8s', '4s'], following)
+        self.assertEqual(state.round['reach_status'][1], dict(state='accepted', double=True, ippatsu=False))
+        self.assertEqual([tile['called_by'] for tile in state.round['rivers'][1]], [2, 2])
+        self._check_reach_snapshot_views(state, events)
+        self._check_reach_snapshot_views(state, events, rejection='double flag differs',
+                                         reach_changes={'double': False}, reach_seat=1)
+
+    def test_snapshot_dealer_ordinary_first_reach_after_own_ankan(self):
+        initial = ['1s'] * 4 + ['1m', '2m', '3m', '4m', '5m', '6m', 'E', 'E', 'E']
+        following = [dict(type='tsumo', actor=0, pai='5s'),
+                     dict(type='ankan_declared', actor=0, consumed=['1s'] * 4),
+                     dict(type='ankan', actor=0, consumed=['1s'] * 4)]
+        replacement = [dict(type='dora', dora_marker='F'), dict(type='tsumo', actor=0, pai='9s')]
+        following.extend(replacement if self.rules['kan_dora_timing']['ankan'] == 'before_rinshan'
+                         else reversed(replacement))
+        following.extend([dict(type='reach', actor=0),
+                          dict(type='dahai', actor=0, pai='9s', tsumogiri=True),
+                          dict(type='reach_accepted', actor=0, deltas=[-1000, 0, 0, 0],
+                               scores=[24000, 25000, 25000, 25000], kyotaku=1),
+                          dict(type='tsumo', actor=1, pai='2p')])
+        state, events = self._physical_reach_snapshot_history(
+            {0: initial}, ['5s', '9s', '2p'], following, ['C', 'F'])
+        self.assertTrue(state.round['rivers'][0][0]['reach'])
+        self.assertEqual(state.round['reach_status'][0], dict(state='accepted', double=False, ippatsu=True))
+        self._check_reach_snapshot_views(state, events)
+        self._check_reach_snapshot_views(state, events,
+            rejection='first-discard ordinary riichi.*two committed calls', reach_changes={'ippatsu': False})
+
+    def test_snapshot_first_discard_ordinary_riichi_preserves_earlier_call(self):
+        # Seat 2's first discard is riichi, but seat 1 already called. The
+        # later call on that declaration must not erase the earlier call.
+        ready = ['1m', '2m', '3m', '4m', '5m', '6m', '7p', '8p', '9p', 'E', 'E', 'E', '5s']
+        following = [dict(type='tsumo', actor=0, pai='4s'),
+                     dict(type='dahai', actor=0, pai='4s', tsumogiri=True),
+                     dict(type='chi', actor=1, target=0, pai='4s', consumed=['5s', '6s']),
+                     dict(type='dahai', actor=1, pai='9s', tsumogiri=False),
+                     dict(type='tsumo', actor=2, pai='1s'), dict(type='reach', actor=2),
+                     dict(type='dahai', actor=2, pai='1s', tsumogiri=True),
+                     dict(type='reach_accepted', actor=2, deltas=[0, 0, -1000, 0],
+                          scores=[25000, 25000, 24000, 25000], kyotaku=1)]
+        for called in (False, True):
+            with self.subTest(declaration_called=called):
+                continuation = ([dict(type='chi', actor=3, target=2, pai='1s', consumed=['2s', '3s']),
+                                 dict(type='dahai', actor=3, pai='9m', tsumogiri=False)] if called
+                                else [dict(type='tsumo', actor=3, pai='8s')])
+                state, events = self._physical_reach_snapshot_history(
+                    {1: ['5s', '6s', '9s'], 2: ready, 3: ['2s', '3s', '9m']},
+                    ['4s', '1s'] + ([] if called else ['8s']), following + continuation)
+                self.assertEqual(state.round['reach_status'][2],
+                                 dict(state='accepted', double=False, ippatsu=not called))
+                self.assertTrue(state.round['rivers'][2][0]['reach'])
+                self._check_reach_snapshot_views(state, events)
+                if not called:
+                    self._check_reach_snapshot_views(state, events,
+                        rejection='first-discard ordinary riichi.*two committed calls',
+                        reach_changes={'ippatsu': False}, reach_seat=2)
+
+    def test_first_interruption_candidates_follow_dealer_order(self):
+        from game_contract import possible_first_call_before_discard
+        for dealer in range(4):
+            order = list(range(dealer, 4)) + list(range(dealer))
+            for declarer in range(4):
+                earlier = order[:order.index(declarer)]
+                for kind in ('chi', 'pon', 'daiminkan', 'ankan', 'kakan'):
+                    for actor in range(4):
+                        sources = [None] if kind == 'ankan' else [(actor + 3) % 4] if kind == 'chi' else [s for s in range(4) if s != actor]
+                        for source in sources:
+                            with self.subTest(dealer=dealer, declarer=declarer, kind=kind,
+                                              actor=actor, source=source):
+                                meld = dict(type=kind, actor=actor)
+                                if source is not None:
+                                    meld['target'] = source
+                                # Enumerate who could act before the first
+                                # declaration in the uninterrupted prefix.
+                                expected = actor in earlier + [declarer] if kind == 'ankan' else source in earlier
+                                self.assertEqual(possible_first_call_before_discard(meld, declarer, dealer), expected)
+
+    def test_snapshot_first_interruption_cannot_start_after_declarer(self):
+        ready = ['1m', '2m', '3m', '4m', '5m', '6m', '7p', '8p', '9p', 'E', 'E', 'E', '5s']
+        following = [dict(type='tsumo', actor=0, pai='7s'),
+                     dict(type='dahai', actor=0, pai='7s', tsumogiri=True),
+                     dict(type='tsumo', actor=1, pai='1s'), dict(type='reach', actor=1),
+                     dict(type='dahai', actor=1, pai='1s', tsumogiri=True),
+                     dict(type='reach_accepted', actor=1, deltas=[0, -1000, 0, 0],
+                          scores=[25000, 24000, 25000, 25000], kyotaku=1),
+                     dict(type='tsumo', actor=2, pai='4s'),
+                     dict(type='dahai', actor=2, pai='4s', tsumogiri=True),
+                     dict(type='chi', actor=3, target=2, pai='4s', consumed=['5s', '6s']),
+                     dict(type='dahai', actor=3, pai='9s', tsumogiri=False)]
+        state, events = self._physical_reach_snapshot_history(
+            {1: ready, 3: ['5s', '6s', '9s']}, ['7s', '1s', '4s'], following)
+        self.assertEqual(state.round['reach_status'][1], dict(state='accepted', double=True, ippatsu=False))
+        self._check_reach_snapshot_views(state, events)
+        self._check_reach_snapshot_views(state, events, rejection='double flag differs',
+                                         reach_changes={'double': False}, reach_seat=1)
+
+    def test_snapshot_ordinary_first_reach_kakan_counts_both_call_events(self):
+        # The pon precedes declaration; its upgrade follows declaration.
+        # One stored kakan therefore supplies two distinct interruptions.
+        ready = ['1m', '2m', '3m', '4m', '5m', '6m', '7p', '8p', '9p', 'E', 'E', 'E', '5s']
+        following = [dict(type='tsumo', actor=0, pai='4s'),
+                     dict(type='dahai', actor=0, pai='4s', tsumogiri=True),
+                     dict(type='pon', actor=1, target=0, pai='4s', consumed=['4s'] * 2),
+                     dict(type='dahai', actor=1, pai='9s', tsumogiri=False),
+                     dict(type='tsumo', actor=2, pai='1s'), dict(type='reach', actor=2),
+                     dict(type='dahai', actor=2, pai='1s', tsumogiri=True),
+                     dict(type='reach_accepted', actor=2, deltas=[0, 0, -1000, 0],
+                          scores=[25000, 25000, 24000, 25000], kyotaku=1)]
+        for actor, tile in ((3, '7s'), (0, '8s')):
+            following.extend([dict(type='tsumo', actor=actor, pai=tile),
+                              dict(type='dahai', actor=actor, pai=tile, tsumogiri=True)])
+        following.extend([dict(type='tsumo', actor=1, pai='4s'),
+                          dict(type='kakan_declared', actor=1, pai='4s', consumed=['4s'] * 3),
+                          dict(type='kakan', actor=1, pai='4s', consumed=['4s'] * 3)])
+        replacement = [dict(type='dora', dora_marker='F'), dict(type='tsumo', actor=1, pai='9m')]
+        following.extend(replacement if self.rules['kan_dora_timing']['kakan'] == 'before_rinshan'
+                         else reversed(replacement))
+        following.append(dict(type='dahai', actor=1, pai='9m', tsumogiri=True))
+        state, events = self._physical_reach_snapshot_history(
+            {1: ['4s', '4s', '9s'], 2: ready}, ['4s', '1s', '7s', '8s', '4s', '9m'], following, ['C', 'F'])
+        self.assertEqual(sum(map(len, state.round['melds'])), 1)
+        self.assertEqual(state.round['reach_status'][2], dict(state='accepted', double=False, ippatsu=False))
+        self.assertEqual(len(state.round['rivers'][2]), 1)
+        self._check_reach_snapshot_views(state, events)
+
+    def test_snapshot_double_riichi_ippatsu_rejects_any_committed_call(self):
+        for kind in ('chi', 'pon', 'ankan', 'daiminkan'):
+            with self.subTest(kind=kind):
+                state, events = self._reach_call_snapshot_history(kind)
+                self.assertEqual(state.round['reach_status'][0],
+                                 dict(state='accepted', double=True, ippatsu=False))
+                self.assertFalse(state.round['rinshan'])
+                self.assertIsNone(state.round['rivers'][0][0]['called_by'])
+                self._check_reach_snapshot_views(state, events)
+                self._check_reach_snapshot_views(state, events, rejection='double riichi ippatsu.*committed')
+
+    def test_snapshot_double_riichi_ippatsu_rejects_kakan_after_turn_skips(self):
+        # Three calls skip the dealer, allowing kakan before the dealer's
+        # next discard. Its old pon position must not hide the cancellation.
+        dealer = ['1m', '2m', '3m', '4m', '5m', '6m', '7p', '8p', '9p', 'E', 'E', 'E', '5s']
+        following = [dict(type='tsumo', actor=0, pai='1s'), dict(type='reach', actor=0),
+                     dict(type='dahai', actor=0, pai='1s', tsumogiri=True),
+                     dict(type='reach_accepted', actor=0, deltas=[-1000, 0, 0, 0],
+                          scores=[24000, 25000, 25000, 25000], kyotaku=1),
+                     dict(type='tsumo', actor=1, pai='4s'),
+                     dict(type='dahai', actor=1, pai='4s', tsumogiri=True),
+                     dict(type='pon', actor=2, target=1, pai='4s', consumed=['4s'] * 2),
+                     dict(type='dahai', actor=2, pai='7s', tsumogiri=False),
+                     dict(type='chi', actor=3, target=2, pai='7s', consumed=['8s', '9s']),
+                     dict(type='dahai', actor=3, pai='P', tsumogiri=False),
+                     dict(type='pon', actor=1, target=3, pai='P', consumed=['P'] * 2),
+                     dict(type='dahai', actor=1, pai='1p', tsumogiri=False),
+                     dict(type='tsumo', actor=2, pai='4s'),
+                     dict(type='kakan_declared', actor=2, pai='4s', consumed=['4s'] * 3),
+                     dict(type='kakan', actor=2, pai='4s', consumed=['4s'] * 3)]
+        replacement = [dict(type='dora', dora_marker='F'), dict(type='tsumo', actor=2, pai='9m')]
+        following.extend(replacement if self.rules['kan_dora_timing']['kakan'] == 'before_rinshan'
+                         else reversed(replacement))
+        following.append(dict(type='dahai', actor=2, pai='9m', tsumogiri=True))
+        state, events = self._physical_reach_snapshot_history(
+            {0: dealer, 1: ['P', 'P', '1p'], 2: ['4s', '4s', '7s'], 3: ['8s', '9s', 'P']},
+            ['1s', '4s', '4s', '9m'], following, ['C', 'F'])
+        self.assertEqual(len(state.round['rivers'][0]), 1)
+        self.assertFalse(state.round['rinshan'])
+        self._check_reach_snapshot_views(state, events)
+        self._check_reach_snapshot_views(state, events, rejection='double riichi ippatsu.*committed')
+
+    def test_snapshot_ordinary_ippatsu_rejects_called_declaration(self):
+        for kind in ('chi', 'pon', 'daiminkan'):
+            with self.subTest(kind=kind):
+                state, events = self._reach_call_snapshot_history(kind, ordinary=True, declaration_called=True)
+                self.assertEqual(state.round['reach_status'][0],
+                                 dict(state='accepted', double=False, ippatsu=False))
+                self._check_reach_snapshot_views(state, events)
+                self._check_reach_snapshot_views(state, events, rejection='ippatsu.*called declaration')
+
+    def test_snapshot_reach_ippatsu_preserves_earlier_calls_and_pending_ankan(self):
+        state, events = self._reach_call_snapshot_history('ankan', pending_only=True)
+        self.assertEqual(state.round['reach_status'][0], dict(state='accepted', double=True, ippatsu=True))
+        self._check_reach_snapshot_views(state, events)
+        dealer = ['1m', '2m', '3m', '4m', '5m', '6m', '7p', '8p', '9p', 'E', 'E', 'E', '5s']
+        following = [dict(type='tsumo', actor=0, pai='4s'),
+                     dict(type='dahai', actor=0, pai='4s', tsumogiri=True),
+                     dict(type='chi', actor=1, target=0, pai='4s', consumed=['5s', '6s']),
+                     dict(type='dahai', actor=1, pai='9s', tsumogiri=False)]
+        for actor, tile in ((2, '7s'), (3, '8s')):
+            following.extend([dict(type='tsumo', actor=actor, pai=tile),
+                              dict(type='dahai', actor=actor, pai=tile, tsumogiri=True)])
+        following.extend([dict(type='tsumo', actor=0, pai='1s'), dict(type='reach', actor=0),
+                          dict(type='dahai', actor=0, pai='1s', tsumogiri=True),
+                          dict(type='reach_accepted', actor=0, deltas=[-1000, 0, 0, 0],
+                               scores=[24000, 25000, 25000, 25000], kyotaku=1),
+                          dict(type='tsumo', actor=1, pai='2p')])
+        state, events = self._physical_reach_snapshot_history(
+            {0: dealer, 1: ['5s', '6s', '9s']}, ['4s', '7s', '8s', '1s', '2p'], following)
+        self.assertEqual(state.round['reach_status'][0], dict(state='accepted', double=False, ippatsu=True))
+        self._check_reach_snapshot_views(state, events)
+
     def test_snapshot_uninterrupted_dealer_order_across_seats_and_rounds(self):
         for dealer in range(4):
             state = self._dealt(seat=None)
@@ -1901,6 +2251,127 @@ class GameContractTests(unittest.TestCase):
                         # Shape validation is limited to hands disclosed by this view.
                         self._send_event(receiver, result)
                         self.assertEqual(receiver.game.game_phase, 'between_kyoku')
+
+    def _three_ron_yaku_position(self, oya=0, target=0, intrinsic_mask=0,
+                                 accepted=False, last_tile=False):
+        import random
+        rules = deepcopy(self.rules)
+        rules['ron_policy'] = 'double_only'
+        rules['abortive_draws'] = sorted(set(rules['abortive_draws']) | {'sanchaho'})
+        winners = [seat for seat in range(4) if seat != target]
+        common = '1m 2m 3m 4m 5m 6m 7p 8p 9p'.split()
+        hands = [[] for _ in range(4)]
+        for index, seat in enumerate(winners):
+            last_meld = ["PFC"[index]] * 3 if intrinsic_mask & (1 << index) else ['2s', '3s', '4s']
+            hands[seat] = common + last_meld + ['E']
+        deck = self._physical_tiles()
+        for tile in sum(hands, []) + ['E', 'C']:
+            deck.remove(tile)
+        random.Random(2026100217 + 100 * oya + 10 * target + intrinsic_mask).shuffle(deck)
+        hands[target], draws = deck[:13], deck[13:]
+        state = EventState(rules)
+        # A legitimate between-round recovery supplies any scheduled dealer
+        # coordinate. No invented prior round outcome enters this test.
+        state.restore(dict(mode='replay', seat=None, game_phase='between_kyoku',
+                           next_kyoku=dict(bakaze='E', kyoku=oya + 1, oya=oya,
+                                           honba=0, kyotaku=0, extension_round=0),
+                           kyotaku=0, scores=[25000] * 4, final_rankings=None, kyoku=None))
+        events = [dict(type='start_kyoku', bakaze='E', kyoku=oya + 1, oya=oya,
+                       honba=0, kyotaku=0, extension_round=0, scores=[25000] * 4,
+                       dora_marker='C', hands=[{'tiles': hand} for hand in hands])]
+        total = 70 if last_tile else 1 + (target - oya) % 4 + 4 * accepted
+        self.assertEqual((oya + total - 1) % 4, target)
+        for index in range(total):
+            actor = (oya + index) % 4
+            tile = 'E' if index == total - 1 else draws[index]
+            events.append(dict(type='tsumo', actor=actor, pai=tile))
+            if accepted and index < 4 and actor != target:
+                events.append(dict(type='reach', actor=actor))
+            events.append(dict(type='dahai', actor=actor, pai=tile, tsumogiri=True))
+        # Compute deposit outputs from the preceding state, independently of
+        # the final result. The complete projected hands stay physically valid.
+        applied = []
+        for event in events:
+            state.apply(event)
+            applied.append(event)
+            if event['type'] == 'dahai' and state.round['reach_status'][event['actor']]['state'] == 'declared':
+                actor = event['actor']
+                deltas = [-rules['riichi_stick_value'] if seat == actor else 0 for seat in range(4)]
+                accepted_event = dict(type='reach_accepted', actor=actor, deltas=deltas,
+                                      scores=[score + delta for score, delta in zip(state.scores, deltas)],
+                                      kyotaku=state.kyotaku + 1)
+                state.apply(accepted_event)
+                applied.append(accepted_event)
+        result = dict(type='end_kyoku', result=dict(type='ryukyoku', reason='sanchaho', tenpai=None),
+                      deltas=[0] * 4, scores=state.scores.copy(),
+                      next=dict(type='renchan', bakaze='E', kyoku=oya + 1, oya=oya,
+                                honba=1, kyotaku=state.kyotaku, extension_round=0))
+        return rules, state, applied, result
+
+    def test_three_ron_requires_yaku_in_each_visible_complete_hand(self):
+        for oya in range(4):
+            for target in range(4):
+                for mask in range(8):
+                    rules, state, events, result = self._three_ron_yaku_position(oya, target, mask)
+                    winners = [seat for seat in range(4) if seat != target]
+                    for visible in ([], list(range(4)), *([seat] for seat in range(4))):
+                        current = deepcopy(state)
+                        for seat in range(4):
+                            if seat not in visible:
+                                current.round['hands'][seat] = {'count': 13}
+                        invalid = any(seat in visible and not mask & (1 << index)
+                                      for index, seat in enumerate(winners))
+                        with self.subTest(oya=oya, target=target, mask=mask, visible=visible):
+                            if invalid:
+                                with self.assertRaisesRegex(GameError, 'sanchaho winner lacks a legal visible ron'):
+                                    current.apply(result)
+                            else:
+                                current.apply(result)
+                                self.assertEqual(current.game_phase, 'between_kyoku')
+
+    def test_three_ron_public_situational_yaku_keeps_complete_hands_legal(self):
+        # With no intrinsic role, accepted riichi and the true final discard
+        # each supply the required yaku. Ura indicators remain undisclosed
+        # because sanchaho is an abortive draw, not a scored win.
+        for oya in range(4):
+            for target in range(4):
+                with self.subTest(oya=oya, target=target, yaku='riichi'):
+                    rules, state, events, result = self._three_ron_yaku_position(oya, target, accepted=True)
+                    state.apply(result)
+                    self.assertEqual(state.kyotaku, 3)
+            with self.subTest(oya=oya, yaku='houtei'):
+                rules, state, events, result = self._three_ron_yaku_position(oya, (oya + 1) % 4, last_tile=True)
+                self.assertTrue(state.round['haitei'])
+                state.apply(result)
+                self.assertEqual(state.game_phase, 'between_kyoku')
+
+    def test_three_ron_leaves_negotiated_local_yaku_to_its_owner(self):
+        rules, state, events, result = self._three_ron_yaku_position()
+        state.rules['local_yaku'] = ['x_acme_first_ron']
+        # Negotiation and the owner's extra role validation are outside this
+        # core EventState test; absence of a core yaku alone is not proof that
+        # an agreed local yaku fails. Core winning shape remains mandatory.
+        valid = deepcopy(state)
+        valid.apply(result)
+        self.assertEqual(valid.game_phase, 'between_kyoku')
+        state.round['hands'][1]['tiles'][0] = '9s'
+        with self.assertRaisesRegex(GameError, 'sanchaho winner lacks a complete visible hand'):
+            state.apply(result)
+
+    def test_three_ron_no_yaku_rejection_is_atomic_in_full_replay(self):
+        for mask in (0, 1, 3, 7):
+            rules, state, events, result = self._three_ron_yaku_position(intrinsic_mask=mask)
+            receiver = self._observer_receiver(rules=rules, mode='replay', view='full')
+            self._send_event(receiver, dict(type='start_game', players=receiver.welcome['players'],
+                                           rules=rules, scores=[25000] * 4))
+            for event in events:
+                self._send_event(receiver, event)
+            if mask != 7:
+                self._assert_receiver_rejects_atomically(receiver, self._event_message(receiver, result),
+                                                       'sanchaho winner lacks a legal visible ron')
+            else:
+                self._send_event(receiver, result)
+                self.assertEqual(receiver.game.game_phase, 'between_kyoku')
 
 
 if __name__ == "__main__":

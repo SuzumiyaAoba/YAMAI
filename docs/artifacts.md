@@ -66,6 +66,8 @@ Schema ID は `urn:yamai:schema:protocol:1.0-draft.1:<name>` または `urn:yama
 3. `wire` に保存した JSON でも、同じ位置の identity hash の文字列tokenだけを置換する。復号したmember名と配列・object内の位置で対象を判定する。
 4. 他のmember、注釈、配列、空白、順序、escape表記を維持する。Schema の `properties` と、否定試験に含まれる型不正な値は置換しない。
 
+namespaced memberの内部にmessage形のobjectや `wire` 文字列があっても、それは交渉identityではないため正規化しない。Schema入力全体と拡張fixtureの `schema` / `message_schemas` も不透明なSchemaデータとしてhashへ含め、const・default・exampleの変更を保持する。
+
 規範本文、release manifest、protocol message Schema は profile hash の入力に含めない。protocol Schema とその参照先は Protocol Version で固定し、文書を含む組全体は release manifest と同一 commit/tag で特定する。hash の一致は、認証・認可や相互運用性の成立を意味しない。
 
 ## Manifest の契約
@@ -75,6 +77,8 @@ Schema ID は `urn:yamai:schema:protocol:1.0-draft.1:<name>` または `urn:yama
 [vector manifest](../test-vectors/protocol/1.0-draft.1/manifest.json) は、protocol/profile の版とhash、参照する成果物、および全公式ケースのID・検査領域・期待する正負結果を列挙する。各IDは `vectors.json` のキーと一対一で対応する。
 
 検査は、版とhashの一致、重複ID、存在しないファイル、repository外の参照、Schemaの未解決参照と未対応keyword、registryとSchemaの不一致を拒否する。規範本文の JSON 例も同じ Schema と意味検査へ通す。
+
+公式vectorの `negative_variants` は、messageならSchemaとmessage意味検査、`trace` wrapperなら主正例・主負例と同じtrace意味検査へ通す。trace wrapperがmessage Schemaに適合しないことを、そのtraceの意味上の不正を確認した証拠にしてはならない。
 
 ## 検証と適合表明
 

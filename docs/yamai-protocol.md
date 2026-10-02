@@ -347,7 +347,7 @@ hostは同一 `seq` の再送、resume replayおよびrange replayに、ledger e
         "1.0-draft.1"
       ],
       "hashes": {
-        "1.0-draft.1": "sha256:228a0e7fbb17503506a090e8afa791495d5f5344e9ec991b9d0315a2a55e4265"
+        "1.0-draft.1": "sha256:d1155725db73c24f83c7e0954fc9e9d63ff946c2d13176038683f4591ec29024"
       },
       "protocol_versions": {
         "1.0-draft.1": [
@@ -382,7 +382,7 @@ hostは同一 `seq` の再送、resume replayおよびrange replayに、ledger e
   "seat": 0,
   "profile": "riichi-4p",
   "profile_revision": "1.0-draft.1",
-  "profile_hash": "sha256:228a0e7fbb17503506a090e8afa791495d5f5344e9ec991b9d0315a2a55e4265",
+  "profile_hash": "sha256:d1155725db73c24f83c7e0954fc9e9d63ff946c2d13176038683f4591ec29024",
   "client": {
     "name": "ExampleAI",
     "version": "2.3.0"
@@ -411,6 +411,8 @@ profile_hashは、vector manifestのprofile_hash_inputsに列挙したJSONをpro
 
 投影objectを[RFC 8785] JCSで直列化し、UTF-8 byte列へSHA-256を適用する（MUST）。member順・空白・Unicode escape・数値をJCS以外の方法で扱わない。現行のhash入力文書はsafe整数だけを数値値として用いる。小数等の構文試験はraw JSON文字列で保持し、公開artifactで数値範囲を拡張する場合はvalidatorも完全なJCS直列化へ対応させる。welcomeは選択済みのrevision/hashをそのまま返す。
 
+namespaced memberの内部は注釈または拡張データであり、実際の交渉messageの格納位置ではない。その内部にhello/join/welcomeと同じ形のobjectや `wire` というmemberがあっても、hash値を正規化してはならない（MUST NOT）。Schema入力文書全体、および拡張fixtureの `schema` / `message_schemas` に含まれるconst・default・example等もそのままhashへ含める。これらの値の変更を、交渉identityの自己参照除去によって消してはならない。
+
 
 `capabilities` は `required` と `optional` の2配列を持たなければならない（MUST）。重複および両配列への同一値の記載は禁止する（MUST NOT）。`required` はpeerが理解しない場合に交渉を拒否する機能、`optional` は両者が提示した場合だけ有効になる機能である。両者の `required` はpeerの `required` または `optional` に含まれなければならず（MUST）、満たせない場合は `unsupported_capability` で拒否する。未知のexperimental capabilityは `optional` なら無視できるが、`required` なら拒否しなければならない。安定 capability は第5節・第19節の閉じた列挙 `resume`、`snapshot` のみとし、実験用 capability は `x-<owner>-<name>` とする。未登録の安定値は `hello` と `join` の `required` / `optional` および `welcome.capabilities` のいずれでも禁止し（MUST NOT）、構造検査でfatal `invalid_message` として拒否する（MUST）。双方が同じ未登録値を提示しても有効化してはならず、`optional` でも黙って無視してはならない。これは、妥当な登録済み値または実験値の必須条件がpeerとの間で満たせない場合の `unsupported_capability` と区別する。`resume` capabilityは `play` modeでだけ有効であり、`spectate` または `replay` modeでは交渉済みoptional一覧に双方が含めても有効化してはならない（MUST NOT）。
 
@@ -426,7 +428,7 @@ profile_hashは、vector manifestのprofile_hash_inputsに列挙したJSONをpro
   "view": "seat",
   "profile": "riichi-4p",
   "profile_revision": "1.0-draft.1",
-  "profile_hash": "sha256:228a0e7fbb17503506a090e8afa791495d5f5344e9ec991b9d0315a2a55e4265",
+  "profile_hash": "sha256:d1155725db73c24f83c7e0954fc9e9d63ff946c2d13176038683f4591ec29024",
   "client": {
     "name": "ExampleAI",
     "version": "2.3.0"
@@ -472,7 +474,7 @@ profile_hashは、vector manifestのprofile_hash_inputsに列挙したJSONをpro
   "view": "seat",
   "profile": "riichi-4p",
   "profile_revision": "1.0-draft.1",
-  "profile_hash": "sha256:228a0e7fbb17503506a090e8afa791495d5f5344e9ec991b9d0315a2a55e4265",
+  "profile_hash": "sha256:d1155725db73c24f83c7e0954fc9e9d63ff946c2d13176038683f4591ec29024",
   "players": [
     {
       "seat": 0,
@@ -1355,15 +1357,37 @@ fixtureファイルのrulesをbase ruleとし、rule_overridesを最上位member
 
 stateは場・局・親、本場・供託、scores、live wall残数、kan_counts、pending_kan、リーチ成立、double_riichi、ippatsu、first_turn、last_tile、rinshan、furitenを明示する。省略による暗黙の0/falseを許さない（MUST NOT）。first_turnは評価seatの第一巡資格、last_tileは和了の原因が最後のlive wall自摸またはその直後の打牌であること、furitenは第7.3.3節の3種のフリテンの論理和である。真の役満に通常役を付けるためのフラグではない。
 
+評価seatはhoraでは `input.actor`、penaltyでは `input.offender`、通常流局のfixtureではseat 0とする。他seatのリーチ・一発等をこの単一seat用の値から推測しない。通常流局で評価seatの `reach_accepted` がtrueなら、そのseatの完全な手牌は門前かつ聴牌であり、供託残本数は1以上でなければならない（MUST）。これは第7.3.2節の成立リーチの維持条件をfixtureへ適用するものである。
+
 state.pre_stateは採点に関連するイベント投影の前の完全な状態、state.eventsはその後の関連event列とする。投影はtsumo、dahai、reach、reach_accepted、chi、pon、daiminkan、ankan_declared、ankan、kakan_declared、kakanを順に保持する。actorと、必要なpai等の採点用memberを保持し、envelope、request、ACK、点数へ影響しないmemberを省略する。暗槓のpaiはconsumedの牌種を赤五正規化した値であり、wire上のankan eventへpaiを追加するものではない。
 
 この投影から、live wall、槓数、pending kan、リーチ成立、宣言時の第一巡資格、一発、最終牌、供託控除とscoresを更新し、stateの値と一致させる（MUST）。非空の和了用投影は、和了牌の原因となった自摸・打牌・槓宣言で終わり、actor/target/paiも和了入力と一致しなければならない。first_turnの自摸は親からの順にlive wall残69、68、67、66の第一自摸を表す。海底/河底の投影は残1から0への通常自摸を含む。
+
+投影内の暗槓・加槓の成立では、kindとactorに加えてpaiも直前のpending宣言と一致しなければならない（MUST）。暗槓は両者とも赤五正規化した牌種、加槓は宣言した実際の追加牌を比較する。別牌の槓へ差し替えても、槓数やlive wallの計算が一致するだけでは正当化できない。
+
+投影が記録したreach・chi・ponの次の投影eventは同じactorのdahai、槓成立の次の投影eventは同じactorの嶺上tsumoであり、その必須後続を省略して評価状態へ到達してはならない（MUST NOT）。pending槓は同じ宣言の成立によってだけ消去し、未成立の反応窓を評価する場合は最後までpendingとして保持する。無関係な大明槓・打牌・自摸でpendingを消す、または成立した槓の嶺上を飛ばすことを、最終値の一致だけで正当化しない。
+
+評価seat以外についても、同じ投影内で一度観測したreachやreach_acceptedを同一局に二度記録してはならず、観測済み成立後の再宣言を禁止する。他seatのpre_stateに記録しない宣言状態は推測しないため、そのseatについて最初に観測するreach_acceptedの前に投影内のreachがないだけでは不正としない。この部分履歴の扱いは、観測した重複を許すものではない。
 
 furitenは行動選択・全捨て牌履歴・現在の待ち集合も必要とするため、当該event投影では更新せず、最終stateの明示的な入力とする。pre_stateには含めない。牌の所有・合法手・フリテン状態遷移そのものはYAMAI 仕様書の状態vectorで検査する。状態を変える投影が不要な牌姿・配分fixtureはeventsを空配列とし、必要な事実をpre_stateとstateへ同じ値で固定できる。これは完全なwireログの省略値を推測する許可ではない。
 
 投影が空でも、明示した局面値同士の矛盾は許可しない（MUST NOT）。和了入力の `first_turn:true` は全seatの `kan_counts` が0であること、`rinshan:true` は `ippatsu:false` であることを必要とする。前状態と最終状態へ同じ矛盾値を書いて一致させても `invalid_context` とする。通常の第一自摸、リーチ後の合法な暗槓による一発なしの嶺上和了、および未成立の槓宣言への槍槓を混同しない。
 
+評価seatの共通事実はhoraだけでなく通常流局・penaltyのpre_stateと最終stateにも適用する。double_riichiまたはippatsuには成立リーチ、成立リーチには1本以上の供託を必要とする。first_turnは成立リーチ・嶺上・いずれかの成立槓・pending加槓と両立しない。rinshanには自分の成立槓を必要とし、ippatsu・last_tileと両立しない。卓全体の成立槓は4個以下で、live wall残数と成立槓数の合計は70以下である（MUST）。penaltyの最終stateも最初の通常自摸より後にあり、要求がまだ存在し得ない配牌直後へchomboを置いてはならない。
+
+first_turnがtrueならlive wall残数は `69 - ((評価seat - oya) mod 4)` 以上であり、初期巡を過ぎて資格を保持しない。last_tileにはlive wall残0かつpending槓なし、pending槓には正のlive wall残数かつ成立槓4個未満を必要とする。成立槓が1個でもあれば最初の通常自摸は既に起きている。penaltyの最終stateがpending槓の反応窓ならoffenderは宣言者以外であり、本人の嶺上手番を表すrinshanもfalseとする。pre_stateのpending宣言から成立・嶺上自摸を経てoffenderの次の要求へ進む投影は、この最終state専用の制約とは区別する。
+
+通常自摸が0回のpre_stateは未進行の配牌状態であり、first_turnはtrue、成立リーチとpending槓はない。通常自摸が1回だけなら成立リーチの評価seatは親に限る。成立槓も0個ならその親の宣言はダブルリーチとなるが、親の第一自摸から暗槓・嶺上を経た通常リーチは区別する。
+
+double_riichiは鳴きのない最初の自摸で宣言済みなので、live wall残数と成立槓数の合計は `69 - ((評価seat - oya) mod 4)` 以下となる。double_riichiとippatsuがともにtrueなら、成立槓・pending加槓はなく、live wall残数はその初回値から4枚以内の減少に限る。宣言前の鳴きはdouble_riichiを否定し、宣言後の成立した鳴きはippatsuを消すためである。四槓散了が必須となった第四槓手番は、最後のlive wall由来の牌へ付け替えてlast_tileとしない。
+
+first_turn、またはdouble_riichiとippatsuの両立が鳴きのない巡番を確定する場合、残数から求めた通常自摸回数 `N = 70 - wall_remaining` と原因seatを照合する。pending槓の宣言者と和了原因seatは `N >= 1` かつ `(oya + N - 1) mod 4` と一致する（MUST）。ダブルリーチ一発の本人自摸・本人のpending暗槓は、宣言前の初回自摸ではなく、その4自摸後の次の本人自摸である。penaltyでも本人の最初の宣言打牌に対する要求は既に終端なので、成立直後と同じ自摸回数を新しい本人の判断へ再利用しない。単なる旗・残数区間の一致だけで、原因が別seatの手番にある矛盾を許可しない。
+
+`first_turn:true` のロンでは、放銃・槓宣言seatは親からの巡番で評価seatより前にあり、live wall残数は `69 - ((target - oya) mod 4)` と一致する（MUST）。評価seat自身の最初の打牌や成立した鳴きの後には第一巡資格はない。未成立の第一自摸時の暗槓への槍槓は可能だが、既存ponを必要とする加槓を第一巡の原因にしてはならない。
+
 通常流局の採点入力でも、4seatそれぞれの `kan_counts` はそのseatの完全な `hands[].melds` に含む暗槓・大明槓・加槓の個数と一致し、卓全体で4以下でなければならない（MUST）。聴牌人数とノーテン精算が偶然一致しても、この不一致は `invalid_context` とする。
+
+通常流局の最終stateではfirst_turn・rinshan・ippatsuはいずれもfalseとする。最後の打牌までに第一巡・嶺上資格は失われ、リーチ宣言時に必要な4枚以上のlive wallは、本人の次の打牌または一発を消す鳴きまでの進行を保証する。penaltyは局途中で起こり得るため、この通常流局専用の終端条件を流用しない。
 
 expectedは全役、bonus、符、飜、基本点、hand_points、pao、裏表示牌、seat間payments、供託受取kyotaku_points、deltas、確定scores、供託残本数を記録する。複数ロンは全和了入力の物理牌と共有和了牌・表示牌が同じ136枚の集合へ収まることも検証する（MUST）。通常流局は4人の手牌からtenpaiとノーテン罰符を計算する。penaltyはruleから配分を計算する。入力時・出力時の `sum(scores) + kyotaku × riichi_stick_value` はゲーム開始時の `4 × starting_points` と一致する。
 
@@ -1615,6 +1639,8 @@ JSON 構文違反、message Schema 違反または `session_id` 不一致は、�
 
 受信者も、未終端requestを取消す `stale` は `chombo` policyだけで受理し、その結果を `penalty` の `end_kyoku` と照合する（MUST）。取消した候補を打牌・副露・和了として適用してはならない。passed・defaulted・supersededで解決済みの反応を、取消しの代わりとしてpenaltyへ置換してはならない（MUST NOT）。既存終端に対する後着通知の `stale` はこの取消しと区別し、元の結果を再適用しない。
 
+自分のrequestについてchomboの `rejected` を観測した受信者は、自分がoffenderであり、その時点で選択前だったことを保持する。続く自分の取消しACKはdefault_action_idと同じ計時値を持ち、penaltyも同じoffenderを示さなければならない（MUST）。新しいaccepted ACKへ進めたり、取消し・penaltyの間へ別transactionを挟んだりしてはならない。第13節の許可されたsnapshot飛越しがtransaction全体を置換する場合は、その回復規則に従う。
+
 `chombo` は競技規則による局取消しであり、悪意あるpeerに対する資源制御ではない。特に `penalty_points == 0` は合法だが、OPENの反応窓で故意の不正入力を行い、他seatの未確定選択を無償で取り消せる。不特定または相互に信頼しないplayerの対戦サービスは `reject` または `default` を選択すべきである（SHOULD）。`chombo` を採用する場合は、反復違反に対する参加停止等の運用方針をサービスprofileで明示すべきである（SHOULD）。正の罰点だけで妨害を防げるとはみなさず、§15の資源超過をchomboへ変換しない。相手の未確定選択は通常のwireから公開されないため、この注意は他seatの和了を事前に観測できることを意味しない。
 
 ## 9. `ack` と timeout
@@ -1815,6 +1841,8 @@ playのseatは整数、spectateとreplayのseatはnullとする。spectateのvie
 観測可能な物理牌の枚数検査には、非公開手牌を持つseatの `ankan_declared.consumed` または `kakan_declared.pai` も含める（MUST）。これらはまだ手牌に所属するため、手牌が可視なら二重に数えず、加槓の元のponも副露と重複して数えない。和了時に公開された自摸和了牌と裏表示牌も、それぞれ既知の同じ実体を除いて1回だけ数え、赤五の内訳を含めて第7.3節の在庫を検査する。複数ロンで公開する裏表示牌列は全該当winで一致し、卓全体では同じ表示位置を1回だけ数える（MUST）。
 
 spectate/replayへrequestやACKを送信してはならず、これらのsessionからactionを送信してはならない（MUST NOT）。replayは記録済みeventの順序を保ち、新sessionの**全enveloped host message**に1から連続したseqを割り当てる。errorやsnapshotも同じ列の番号を消費する。各eventの `original_seq` は選定した単一の元記録streamの番号を保持し、正で狭義増加する。同じreplayで複数の元sessionのseqを混ぜてはならない（MUST NOT）。非eventにoriginal_seqを付けない。replayではrequestのlive timeoutを再実行しない。
+
+spectate/replayから受信したactionは、第12節第5層のmode違反としてfatal `invalid_message` とする。未知requestへのrecoverable `invalid_action` や、終了済みplay sessionの正常な後着actionを無応答で破棄する例外へ読み替えてはならない（MUST NOT）。
 
 新規replayは記録のstart_gameから開始し、welcomeにはその時点のrules・players・scoresを返す。進行中gameをtargetにしてもreplayはjoin時点に固定した記録prefixだけを再生し、その後live観戦へ切り替えない。prefixがend_gameに達していなければ、そのprefixを送信後にtransportを正常終了する。記録が取得できないtargetは交渉用 `resume_unavailable` で拒否する（MUST）。
 
@@ -2333,6 +2361,12 @@ phaseは卓全体のawaiting_draw、awaiting_action、awaiting_responses、resol
 resolvingは、単独decisionまたは反応groupの全選択が固定されlinearization pointを記録してから（第8.1.1節）、終端ACKと結果event列のtransactionが確定するまで（第8.4節）の卓の状態である。この期間にrequestが未終端のplay seat向けには、終端ACKが対応するrequestを欠くため、transactionの確定までsnapshotを生成してはならない（MUST NOT）。一方pending_requestsは**当該play seat宛てだけ**であり、最大1個である（MUST）。awaiting_actionではturn.actorが自分のときだけ、awaiting_responsesでは原因のactor以外のseatにだけ対応requestを保持する。他家の自摸番に自分のpending requestを要求してはならない（MUST NOT）。awaiting_draw/resolvingおよび観戦・replayにはpending requestを含めない。
 
 reach_statusはseatごとのstate（none/declared/accepted）、double、ippatsuを持つ。doubleはリーチ宣言時に第一巡の条件を満たしていたか、ippatsuは現在の一発資格を表す。declaredは宣言打牌への反応が未解決の間だけ存在し、受理または宣言の破棄で遷移する。したがってdeclaredを持つ局stateは、宣言seatをturn.actor、その宣言打牌をlast_eventとするawaiting_responsesまたはresolvingに限る。noneではdouble・ippatsuともfalse、declaredではippatsuはfalseとし、宣言中または受理済みのリーチは宣言牌がrivers内に `reach:true` として残る（MUST）。first_turn_eligibleは自分の最初の打牌前かつ全卓で鳴き・槓がない場合だけtrueとする。kan_counts、rinshan、haiteiは第7.3.1節・第10節のevent適用後の値である。dora eventだけで槓数を増やしてはならない。
+
+doubleとippatsuがともにtrueなら全seatの成立meldは空である。宣言前の鳴きはdoubleを否定し、宣言後の鳴きはippatsuを消すため、どちらの順序でも両者を保持できない。宣言打牌が鳴かれていれば、通常リーチでもippatsuはfalseとなる（MUST）。反対に、最初の宣言打牌を鳴いたものが唯一の成立meldだと公開履歴から確定する場合、その鳴きは宣言より後であり、doubleをfalseへ変更してはならない。複数の同値牌の対応や他の鳴きの前後関係を確定できない場合は、隠れた順序を仮定してこの条件を拡大しない。
+
+最初の打牌での宣言より前に鳴きがあったと主張する場合、その「最初の鳴き」までは親からの巡番が保たれる。したがって、現在のmeldには、宣言者より巡番が前のseatの打牌を使う鳴き、または宣言者以前の巡番のseatによる暗槓の少なくとも一方が必要である。加槓は元のponを最初の鳴きとして扱う。候補が一つもないなら、全ての鳴きは宣言後でありdoubleをfalseにできない。候補があるだけでは、その実際の前後関係を確定したとみなさない。
+
+自分の河が宣言打牌1枚だけでdoubleもippatsuもfalseなら、通常リーチにした宣言前の鳴きと、一発を消した宣言後の鳴きは別の成立eventである。現在のmeldが示す成立回数は2回以上を必要とし、加槓は元のponと加槓の2回、その他のmeldは1回と数える。同一の鳴きを宣言の前後の両方へ数えてはならない。
 
 局内snapshotの各seatの `reach:true` は、reach stateがnoneなら0個、declaredまたはacceptedなら正確に1個でなければならない（MUST）。declared/acceptedのseatは門前を維持し、副露列に含められるのは暗槓だけである。暗槓以外の副露とリーチ成立を同時に復元したり、複数の宣言牌から都合のよい第一巡・一発資格を選んだりしてはならない（MUST NOT）。acceptedのseatでは、宣言牌より後の全河牌が `tsumogiri:true` でなければならない（MUST）。宣言牌そのものへの手出しは許可する。
 

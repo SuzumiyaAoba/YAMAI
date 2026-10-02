@@ -1496,13 +1496,13 @@ class SessionInvariants(unittest.TestCase):
                     self.assertEqual(receiver.game.round['wall_remaining'], 68)
                     self.assertFalse(receiver.active_requests)
 
-    def test_hash_normalizes_only_wire_identity_values(self):
+    def test_hash_preserves_message_shaped_annotation_values(self):
         protocol = v.strict_load(v.ROOT / f'registry/protocol/{v.PROTOCOL}/registry.json')
         rules = v.strict_load(v.ROOT / f'registry/riichi-4p/{v.PROFILE_REVISION}/registry.json')
         one, two = deepcopy(protocol), deepcopy(protocol)
         one['x_test_message'] = {'kind':'join','profile_hash':'sha256:'+'a'*64}
         two['x_test_message'] = {'kind':'join','profile_hash':'sha256:'+'b'*64}
-        self.assertEqual(v.profile_hash(one, rules), v.profile_hash(two, rules))
+        self.assertNotEqual(v.profile_hash(one, rules), v.profile_hash(two, rules))
         one['x_test_message'].pop('kind')
         two['x_test_message'].pop('kind')
         self.assertNotEqual(v.profile_hash(one, rules), v.profile_hash(two, rules))
@@ -2097,13 +2097,13 @@ class SessionInvariants(unittest.TestCase):
         protocol['x_test_schema']['properties']['profile_hash'] = {'type':'integer'}
         self.assertNotEqual(before, v.profile_hash(protocol, rules))
 
-    def test_wire_hash_normalization_preserves_other_bytes(self):
+    def test_hash_preserves_wire_strings_inside_annotations(self):
         protocol = v.strict_load(v.ROOT / f'registry/protocol/{v.PROTOCOL}/registry.json')
         rules = v.strict_load(v.ROOT / f'registry/riichi-4p/{v.PROFILE_REVISION}/registry.json')
         one, two = deepcopy(protocol), deepcopy(protocol)
         one['x_test_capture'] = {'wire':json.dumps({'kind':'join','profile_hash':'sha256:'+'a'*64})}
         two['x_test_capture'] = {'wire':json.dumps({'kind':'join','profile_hash':'sha256:'+'b'*64})}
-        self.assertEqual(v.profile_hash(one,rules),v.profile_hash(two,rules))
+        self.assertNotEqual(v.profile_hash(one,rules),v.profile_hash(two,rules))
         two['x_test_capture']['wire'] += ' '
         self.assertNotEqual(v.profile_hash(one,rules),v.profile_hash(two,rules))
 
@@ -2408,6 +2408,10 @@ class LedgerLiveSnapshotClockTests(_LedgerTraceFixture):
         if ingress is not None:
             action['at_ms'], action['message']['action_id'] = ingress
             trace['messages'].append(action)
+        gap = {key: welcome[key] for key in ('yamai', 'session_id', 'game_id')}
+        gap.update(kind='error', code='sequence_gap', severity='recoverable', message='Recover missing prefix',
+                   expected_seq=receiver.applied - 1, received_seq=receiver.applied)
+        trace['messages'].append(dict(at_ms=at_ms, direction='in', client_id='peer', message=gap))
         trace['messages'].append(dict(at_ms=at_ms, direction='out', client_id='peer',
                                       transaction_id='snapshot', operation_id='snapshot', message=snapshot))
         return trace
@@ -3489,7 +3493,7 @@ class PenaltyDecisionBindings(unittest.TestCase):
     raw = staticmethod(SessionInvariants.raw)
     assert_rejected_atomically = SessionInvariants.assert_rejected_atomically
 
-    def prepare(self, context, mode):
+    def prepare(self, context, mode, *, own_rejection=False):
         suffix = 'wire_call_compound_flow' if context == 'reaction' else 'cancellation_requires_penalty_result'
         trace = self.trace(suffix)
         welcome = trace['welcome']
@@ -3504,6 +3508,9 @@ class PenaltyDecisionBindings(unittest.TestCase):
         for message in messages:
             if mode != 'play' and message['kind'] != 'event':
                 continue
+            if own_rejection and message['kind'] == 'ack':
+                rejected = dict(message, seq=receiver.applied + 1, status='rejected', action_id='invalid-choice')
+                self.assertEqual(receiver.receive(self.raw(rejected)), 'applied')
             message['seq'] = receiver.applied + 1
             if message['kind'] == 'event':
                 event = message['event']
@@ -3569,7 +3576,7 @@ class PenaltyDecisionBindings(unittest.TestCase):
         for mode in ('play', 'spectate', 'replay'):
             for offender in range(4):
                 with self.subTest(mode=mode, offender=offender):
-                    receiver = self.prepare('reaction', mode)
+                    receiver = self.prepare('reaction', mode, own_rejection=mode == 'play' and offender == 1)
                     message = self.penalty(receiver, offender)
                     if offender != 0:
                         self.assertEqual(receiver.receive(self.raw(message)), 'applied')
@@ -3791,6 +3798,197 @@ class SessionLifecycleReview(unittest.TestCase):
                         receiver.begin_resume(resumed)
                         self.assertEqual(receiver.through, through)
                         self.assertEqual(receiver.recovery, 'resume')
+
+
+class RejectedChomboTransactionTests(unittest.TestCase):
+    setUpClass = classmethod(SessionInvariants.setUpClass.__func__)
+    trace = SessionInvariants.trace
+    receiver = SessionInvariants.receiver
+    raw = staticmethod(SessionInvariants.raw)
+    assert_rejected_atomically = SessionInvariants.assert_rejected_atomically
+    penalty = PenaltyDecisionBindings.penalty
+
+    def prepare(self, *, group=False, rejected=True):
+        trace = self.trace('wire_call_compound_flow' if group else 'wire_complete_game')
+        trace['welcome']['rules']['invalid_action_policy'] = 'chombo'
+        trace['steps'][0]['message']['event']['rules']['invalid_action_policy'] = 'chombo'
+        receiver = self.receiver(trace['welcome'])
+        for step in trace['steps'][:5 if group else 4]:
+            receiver.receive(self.raw(step['message']))
+        request = receiver.requests[next(iter(receiver.active_requests))]
+        ack = {key: trace['welcome'][key] for key in ('yamai', 'session_id', 'game_id')}
+        ack.update(kind='ack', seq=receiver.applied + 1, request_id=request['request_id'],
+                   action_id='invalid-choice', status='rejected', elapsed_ms=7000, time_bank_ms=14000)
+        if rejected:
+            receiver.receive(self.raw(ack))
+        return receiver, request, ack
+
+    def cancellation(self, receiver, request, rejected):
+        return dict(rejected, seq=receiver.applied + 1, status='stale',
+                    action_id=request['default_action_id'])
+
+    def test_rejected_chombo_forces_cancellation_before_new_messages(self):
+        for group in (False, True):
+            for kind in ('accepted', 'defaulted', 'rejected', 'recoverable_error', 'snapshot'):
+                with self.subTest(group=group, kind=kind):
+                    receiver, request, rejected = self.prepare(group=group)
+                    if kind == 'recoverable_error':
+                        message = {key: rejected[key] for key in ('yamai', 'session_id', 'game_id')}
+                        message.update(kind='error', seq=receiver.applied + 1, code='invalid_action',
+                                       severity='recoverable', message='Interrupted cancellation')
+                    elif kind == 'snapshot':
+                        message = SessionInvariants.request_identity_snapshot(self, receiver)
+                    else:
+                        message = self.cancellation(receiver, request, rejected)
+                        message['status'] = kind
+                        if kind == 'accepted':
+                            message['action_id'] = next(c['action_id'] for c in request['legal_actions']
+                                                        if c['action']['type'] != 'none')
+                        elif kind == 'defaulted':
+                            message.update(elapsed_ms=21000, time_bank_ms=0)
+                        else:
+                            message['action_id'] = 'another-invalid-choice'
+                    self.assert_rejected_atomically(receiver, message)
+
+    def test_chombo_cancellation_binds_default_and_rejected_clock(self):
+        for group in (False, True):
+            for change in ({}, {'elapsed_ms': 7001, 'time_bank_ms': 13999}, {'action_id': 'nondefault'}):
+                with self.subTest(group=group, change=change):
+                    receiver, request, rejected = self.prepare(group=group)
+                    message = self.cancellation(receiver, request, rejected)
+                    message.update(change)
+                    if message['action_id'] == 'nondefault':
+                        message['action_id'] = next(c['action_id'] for c in request['legal_actions']
+                                                    if c['action_id'] != request['default_action_id'])
+                    if change:
+                        self.assert_rejected_atomically(receiver, message)
+                    else:
+                        self.assertEqual(receiver.receive(self.raw(message)), 'applied')
+                        self.assertEqual(receiver.receive(self.raw(self.penalty(receiver, receiver.welcome['seat']))), 'applied')
+                        self.assertEqual(receiver.time_bank_ms, 14000)
+
+    def test_rejected_chombo_binds_penalty_to_own_offender(self):
+        for offender in (1, 2, 3):
+            with self.subTest(offender=offender):
+                receiver, request, rejected = self.prepare(group=True)
+                receiver.receive(self.raw(self.cancellation(receiver, request, rejected)))
+                penalty = self.penalty(receiver, offender)
+                if offender == receiver.welcome['seat']:
+                    self.assertEqual(receiver.receive(self.raw(penalty)), 'applied')
+                else:
+                    self.assert_rejected_atomically(receiver, penalty)
+
+    def test_chombo_own_penalty_requires_own_rejected_ack(self):
+        for offender in (1, 2, 3):
+            with self.subTest(offender=offender):
+                receiver, request, rejected = self.prepare(group=True, rejected=False)
+                receiver.receive(self.raw(self.cancellation(receiver, request, rejected)))
+                penalty = self.penalty(receiver, offender)
+                if offender == receiver.welcome['seat']:
+                    self.assert_rejected_atomically(receiver, penalty)
+                else:
+                    self.assertEqual(receiver.receive(self.raw(penalty)), 'applied')
+
+    def test_rejected_chombo_survives_resume_and_exact_replay(self):
+        receiver, request, rejected = self.prepare(group=True)
+        resumed = deepcopy(receiver.welcome)
+        resumed.update(resumed=True, replay_from_seq=receiver.applied + 1,
+                       replay_through_seq=receiver.applied + 2)
+        resumed['resume']['token'] = 'rt_' + 'R' * 22
+        receiver.begin_resume(resumed)
+        self.assertEqual(receiver.receive(self.raw(rejected)), 'duplicate')
+        receiver.receive(self.raw(self.cancellation(receiver, request, rejected)))
+        self.assertEqual(receiver.receive(self.raw(self.penalty(receiver, receiver.welcome['seat']))), 'applied')
+        self.assertIsNone(receiver.recovery)
+
+    def test_rejected_chombo_allows_fatal_diagnosis(self):
+        for gap in (False, True):
+            with self.subTest(gap=gap):
+                receiver, request, rejected = self.prepare()
+                message = {key: rejected[key] for key in ('yamai', 'session_id', 'game_id')}
+                message.update(kind='error', seq=receiver.applied + (4 if gap else 1),
+                               code='resource_limit', severity='fatal', message='Stop')
+                self.assertEqual(receiver.receive(self.raw(message)), 'fatal' if gap else 'applied')
+                self.assertTrue(receiver.closed)
+
+    def jump(self, receiver, snapshot):
+        snapshot.update(seq=receiver.applied + 10, replaces_through_seq=receiver.applied + 9)
+        resumed = deepcopy(receiver.welcome)
+        resumed.update(resumed=True, replay_from_seq=receiver.applied + 1,
+                       replay_through_seq=snapshot['replaces_through_seq'])
+        resumed['resume']['token'] = 'rt_' + 'R' * 22
+        receiver.begin_resume(resumed)
+        return snapshot
+
+    def test_rejected_chombo_recovery_cannot_keep_original_decision(self):
+        receiver, request, rejected = self.prepare(group=True)
+        snapshot = self.jump(receiver, SessionInvariants.request_identity_snapshot(self, receiver))
+        self.assert_rejected_atomically(receiver, snapshot)
+
+    def test_rejected_chombo_recovery_keeps_known_cancellation_clock(self):
+        for elapsed in (7000, 7001):
+            with self.subTest(elapsed=elapsed):
+                receiver, request, rejected = self.prepare()
+                snapshot = deepcopy(self.vectors['V58_snapshot_ended_rankings']['positive'])
+                snapshot['state'].update(players=receiver.welcome['players'], time_bank_ms=0)
+                self.assertEqual(receiver.receive(self.raw(self.jump(receiver, snapshot))), 'applied')
+                late = dict(rejected, seq=receiver.applied + 1, status='stale',
+                            action_id='new-late-attempt', elapsed_ms=elapsed, time_bank_ms=21000-elapsed)
+                if elapsed == 7000:
+                    self.assertEqual(receiver.receive(self.raw(late)), 'applied')
+                else:
+                    self.assert_rejected_atomically(receiver, late)
+
+
+class SessionInputModeTests(unittest.TestCase):
+    setUpClass = classmethod(SessionInvariants.setUpClass.__func__)
+    trace = SessionInvariants.trace
+
+    def test_observer_mode_precedes_request_and_ended_exceptions(self):
+        validate = v._session_schema_validator(self.schemas, self.digest)
+        welcome = self.trace('wire_complete_game')['welcome']
+        identity = {key: welcome[key] for key in ('yamai', 'session_id', 'game_id')}
+        for mode in ('spectate', 'replay'):
+            for ended in (False, True):
+                for known in (False, True):
+                    for malformed in (False, True):
+                        with self.subTest(mode=mode, ended=ended, known=known, malformed=malformed):
+                            action = dict(identity, kind='action', request_id='r1', action_id=None if malformed else 'a1')
+                            context = {'identity': identity, 'known_request_ids': ['r1'] if known else [],
+                                       'mode': mode, 'game_ended': ended}
+                            self.assertEqual(classify_player_input(action, context, validate),
+                                             {'code': 'invalid_message', 'severity': 'fatal'})
+
+    def test_retired_observer_cannot_use_ignore_exception(self):
+        validate = v._session_schema_validator(self.schemas, self.digest)
+        welcome = self.trace('wire_complete_game')['welcome']
+        old = {key: welcome[key] for key in ('yamai', 'session_id', 'game_id')}
+        current = dict(old, session_id='new-session', game_id='new-game')
+        for mode in ('spectate', 'replay', 'play', None):
+            with self.subTest(mode=mode):
+                retired = dict(old)
+                if mode is not None:
+                    retired['mode'] = mode
+                action = dict(old, kind='action', request_id='r1', action_id='a1')
+                context = {'identity': current, 'known_request_ids': [], 'mode': 'play',
+                           'retired_sessions': [retired]}
+                self.assertEqual(classify_player_input(action, context, validate),
+                                 {'code': 'invalid_message', 'severity': 'fatal'} if mode in ('spectate', 'replay')
+                                 else {'code': 'ignored', 'severity': None})
+
+    def test_play_and_unspecified_modes_keep_existing_classification(self):
+        validate = v._session_schema_validator(self.schemas, self.digest)
+        welcome = self.trace('wire_complete_game')['welcome']
+        identity = {key: welcome[key] for key in ('yamai', 'session_id', 'game_id')}
+        action = dict(identity, kind='action', request_id='r1', action_id='a1')
+        for mode in ('play', None):
+            for ended in (False, True):
+                with self.subTest(mode=mode, ended=ended):
+                    context = {'identity': identity, 'known_request_ids': ['r1'], 'game_ended': ended}
+                    if mode is not None:
+                        context['mode'] = mode
+                    self.assertEqual(classify_player_input(action, context, validate),
+                                     {'code': 'ignored' if ended else 'valid', 'severity': None})
 
 
 if __name__ == '__main__':

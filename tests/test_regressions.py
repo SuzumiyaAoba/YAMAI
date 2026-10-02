@@ -16,6 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 import score_oracle as oracle
 import validate_artifacts as validator
+import test_session_contract as session_fixtures
 from game_contract import EventState, GameError, next_kyoku, check_hora_payments
 from scoring_reference import ScoringError, normal_payments, tile_index
 from session_contract import Receiver, SessionError
@@ -375,6 +376,10 @@ class ProtocolRegressionTests(unittest.TestCase):
         if not resumed:
             # The request was issued at 7ms; this live snapshot is sent at 8ms.
             snapshot["message"]["state"]["pending_requests"][0]["remaining_ms"] = 20999
+            error = {key: snapshot["message"][key] for key in ("yamai", "session_id", "game_id")}
+            error.update(kind="error", code="sequence_gap", severity="recoverable",
+                         message="A host message is missing", expected_seq=3, received_seq=4)
+            trace["messages"].append({"at_ms": 8, "direction": "in", "client_id": "peer", "message": error})
         trace["messages"].append(snapshot)
         return trace
 
@@ -1682,6 +1687,198 @@ class ScoringRegressionTests(unittest.TestCase):
         win = self.score("settlement_pao_partial_ron")["wins"][0]
         self.assertEqual(win["payments"], [dict(**{"from": 0, "to": 1, "points": 64200}), dict(**{"from": 2, "to": 1, "points": 32100})])
         self.assertEqual(sum(p["points"] for p in win["payments"]), win["hand_points"] + 300)
+
+
+class SnapshotGenerationAuthority(session_fixtures._LedgerTraceFixture):
+    def snapshot_trace(self):
+        trace = copy.deepcopy(self.vectors['V428_live_snapshot_obeys_capture_clock']['positive']['trace'])
+        # A first-generation live snapshot is not authorized merely by the
+        # negotiated capability. Start from a capture without a recovery input.
+        trace['messages'] = [s for s in trace['messages']
+                             if s['message'].get('code') != 'sequence_gap']
+        return trace
+
+    @staticmethod
+    def add_gap(trace, *, index=None, expected=None, received=None):
+        index = len(trace['messages']) - 1 if index is None else index
+        head = max((s['message'].get('seq', 0) for s in trace['messages'][:index]
+                    if s['direction'] == 'out'), default=0)
+        welcome = trace['messages'][2]['message']
+        error = {k: welcome[k] for k in ('yamai', 'session_id', 'game_id')}
+        error.update(kind='error', code='sequence_gap', severity='recoverable',
+                     message='A host message is missing',
+                     expected_seq=head - 1 if expected is None else expected,
+                     received_seq=head if received is None else received)
+        trace['messages'].insert(index, {
+            'at_ms': trace['messages'][index]['at_ms'], 'direction': 'in',
+            'client_id': 'peer', 'message': error})
+
+    @staticmethod
+    def append_snapshot(trace):
+        snapshot = copy.deepcopy(trace['messages'][-1])
+        snapshot['message']['seq'] += 1
+        snapshot['message']['replaces_through_seq'] += 1
+        snapshot.update(transaction_id='snapshot-next', operation_id='snapshot-next')
+        trace['messages'].append(snapshot)
+
+    def test_new_live_snapshot_requires_a_generation_reason(self):
+        with self.assertRaisesRegex(validator.ArtifactError, 'snapshot.*recovery|recovery.*snapshot'):
+            self.check_ledger(self.snapshot_trace())
+
+    def test_gap_authorizes_one_new_snapshot(self):
+        trace = self.snapshot_trace()
+        self.add_gap(trace)
+        self.check_ledger(trace)
+        self.append_snapshot(trace)
+        with self.assertRaisesRegex(validator.ArtifactError, 'snapshot.*recovery|recovery.*snapshot'):
+            self.check_ledger(trace)
+        self.add_gap(trace)
+        self.check_ledger(trace)
+
+    def test_gap_cannot_claim_an_unissued_host_sequence(self):
+        trace = self.snapshot_trace()
+        self.add_gap(trace, expected=4, received=5)
+        with self.assertRaisesRegex(validator.ArtifactError, 'gap.*history|gap.*issued'):
+            self.check_ledger(trace)
+
+    def test_snapshot_retransmission_needs_no_new_generation_permission(self):
+        trace = self.snapshot_trace()
+        self.add_gap(trace)
+        trace['messages'].append(copy.deepcopy(trace['messages'][-1]))
+        self.check_ledger(trace)
+
+    def test_completed_range_replay_consumes_gap_authority(self):
+        trace = self.snapshot_trace()
+        self.add_gap(trace)
+        snapshot = trace['messages'].pop()
+        for sequence in (3, 4):
+            message = copy.deepcopy(next(s for s in trace['messages']
+                                    if s['direction'] == 'out' and s['message'].get('seq') == sequence))
+            message['at_ms'] = snapshot['at_ms']
+            trace['messages'].append(message)
+        trace['messages'].append(snapshot)
+        with self.assertRaisesRegex(validator.ArtifactError, 'snapshot.*recovery|recovery.*snapshot'):
+            self.check_ledger(trace)
+
+    def test_incomplete_range_replay_can_fall_back_to_snapshot(self):
+        trace = self.snapshot_trace()
+        self.add_gap(trace)
+        message = copy.deepcopy(next(s for s in trace['messages']
+                                if s['direction'] == 'out' and s['message'].get('seq') == 3))
+        message['at_ms'] = trace['messages'][-1]['at_ms']
+        trace['messages'].insert(-1, message)
+        self.check_ledger(trace)
+
+    def test_resumed_snapshot_replaces_frontier_without_gap_input(self):
+        trace = session_fixtures.LedgerResumeCaptureTests.resume_trace(self, self.snapshot_trace(), through=4, offset=10)
+        session_fixtures.LedgerResumeCaptureTests.retain(trace)
+        trace['messages'][-1]['message']['state']['pending_requests'][0]['remaining_ms'] = 20990
+        self.check_ledger(trace)
+
+    def test_resumed_first_new_message_consumes_snapshot_permission(self):
+        trace = session_fixtures.LedgerResumeCaptureTests.resume_trace(self, self.snapshot_trace(), through=3, offset=10)
+        with self.assertRaisesRegex(validator.ArtifactError, 'snapshot.*recovery|recovery.*snapshot'):
+            self.check_ledger(trace)
+
+    def test_historical_snapshot_remains_ordinary_ledger_entry(self):
+        trace = session_fixtures.LedgerResumeCaptureTests.resume_trace(self, self.snapshot_trace(), through=5, offset=10)
+        self.check_ledger(trace)
+
+    def test_midgame_spectator_bootstrap_does_not_need_a_gap(self):
+        for name in ('V264_session_observer_snapshot_bootstrap',
+                     'V265_session_snapshot_recursive_projection'):
+            with self.subTest(name=name):
+                self.check_ledger(copy.deepcopy(self.vectors[name]['positive']['trace']))
+
+
+class ObserverActionModeAudit(session_fixtures._LedgerTraceFixture):
+    def observer_trace(self, mode, view, *, ended=False):
+        trace = copy.deepcopy(self.vectors['V261_session_immutable_wire_ledger']['positive']['trace'])
+        join, welcome = trace['messages'][1]['message'], trace['messages'][2]['message']
+        for key in ('seat', 'room'):
+            join.pop(key, None)
+        join.update(mode=mode, view=view, target={'type': 'game', 'id': trace['game_id']})
+        welcome.update(mode=mode, view=view, seat=None, capabilities=['snapshot'])
+        welcome.pop('resume', None)
+        trace['clients'][0].update(mode=mode, view=view, seat=None)
+        trace['messages'] = trace['messages'][:3] + [s for s in trace['messages'][3:]
+                                                   if s['message']['kind'] == 'event']
+        hands = [
+            ['1m', '2m', '3m', '4m', '5m', '6m', '7p', '8p', '9p', '2s', '3s', '4s', 'E'],
+            ['1m', '9m', '1p', '9p', '1s', 'E', 'S', 'W', 'N', 'P', 'F', 'C', 'E'],
+            ['2m', '2m', '3m', '3m', '4m', '4m', '6m', '6m', '7m', '7m', '8m', '8m', '9m'],
+            ['2p', '2p', '3p', '3p', '4p', '4p', '6p', '6p', '7p', '7p', '8p', '8p', '9p'],
+        ]
+        for sequence, step in enumerate(trace['messages'][3:], 1):
+            message, event = step['message'], step['message']['event']
+            if mode == 'replay':
+                message['original_seq'] = message['seq']
+            message['seq'] = sequence
+            visible = view.get('seat') if isinstance(view, dict) else None
+            if event['type'] == 'start_kyoku':
+                event['hands'] = [{'tiles': hand} if view == 'full' or actor == visible else {'count': 13}
+                                  for actor, hand in enumerate(hands)]
+            elif event['type'] == 'tsumo' and view != 'full' and event['actor'] != visible:
+                event['pai'] = None
+        if not ended:
+            trace['messages'] = trace['messages'][:4]
+        return trace
+
+    def test_retired_observer_mode_survives_transport_reuse(self):
+        for previous_mode in ('spectate', 'replay', 'play'):
+            with self.subTest(previous_mode=previous_mode):
+                if previous_mode == 'play':
+                    old = copy.deepcopy(self.vectors['V261_session_immutable_wire_ledger']['positive']['trace'])
+                else:
+                    old = self.observer_trace(previous_mode, 'public', ended=True)
+                following = self.observer_trace('spectate', 'public', ended=True)
+                following['messages'][1]['message']['target']['id'] = 'next-game'
+                for step in following['messages']:
+                    message = step['message']
+                    if 'session_id' in message:
+                        message.update(session_id='next-session', game_id='next-game')
+                trace = {'trace_type': 'multi_session', 'sessions': [], 'expected': []}
+                for source in (old, following):
+                    hello, join, welcome = [step['message'] for step in source['messages'][:3]]
+                    messages = [step['message'] for step in source['messages'][3:]
+                                if step['direction'] == 'out']
+                    trace['sessions'].append({'hello': hello, 'join': join, 'welcome': welcome,
+                                              'messages': messages})
+                    trace['expected'].append({'session_id': welcome['session_id'], 'game_id': welcome['game_id'],
+                                              'last_seq': messages[-1]['seq'], 'ended': True})
+                validator.semantic_session_trace(trace, self.digest)
+                welcome = trace['sessions'][0]['welcome']
+                action = {k: welcome[k] for k in ('yamai', 'session_id', 'game_id')}
+                action.update(kind='action', request_id='unknown', action_id='a')
+                trace['sessions'][1]['old_actions'] = [action]
+                if previous_mode == 'play':
+                    validator.semantic_session_trace(trace, self.digest)
+                else:
+                    with self.assertRaisesRegex(validator.ArtifactError, 'retired session'):
+                        validator.semantic_session_trace(trace, self.digest)
+
+    def test_observer_action_is_fatal_before_post_game_ignore(self):
+        for mode, view in (('spectate', 'public'), ('replay', 'public'),
+                           ('replay', 'full'), ('replay', {'seat': 0})):
+            for ended in (False, True):
+                with self.subTest(mode=mode, view=view, ended=ended):
+                    trace = self.observer_trace(mode, view, ended=ended)
+                    self.check_ledger(trace)
+                    welcome = trace['messages'][2]['message']
+                    action = {k: welcome[k] for k in ('yamai', 'session_id', 'game_id')}
+                    action.update(kind='action', request_id='unknown', action_id='a')
+                    trace['messages'].append({'at_ms': trace['messages'][-1]['at_ms'] + 1,
+                                              'direction': 'in', 'client_id': 'peer', 'message': action})
+                    if not ended:
+                        error = {k: welcome[k] for k in ('yamai', 'session_id', 'game_id')}
+                        error.update(kind='error', seq=2, code='invalid_action', severity='recoverable',
+                                     message='Unknown request', request_id='unknown', action_id='a')
+                        trace['messages'].append({'at_ms': trace['messages'][-1]['at_ms'] + 1,
+                                                  'direction': 'out', 'client_id': 'peer',
+                                                  'transaction_id': 'diagnostic', 'operation_id': 'diagnostic',
+                                                  'message': error})
+                    with self.assertRaisesRegex(validator.ArtifactError, 'observer.*action|action.*observer'):
+                        self.check_ledger(trace)
 
 
 if __name__ == "__main__":

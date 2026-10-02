@@ -96,6 +96,38 @@ class ValidatorBoundaries(unittest.TestCase):
                                    'send_backlog_bytes': 8388607, 'send_backlog_messages': 1023,
                                    'write_deadline_ms': 60000})
 
+    def test_static_resource_timeout_remains_expired_after_its_boundary(self):
+        for backlog_bytes, backlog_messages in ((8388608, 1), (1000, 1024), (8388608, 1024)):
+            for elapsed in (0, 59999, 60000, 60001, 120000, v.MAX_INT):
+                trace = {'trace_type': 'resource', 'peer_reads': False,
+                         'send_backlog_bytes': backlog_bytes, 'send_backlog_messages': backlog_messages,
+                         'write_deadline_ms': elapsed}
+                with self.subTest(bytes=backlog_bytes, messages=backlog_messages, elapsed=elapsed):
+                    if elapsed >= 60000:
+                        self.assert_error('resource_limit', v.semantic_resource_trace, trace)
+                    else:
+                        v.semantic_resource_trace(trace)
+
+    def test_negative_trace_variants_execute_their_semantic_checker(self):
+        manifest = {'vectors': 'test-vectors/protocol/1.0-draft.1/vectors.json',
+                    'profile_hash': 'sha256:' + '0' * 64,
+                    'cases': [{'id': 'probe', 'expect_negative': 'invalid_message'}]}
+        valid = {'trace': {'trace_type': 'resource'}}
+        case = {'positive': valid, 'negative_variants': [deepcopy(valid)],
+                'negative_expect': 'invalid_message'}
+        original_load = v.strict_load
+        def load(path):
+            return {'probe': case} if path == v.ROOT / manifest['vectors'] else original_load(path)
+        with patch.object(v, 'strict_load', load):
+            # A valid trace is not a negative merely because its wrapper is
+            # not a wire message. The actual semantic checker must run.
+            self.assert_error('vector_error', v.check_vectors, v.SchemaSet(), manifest)
+            case['negative_expect'] = manifest['cases'][0]['expect_negative'] = 'resource_limit'
+            case['negative_variants'] = [{'trace': {'trace_type': 'resource',
+                                         'peer_reads': False, 'send_backlog_messages': 1024,
+                                         'write_deadline_ms': 60001}}]
+            self.assertEqual(v.check_vectors(v.SchemaSet(), manifest), 1)
+
     def test_error_action_id_is_limited_to_action_diagnostics(self):
         schemas = v.SchemaSet()
         error_schema = schemas.schemas[f'urn:yamai:schema:protocol:{v.PROTOCOL}:error']
@@ -548,6 +580,46 @@ class ValidatorBoundaries(unittest.TestCase):
                 return result
             with self.subTest(value=value), patch.object(v, 'strict_load', load):
                 self.assert_error('registry_error', v.check_registry, schemas)
+
+    def test_profile_hash_preserves_message_shaped_annotations_and_schemas(self):
+        manifest = {'vectors': 'vectors.json', 'scoring_vectors': 'scoring.json'}
+        digest_a, digest_b = ('sha256:' + ch * 64 for ch in ('a', 'b'))
+        sample = {'kind': 'join', 'profile_hash': digest_a}
+        def digest(vector, schema=None):
+            def load(path):
+                if path.name == 'manifest.json':
+                    return manifest
+                if path.name == 'vectors.json':
+                    return vector
+                if path.name == 'riichi-4p.schema.json':
+                    return {} if schema is None else schema
+                return {}
+            with patch.object(v, 'strict_load', load):
+                return v.profile_hash({'profiles': []}, {})
+        # Annotation payloads are opaque, even if they resemble messages or
+        # contain a wire field. Their data must remain part of the digest.
+        for annotation in (sample, [sample], {'wire': json.dumps(sample)},
+                           {'nested': {'kind': 'hello', 'profiles': [
+                               {'hashes': {'1.0-draft.1': digest_a}}]}}):
+            changed = json.loads(json.dumps(annotation).replace(digest_a, digest_b))
+            with self.subTest(annotation=annotation):
+                self.assertNotEqual(digest({'x_test_note': annotation}),
+                                    digest({'x_test_note': changed}))
+        # A const/default/example in a Schema is not an actual message.
+        for keyword in ('const', 'default', 'examples'):
+            before = {keyword: [sample] if keyword == 'examples' else sample}
+            after = json.loads(json.dumps(before).replace(digest_a, digest_b))
+            with self.subTest(keyword=keyword):
+                self.assertNotEqual(digest({}, before), digest({}, after))
+                self.assertNotEqual(digest({'schema': before}), digest({'schema': after}))
+                self.assertNotEqual(digest({'message_schemas': {'event': before}}),
+                                    digest({'message_schemas': {'event': after}}))
+        # Only real identity fields are cycle-normalized, on both fixture
+        # message and raw-wire routes.
+        for wrapper in (lambda item: {'positive': item},
+                        lambda item: {'wire': json.dumps(item)}):
+            self.assertEqual(digest(wrapper(sample)),
+                             digest(wrapper(dict(sample, profile_hash=digest_b))))
 
     def test_registry_hash_matches_computed_artifacts_at_full_gate(self):
         original_load = v.strict_load

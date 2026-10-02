@@ -355,22 +355,119 @@ def normal_payments(basic: int, actor: int, target: int, oya: int) -> dict[int, 
     return {seat: ceil100(basic * (2 if actor == oya or seat == oya else 1)) for seat in range(4) if seat != actor}
 
 
+def validate_scalar_context(state: dict[str, Any], actor: int, rules: dict[str, Any]) -> None:
+    """Check explicit single-seat facts without assuming a winning hand.
+
+    Draw fixtures evaluate seat zero and penalties evaluate the offender.
+    These implications hold before and after the projection as well as for
+    winners; they do not infer any other seat's riichi or concealed tiles.
+    """
+    require(sum(state["kan_counts"]) <= 4,
+            "invalid_context", "more than four committed kans")
+    require(state["wall_remaining"] + sum(state["kan_counts"]) <= 70,
+            "invalid_context", "live wall and committed kans exceed the initial wall")
+    require(not any(state["kan_counts"])
+            or state["wall_remaining"] + sum(state["kan_counts"]) < 70,
+            "invalid_context", "committed kan precedes the first normal draw")
+    normal_draws = 70 - state["wall_remaining"] - sum(state["kan_counts"])
+    require(normal_draws != 0
+            or (state["first_turn"] and not state["reach_accepted"] and state["pending_kan"] is None),
+            "invalid_context", "initial scalar state precedes every declaration and discard")
+    require(normal_draws != 1 or not state["reach_accepted"]
+            or (actor == state["oya"]
+                and state["double_riichi"] == (state["kan_counts"][actor] == 0)),
+            "invalid_context", "first-draw accepted riichi differs from the dealer's kan history")
+    require(not (state["double_riichi"] or state["ippatsu"]) or state["reach_accepted"],
+            "invalid_context", "riichi qualification without accepted riichi")
+    require(not state["reach_accepted"] or state["kyotaku"] >= 1,
+            "invalid_context", "accepted riichi deposit is missing")
+    first_draw_wall = 69 - (actor - state["oya"]) % 4
+    require(not state["double_riichi"]
+            or state["wall_remaining"] + sum(state["kan_counts"]) <= first_draw_wall,
+            "invalid_context", "double riichi precedes its first declaration draw")
+    require(not (state["double_riichi"] and state["ippatsu"])
+            or (not any(state["kan_counts"])
+                and state["wall_remaining"] >= first_draw_wall - 4
+                and (state["pending_kan"] is None or state["pending_kan"]["kind"] != "kakan")),
+            "invalid_context", "double riichi ippatsu survives its uninterrupted first cycle")
+    require(not state["first_turn"]
+            or (not state["reach_accepted"] and not state["rinshan"]
+                and not any(state["kan_counts"])
+                and (state["pending_kan"] is None or state["pending_kan"]["kind"] != "kakan")),
+            "invalid_context", "first turn qualification contradicts calls/riichi")
+    require(not state["first_turn"]
+            or state["wall_remaining"] >= first_draw_wall,
+            "invalid_context", "first turn qualification survives its initial draw cycle")
+    require(not state["rinshan"] or state["kan_counts"][actor] > 0,
+            "invalid_context", "evaluated rinshan has no own committed kan")
+    require(not state["rinshan"] or not (state["ippatsu"] or state["last_tile"]),
+            "invalid_context", "rinshan contradicts ippatsu or last live tile")
+    require(not state["last_tile"]
+            or (state["wall_remaining"] == 0 and state["pending_kan"] is None),
+            "invalid_context", "last live tile qualification differs")
+    require(state["pending_kan"] is None
+            or (state["wall_remaining"] > 0 and sum(state["kan_counts"]) < 4),
+            "invalid_context", "pending kan has no live-wall or kan capacity")
+    if state["pending_kan"] is not None and (state["first_turn"]
+            or state["double_riichi"] and state["ippatsu"]):
+        # These qualifications prove that no committed call has changed
+        # dealer-order draws. A declaration identifies their current owner.
+        require(state["wall_remaining"] < 70
+                and state["pending_kan"]["actor"] == (state["oya"] + 69 - state["wall_remaining"]) % 4,
+                "invalid_context", "pending kan differs from the uninterrupted draw owner")
+        require(not (state["double_riichi"] and state["ippatsu"]
+                     and state["pending_kan"]["actor"] == actor)
+                or state["wall_remaining"] == first_draw_wall - 4,
+                "invalid_context", "own kan precedes the draw after double riichi acceptance")
+    require(not state["last_tile"] or not (sum(state["kan_counts"]) == 4
+            and max(state["kan_counts"]) < 4 and "suukan_sanra" in rules["abortive_draws"]),
+            "invalid_context", "fourth-kan abortive turn cannot qualify as the last live tile")
+
+
 def validate_state_projection(state: dict[str, Any], actor: int, rules: dict[str, Any]) -> None:
     """Replay the scoring-relevant event projection from explicit prior facts."""
     observed = deepcopy(state["pre_state"])
+    validate_scalar_context(observed, actor, rules)
+    validate_scalar_context(state, actor, rules)
     declared_double = False
     declared = False
     rinshan_actor = None
+    discard_actor = None
+    seen_reach: set[int] = set()
+    seen_acceptance: set[int] = set()
     for event in state["events"]:
         require(isinstance(event, dict) and "type" in event and "actor" in event, "invalid_message", "projection event lacks type or actor")
         kind = event["type"]
         seat = event["actor"]
+        normal_draws = 70 - observed["wall_remaining"] - sum(observed["kan_counts"])
+        if normal_draws == 0:
+            require(kind == "tsumo" and seat == observed["oya"],
+                    "invalid_context", "initial projection must begin with the dealer's normal draw")
+        if normal_draws == 1 and kind in {"reach", "reach_accepted"}:
+            require(seat == observed["oya"],
+                    "invalid_context", "riichi before a nondealer's first normal draw")
+        if observed["pending_kan"] is not None:
+            require(kind == observed["pending_kan"]["kind"],
+                    "invalid_context", "projected pending kan is interrupted before its matching commit")
+        if rinshan_actor is not None:
+            require(kind == "tsumo" and seat == rinshan_actor,
+                    "invalid_context", "projected kan commit is not followed by its rinshan draw")
+        if discard_actor is not None:
+            require(kind == "dahai" and seat == discard_actor,
+                    "invalid_context", "projected compound action is not followed by its own discard")
         if kind == "reach":
+            require(seat not in seen_reach and seat not in seen_acceptance,
+                    "invalid_context", "duplicate observed riichi declaration or redeclaration")
+            seen_reach.add(seat)
+            discard_actor = seat
             if seat == actor:
                 require(not observed["reach_accepted"] and not declared, "invalid_context", "duplicate riichi declaration")
                 declared = True
                 declared_double = observed["first_turn"]
         elif kind == "reach_accepted":
+            require(seat not in seen_acceptance,
+                    "invalid_context", "duplicate observed riichi acceptance")
+            seen_acceptance.add(seat)
             require(observed["scores"][seat] >= rules["riichi_stick_value"], "invalid_context", "riichi deposit exceeds the player's score")
             observed["scores"][seat] -= rules["riichi_stick_value"]
             observed["kyotaku"] += 1
@@ -379,6 +476,7 @@ def validate_state_projection(state: dict[str, Any], actor: int, rules: dict[str
                 observed.update(reach_accepted=True,double_riichi=declared_double,ippatsu=True)
                 declared = False
         elif kind == "dahai":
+            discard_actor = None
             if seat == actor:
                 observed["first_turn"] = False
                 observed["ippatsu"] = False
@@ -391,10 +489,15 @@ def validate_state_projection(state: dict[str, Any], actor: int, rules: dict[str
             observed["pending_kan"] = {"kind":"ankan" if kind=="ankan_declared" else "kakan","actor":seat,"pai":event["pai"]}
         elif kind in {"chi", "pon", "daiminkan", "ankan", "kakan"}:
             observed.update(first_turn=False,ippatsu=False,last_tile=False)
+            if kind in {"chi", "pon"}:
+                discard_actor = seat
             if kind in {"daiminkan", "ankan", "kakan"}:
                 if kind != "daiminkan":
                     require(observed["pending_kan"] is not None and observed["pending_kan"]["kind"]==kind and observed["pending_kan"]["actor"]==seat,
                             "invalid_context", "kan commit without matching declaration")
+                    require("pai" in event, "invalid_message", "projected kan commit lacks its tile")
+                    require(observed["pending_kan"]["pai"] == event["pai"],
+                            "invalid_context", "kan commit tile differs from its declaration")
                 require(observed["wall_remaining"]>0 and sum(observed["kan_counts"])<4,"invalid_context","kan has no replacement tile")
                 observed["kan_counts"][seat] += 1
                 observed["wall_remaining"] -= 1
@@ -412,6 +515,11 @@ def validate_state_projection(state: dict[str, Any], actor: int, rules: dict[str
             rinshan_actor = None
         else:
             raise ScoringError("invalid_context", "unsupported scoring projection event")
+        # A later call must not erase an impossible intermediate first-turn,
+        # riichi, pending-kan or last-tile fact from the captured history.
+        validate_scalar_context(observed, actor, rules)
+    require(rinshan_actor is None, "invalid_context", "projected kan commit omits its rinshan draw")
+    require(discard_actor is None, "invalid_context", "projected compound action omits its own discard")
     # Furiten additionally depends on choices and full discard history, which
     # this event projection does not carry. It is an explicit final-state fact.
     expected = {key:value for key,value in state.items() if key not in {"events", "pre_state", "furiten"}}
@@ -420,12 +528,19 @@ def validate_state_projection(state: dict[str, Any], actor: int, rules: dict[str
 
 def _context(data: dict[str, Any], state: dict[str, Any], fixed: tuple[Meld, ...], physical: list[str], rules: dict[str, Any]) -> None:
     actor, target = data["actor"], data["target"]
+    validate_scalar_context(state, actor, rules)
     require(data["win_method"] in {"ron", "tsumo"} and ((data["win_method"] == "tsumo") == (actor == target)), "invalid_context", "win method and target differ")
     # Every normal draw and committed kan removes one live-wall tile.
     # Even an empty event projection cannot place a win before the first
     # draw, or relabel the sole normal draw as a later, ordinary win.
     normal_draws = 70 - state["wall_remaining"] - sum(state["kan_counts"])
     require(normal_draws >= 1, "invalid_context", "win precedes the first normal draw")
+    if state["first_turn"] or state["double_riichi"] and state["ippatsu"]:
+        require(target == (state["oya"] + normal_draws - 1) % 4,
+                "invalid_context", "winning source differs from uninterrupted dealer order")
+        if state["double_riichi"] and state["ippatsu"] and data["win_method"] == "tsumo":
+            require(normal_draws == (actor - state["oya"]) % 4 + 5,
+                    "invalid_context", "ippatsu tsumo precedes the draw after double riichi acceptance")
     fourth_abort = (sum(state["kan_counts"]) == 4 and max(state["kan_counts"]) < 4
                     and "suukan_sanra" in rules["abortive_draws"])
     if fourth_abort:
@@ -448,6 +563,16 @@ def _context(data: dict[str, Any], state: dict[str, Any], fixed: tuple[Meld, ...
             "invalid_context", "first turn qualification survives a committed kan")
     if state["first_turn"] and data["win_method"] == "tsumo":
         require(state["wall_remaining"] == 69 - (actor - state["oya"]) % 4, "invalid_context", "first draw wall count differs")
+    if state["first_turn"] and data["win_method"] == "ron":
+        # First-turn eligibility excludes every committed call and the
+        # winner's first discard. Only an earlier seat in uninterrupted
+        # dealer order can therefore supply this discard or first-draw
+        # ankan declaration. A kakan proves an earlier committed pon.
+        target_offset, actor_offset = (target - state["oya"]) % 4, (actor - state["oya"]) % 4
+        require(target_offset < actor_offset
+                and state["wall_remaining"] == 69 - target_offset
+                and (state["pending_kan"] is None or state["pending_kan"]["kind"] == "ankan"),
+                "invalid_context", "first-turn ron does not follow uninterrupted dealer order")
     require(not state["rinshan"] or (actor == target and any(m.kind == "quad" for m in fixed)), "invalid_context", "rinshan without own kan/tsumo")
     require(not (state["rinshan"] and state["ippatsu"]),
             "invalid_context", "ippatsu survives the kan preceding a rinshan win")
@@ -747,7 +872,21 @@ def calculate_fixture(fixture: dict[str, Any], base_rules: dict[str, Any]) -> di
         physical.extend(tile for hand in data["hands"] for meld in hand["melds"] for tile in meld["tiles"])
         inventory(physical,rules)
         require(state["wall_remaining"]==0 and state["pending_kan"] is None, "invalid_context", "exhaustive draw before the wall is exhausted")
+        # Every exhaustive round ends after a discard. Initial-turn and
+        # rinshan eligibility cannot survive it. A legal riichi starts with
+        # at least four live tiles, so its next own discard (or a call that
+        # interrupts the cycle) also ends ippatsu before exhaustion.
+        require(not (state["first_turn"] or state["rinshan"] or state["ippatsu"]),
+                "invalid_context", "exhaustive draw retains an expired turn qualification")
         tenpai=[bool(waits(hand,rules)) for hand in data["hands"]]
+        # The scalar draw context evaluates seat 0; it makes no claim
+        # about other seats' declarations, which are not present here.
+        require(not state["reach_accepted"] or all(m["kind"] == "ankan" for m in data["hands"][0]["melds"]),
+                "invalid_context", "open evaluated hand accepted riichi")
+        require(not state["reach_accepted"] or state["kyotaku"] >= 1,
+                "invalid_context", "evaluated accepted riichi deposit is missing")
+        require(not state["reach_accepted"] or tenpai[0],
+                "invalid_context", "accepted riichi must remain tenpai for evaluated seat 0")
         count=sum(tenpai)
         amount=rules["noten_payment"]["total_points"]
         deltas=[0]*4 if count in (0,4) else [amount//count if ready else -amount//(4-count) for ready in tenpai]
@@ -755,6 +894,14 @@ def calculate_fixture(fixture: dict[str, Any], base_rules: dict[str, Any]) -> di
     elif result_type=="penalty":
         validate_state_projection(state,data["offender"],rules)
         require(rules["invalid_action_policy"]=="chombo", "invalid_context", "penalty without chombo policy")
+        require(70 - state["wall_remaining"] - sum(state["kan_counts"]) >= 1,
+                "invalid_context", "penalty decision precedes the first normal draw")
+        require(not (state["double_riichi"] and state["ippatsu"])
+                or state["wall_remaining"] < 69 - (data["offender"] - state["oya"]) % 4,
+                "invalid_context", "penalty precedes an offender request after double riichi acceptance")
+        require(state["pending_kan"] is None
+                or (state["pending_kan"]["actor"] != data["offender"] and not state["rinshan"]),
+                "invalid_context", "penalty offender has no request in the pending kan reaction window")
         offender=data["offender"]
         amount=rules["chombo"]["penalty_points"]
         seats=[seat for seat in range(4) if seat!=offender]

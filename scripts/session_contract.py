@@ -222,6 +222,10 @@ class Receiver:
         self.requests: dict[str, dict] = {}
         # Diagnostic ACKs constrain later clocks without charging the bank.
         self.request_clock_floor: dict[str, int] = {}
+        # A chombo rejection proves this seat was OPEN and caused an atomic
+        # cancellation. Keep that evidence even if recovery hides its ACK.
+        self.chombo_rejections: dict[str, dict] = {}
+        self.pending_chombo: str | None = None
         self.terminal_acks: dict[str, dict] = {}
         self.late_attempts: set[tuple[str, str]] = set()
         # Even if a snapshot hid the terminal ACK, all subsequently observed
@@ -288,7 +292,7 @@ class Receiver:
 
     def _check_snapshot_prefix(self, state: dict, *, allow_unreceived_request: bool = False) -> None:
         pending = state.get("pending_requests", [])
-        require(not (self.expected_effects or self.unadopted_reaction),
+        require(not (self.expected_effects or self.unadopted_reaction or self.pending_chombo),
                 "invalid_message", "snapshot lacks the acknowledged decision's result event")
         require((allow_unreceived_request and self.awaiting_request)
                 or (not self.awaiting_request and {r["request_id"] for r in pending} == self.active_requests),
@@ -320,7 +324,11 @@ class Receiver:
                     or ("decision_group_id" in request and request["decision_group_remaining_ms"] > 0),
                     "invalid_message", "selected decision has no open request to cause chombo")
             self.expected_effects = [{"type": "end_kyoku", "result_type": "penalty"}]
-            if request.get("selection") is not None:
+            if request["request_id"] in self.chombo_rejections:
+                self.expected_effects[0]["offender"] = request["seat"]
+            else:
+                # An own-seat offender must have received rejected before
+                # its cancellation in this same non-interleaved transaction.
                 self.expected_effects[0]["excluded_offender"] = request["seat"]
             return
         chosen = next(c["action"] for c in request["legal_actions"] if c["action_id"] == ack["action_id"])
@@ -408,8 +416,10 @@ class Receiver:
         elif "result_type" in expected:
             require(event["result"]["type"] == expected["result_type"],
                     "invalid_message", "cancelled decision did not end with a penalty")
+            require("offender" not in expected or event["result"].get("offender") == expected["offender"],
+                    "invalid_message", "chombo penalty differs from the observed offender")
             require(event["result"].get("offender") != expected.get("excluded_offender"),
-                    "invalid_message", "selected request cannot trigger a chombo penalty")
+                    "invalid_message", "own chombo penalty lacks its rejected ACK")
         elif expected["type"] in {"dora", "reach_accepted"}:
             require(all(event.get(k) == value for k, value in expected.items()), "invalid_message", "derived event differs from acknowledged action")
         else:
@@ -457,7 +467,7 @@ class Receiver:
         if kind == "snapshot":
             require("snapshot" in self.welcome["capabilities"], "invalid_message", "snapshot capability is not enabled")
             contiguous = seq == self.applied + 1
-            require(not contiguous or not (self.expected_effects or self.unadopted_reaction),
+            require(not contiguous or not (self.expected_effects or self.unadopted_reaction or self.pending_chombo),
                     "invalid_message", "snapshot interrupts acknowledged action effects")
             # A retained snapshot is an ordinary ledger entry. Its old prefix
             # need not cover the current recovery frontier, and applying it
@@ -597,6 +607,7 @@ class Receiver:
             self.request_ids |= self.active_requests
             self.expected_effects = []  # A jump can cover the entire result transaction.
             self.unadopted_reaction = None
+            self.pending_chombo = None
             if self.recovery == "initial":
                 self.recovery = None
             self.initial_snapshot_required = False
@@ -616,6 +627,14 @@ class Receiver:
                     "invalid_message", "message interrupts the mandatory end_game continuation")
             require(not (self.expected_effects or self.unadopted_reaction) or kind == "event" or (kind == "error" and message["severity"] == "fatal"),
                     "invalid_message", "message interrupts acknowledged action effects")
+            if self.pending_chombo is not None and not (kind == "error" and message["severity"] == "fatal"):
+                rejected = self.chombo_rejections[self.pending_chombo]
+                request = self.requests[self.pending_chombo]
+                require(kind == "ack" and message["status"] == "stale"
+                        and message["request_id"] == self.pending_chombo
+                        and message["action_id"] == request["default_action_id"]
+                        and all(message[key] == rejected[key] for key in ("elapsed_ms", "time_bank_ms")),
+                        "invalid_message", "chombo rejection requires its original cancellation")
             if kind == "event":
                 event = message["event"]
                 require(not self.ended, "invalid_message", "game event after end_game")
@@ -695,6 +714,10 @@ class Receiver:
                         require(message["elapsed_ms"] >= self.request_clock_floor.get(rid, 0),
                                 "invalid_message", "late ACK clock precedes an observed request clock")
                         check_clock(request, message, grace, timeout=policy == "reject")
+                        if rid in self.chombo_rejections:
+                            require(all(message[key] == self.chombo_rejections[rid][key]
+                                        for key in ("elapsed_ms", "time_bank_ms")),
+                                    "invalid_message", "late ACK changed the known chombo clock")
                         selection = request.get("selection")
                         if selection is not None:
                             require(selection["source"] != "user" or policy == "chombo",
@@ -732,6 +755,9 @@ class Receiver:
                     if status == "rejected":
                         require(self.welcome["rules"]["invalid_action_policy"] != "default", "invalid_message", "default policy cannot send a rejected ACK")
                         require(aid not in candidates, "invalid_message", "legal candidate was rejected as malformed")
+                        if self.welcome["rules"]["invalid_action_policy"] == "chombo":
+                            self.chombo_rejections[rid] = deepcopy(message)
+                            self.pending_chombo = rid
                     else:
                         require(aid in candidates, "invalid_message", "ACK selected an unissued candidate")
                         require(status != "defaulted" or aid == request["default_action_id"], "invalid_message", "default ACK differs from the declared default")
@@ -741,6 +767,7 @@ class Receiver:
                                 "invalid_message", "single decision cannot be superseded")
                     if status != "rejected":
                         self._expect_effects(request, message)
+                        self.pending_chombo = None
                         try:
                             self.game.acknowledge(request, message)
                         except (GameError, ScoringError) as error:
@@ -790,6 +817,8 @@ def classify_player_input(message: dict, context: dict, validate: Callable[[str,
     if isinstance(message, dict) and message.get("kind") == "action":
         for old in context.get("retired_sessions", []):
             if all(message.get(key) == old[key] for key in ("yamai", "session_id", "game_id")):
+                if "mode" in old and old["mode"] != "play":
+                    return {"code": "invalid_message", "severity": "fatal"}
                 try:
                     validate("player-application", message)
                     return {"code": "ignored", "severity": None}
@@ -799,6 +828,8 @@ def classify_player_input(message: dict, context: dict, validate: Callable[[str,
     if (not isinstance(message, dict) or message.get("kind") != "action"
             or "seq" in message or "original_seq" in message
             or not all(message.get(key) == value for key, value in identity.items())):
+        return {"code": "invalid_message", "severity": "fatal"}
+    if "mode" in context and context["mode"] != "play":
         return {"code": "invalid_message", "severity": "fatal"}
     known = message.get("request_id") in context["known_request_ids"] if isinstance(message.get("request_id"), str) else False
     try:

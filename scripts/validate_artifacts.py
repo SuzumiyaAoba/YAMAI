@@ -760,7 +760,15 @@ def profile_hash(protocol_registry: Dict[str, Any], rules_registry: Dict[str, An
 
     def normalize_profile_hashes(value: Any) -> Any:
         if isinstance(value, dict):
-            result = {key: normalize_profile_hashes(item) for key, item in value.items()}
+            # Namespaced payloads are opaque annotations/extension data, not
+            # fixture containers. A message-shaped object (or a wire string)
+            # inside one must still contribute all its bytes to the hash.
+            # Extension fixture Schemas likewise contain const/default/example
+            # data, never live identity fields to cycle-normalize.
+            result = {key: deepcopy(item) if EXTENSION_FIELD_RE.fullmatch(key)
+                      or key in {"schema", "message_schemas"}
+                      else normalize_profile_hashes(item)
+                      for key, item in value.items()}
             if isinstance(value.get("wire"), str):
                 result["wire"] = normalize_wire_profile_hashes(value["wire"])
             if isinstance(value.get("kind"), str) and value["kind"] in {"join", "welcome"} and isinstance(value.get("profile_hash"), str) and re.fullmatch(r"sha256:[0-9a-f]{64}", value["profile_hash"]):
@@ -781,12 +789,14 @@ def profile_hash(protocol_registry: Dict[str, Any], rules_registry: Dict[str, An
         "profile_schema": profile_schema,
         "rules_schema": rules_schema,
         "scoring_vectors_schema": scoring_vectors_schema,
-        "protocol_registry": pcopy,
-        "scoring_registry": rules_registry,
-        "official_vectors": vectors,
-        "scoring_vectors": scoring,
+        "protocol_registry": normalize_profile_hashes(pcopy),
+        "scoring_registry": normalize_profile_hashes(rules_registry),
+        "official_vectors": normalize_profile_hashes(vectors),
+        "scoring_vectors": normalize_profile_hashes(scoring),
     }
-    canonical_bytes = canonical(normalize_profile_hashes(payload))
+    # Schema input documents are hashed verbatim under JCS; message-shaped
+    # values within a Schema are constraints/data, not protocol messages.
+    canonical_bytes = canonical(payload)
     return "sha256:" + hashlib.sha256(canonical_bytes).hexdigest()
 
 
@@ -1437,7 +1447,7 @@ def semantic_resource_trace(trace: Mapping[str, Any]) -> None:
                  "invalid_message", "write deadline must be a nonnegative safe integer")
     if backlog_bytes > 8388608 or backlog_messages > 1024:
         raise ArtifactError("resource_limit", "send backlog exceeds the protocol limit")
-    if (trace.get("peer_reads") is False and trace.get("write_deadline_ms") == 60000
+    if (trace.get("peer_reads") is False and trace.get("write_deadline_ms", 0) >= 60000
             and (backlog_bytes >= 8388608 or backlog_messages >= 1024)):
         raise ArtifactError("resource_limit", "peer did not drain the send backlog")
 
@@ -2003,7 +2013,8 @@ def semantic_session_trace(trace: Mapping[str, Any], expected_hash: str) -> None
                 w = session["welcome"]
                 identity = {key:w[key] for key in ("yamai", "session_id", "game_id")}
                 for action in session.get("old_actions", []):
-                    result = classify_player_input(action, {"identity":identity,"known_request_ids":[],"retired_sessions":retired}, validate)
+                    result = classify_player_input(action, {"identity":identity,"mode":w["mode"],
+                                                           "known_request_ids":[],"retired_sessions":retired}, validate)
                     _require(result["code"] == "ignored", "invalid_message", "retired session affected new negotiation")
                 receiver = Receiver(w, lambda raw: strict_load_bytes(raw, max_bytes=1048576), _session_schema_validator(schemas, expected_hash, rules=w["rules"]))
                 for message in session["messages"]:
@@ -2011,7 +2022,7 @@ def semantic_session_trace(trace: Mapping[str, Any], expected_hash: str) -> None
                 actual.append({"session_id":w["session_id"],"game_id":w["game_id"],"last_seq":receiver.applied,"ended":receiver.ended})
                 seen_sessions.append(w["session_id"])
                 seen_games.append(w["game_id"])
-                retired.append(identity)
+                retired.append({**identity, "mode": w["mode"]})
                 previous = receiver
         else:
             raise ArtifactError("vector_error", "unknown session trace")
@@ -2074,6 +2085,12 @@ def semantic_ledger_trace(trace: Mapping[str, Any], expected_hash: str) -> None:
     lifecycle_ingress = {}
     pending_transaction = None
     fatal_at = None
+    # Receiver cannot distinguish a retained contiguous snapshot from a new
+    # one. This complete host capture can: generation requires an outstanding
+    # resume/gap recovery or the first mid-game spectator checkpoint.
+    snapshot_resume_authority = False
+    emitted_through = 0
+    gap_replays: list[dict] = []
 
     def restore_request(request: Mapping[str, Any]) -> None:
         rid = request["request_id"]
@@ -2129,6 +2146,8 @@ def semantic_ledger_trace(trace: Mapping[str, Any], expected_hash: str) -> None:
                          "invalid_message", "retained request states require a resumed capture")
                 if msg["resumed"]:
                     replay_through = msg["replay_through_seq"]
+                    emitted_through = replay_through
+                    snapshot_resume_authority = True
                     resume_at = trace["context"]["now_ms"]
                     _require(type(resume_at) is int and 0 <= resume_at <= MAX_INT
                              and (not retained_states or join_at <= resume_at <= now <= MAX_INT),
@@ -2160,7 +2179,17 @@ def semantic_ledger_trace(trace: Mapping[str, Any], expected_hash: str) -> None:
                     receiver.closed = True
                     fatal_at = now
                     continue
+                if kind == "error" and msg["code"] == "sequence_gap":
+                    _require(msg["received_seq"] <= emitted_through,
+                             "invalid_message", "gap request exceeds emitted host history")
+                    # Keep an integer interval and the bounded captured
+                    # deliveries; never expand an attacker-controlled seq
+                    # range into a list or set of every possible number.
+                    gap_replays.append({"from": msg["expected_seq"],
+                                        "through": emitted_through, "delivered": set()})
                 if kind == "action":
+                    _require(receiver.welcome["mode"] == "play", "invalid_message",
+                             "observer session cannot send an action")
                     _require(receiver.applied >= replay_through, "invalid_message", "action precedes completion of resume replay")
                     rid = msg["request_id"]
                     if receiver.ended:
@@ -2221,6 +2250,14 @@ def semantic_ledger_trace(trace: Mapping[str, Any], expected_hash: str) -> None:
                 _require(all(step.get(k) == ledger[seq][k] for k in ("transaction_id", "operation_id")), "invalid_message", "message changed its transaction or operation")
                 duplicate = seq in seen
                 historical = seq <= replay_through
+                if kind == "snapshot" and not duplicate and not historical:
+                    bootstrap = (not seen and receiver.initial_snapshot_required
+                                 and seq == 1 and msg["replaces_through_seq"] == 0)
+                    _require(bootstrap or snapshot_resume_authority or bool(gap_replays),
+                             "invalid_message", "new snapshot lacks an authorized recovery or observer bootstrap")
+                    _require(not gap_replays or msg["replaces_through_seq"] >= max(
+                             recovery["through"] for recovery in gap_replays),
+                             "invalid_message", "recovery snapshot does not cover the requested host history")
                 terminalizing = kind == "ack" and msg["request_id"] in receiver.active_requests and msg["status"] != "rejected"
                 if not duplicate and pending_transaction is not None and not (kind == "error" and msg.get("severity") == "fatal"):
                     _require(kind == "event" and (step["transaction_id"], step["operation_id"]) == pending_transaction, "invalid_message", "terminal ACK and result events belong to different transactions")
@@ -2294,6 +2331,17 @@ def semantic_ledger_trace(trace: Mapping[str, Any], expected_hash: str) -> None:
                             _require(msg["elapsed_ms"] == selection[2], "invalid_message", "captured selection elapsed time differs")
                 outcome = receiver.receive(raw)
                 _require(outcome in {"applied", "duplicate"}, "invalid_message", "capture contains an unapplied host message")
+                if kind == "snapshot" and not duplicate and not historical:
+                    gap_replays.clear()
+                else:
+                    for recovery in gap_replays:
+                        if recovery["from"] <= seq <= recovery["through"]:
+                            recovery["delivered"].add(seq)
+                    gap_replays = [recovery for recovery in gap_replays
+                                   if len(recovery["delivered"]) < recovery["through"] - recovery["from"] + 1]
+                if not duplicate and not historical:
+                    snapshot_resume_authority = False
+                emitted_through = max(emitted_through, seq)
                 if receiver.closed:
                     fatal_at = now
                 if not duplicate:
@@ -2611,11 +2659,31 @@ def semantic_ledger_trace(trace: Mapping[str, Any], expected_hash: str) -> None:
         raise ArtifactError(error.code, str(error)) from error
 
 
+def semantic_vector_trace(trace: Mapping[str, Any], expected_hash: str) -> None:
+    """Use the same semantic route for every positive or negative trace."""
+    checkers = {
+        "event_order": semantic_event_trace, "resource": semantic_resource_trace,
+        "transport": semantic_transport_trace, "replay": semantic_replay_trace,
+        "request_state": semantic_request_trace, "scoring": semantic_scoring_trace,
+        "welcome": semantic_welcome_trace, "state_machine": semantic_state_trace,
+        "noten": semantic_noten_trace, "ack": semantic_ack_trace,
+        "composite": semantic_composite_trace, "request_lifecycle": semantic_lifecycle_trace,
+        "game_contract": semantic_game_trace,
+    }
+    session_types = {"negotiation", "resume_tokens", "resource_clock", "wire_direction", "input_error", "replay_plan", "receiver", "multi_session", "extension_message"}
+    trace_type = trace.get("trace_type")
+    if trace_type == "session":
+        semantic_ledger_trace(trace, expected_hash)
+    elif trace_type in session_types:
+        semantic_session_trace(trace, expected_hash)
+    else:
+        checkers.get(trace_type, semantic_score_trace)(trace)
+
+
 def check_vectors(schemas: SchemaSet, manifest: Dict[str, Any]) -> int:
     vectors = strict_load(ROOT / manifest["vectors"])
     root_schema = schema_by_id(schemas, "urn:yamai:schema:protocol:1.0-draft.1:message")
     checked = 0
-    session_types = {"negotiation", "resume_tokens", "resource_clock", "wire_direction", "input_error", "replay_plan", "receiver", "multi_session", "extension_message"}
     error_codes = {item["id"] for item in strict_load(ROOT / f"registry/protocol/{PROTOCOL}/registry.json")["error_codes"]}
     for entry in manifest["cases"]:
         case_id = entry["id"]
@@ -2639,40 +2707,7 @@ def check_vectors(schemas: SchemaSet, manifest: Dict[str, Any]) -> int:
             semantic_message(positive, case_id, manifest["profile_hash"])
         elif isinstance(positive, dict) and "trace" in positive:
             positive_checked = True
-            trace = positive["trace"]
-            trace_type = trace.get("trace_type")
-            if trace_type == "event_order":
-                semantic_event_trace(trace)
-            elif trace_type == "resource":
-                semantic_resource_trace(trace)
-            elif trace_type == "transport":
-                semantic_transport_trace(trace)
-            elif trace_type == "replay":
-                semantic_replay_trace(trace)
-            elif trace_type == "request_state":
-                semantic_request_trace(trace)
-            elif trace_type == "scoring":
-                semantic_scoring_trace(trace)
-            elif trace_type == "welcome":
-                semantic_welcome_trace(trace)
-            elif trace_type == "state_machine":
-                semantic_state_trace(trace)
-            elif trace_type == "noten":
-                semantic_noten_trace(trace)
-            elif trace_type == "ack":
-                semantic_ack_trace(trace)
-            elif trace_type == "composite":
-                semantic_composite_trace(trace)
-            elif trace_type == "request_lifecycle":
-                semantic_lifecycle_trace(trace)
-            elif trace_type == "game_contract":
-                semantic_game_trace(trace)
-            elif trace_type == "session":
-                semantic_ledger_trace(trace, manifest["profile_hash"])
-            elif trace_type in session_types:
-                semantic_session_trace(trace, manifest["profile_hash"])
-            else:
-                semantic_score_trace(trace)
+            semantic_vector_trace(positive["trace"], manifest["profile_hash"])
         if not positive_checked:
             raise ArtifactError("vector_error", f"{case_id}: missing positive payload")
         for index, message in enumerate(case.get("positive_messages", [])):
@@ -2690,8 +2725,11 @@ def check_vectors(schemas: SchemaSet, manifest: Dict[str, Any]) -> int:
         for index, message in enumerate(case.get("negative_variants", [])):
             caught = None
             try:
-                schemas.validate(message, root_schema, f"{case_id}.negative_variants[{index}]")
-                semantic_message(message, case_id, manifest["profile_hash"])
+                if isinstance(message, dict) and "trace" in message:
+                    semantic_vector_trace(message["trace"], manifest["profile_hash"])
+                else:
+                    schemas.validate(message, root_schema, f"{case_id}.negative_variants[{index}]")
+                    semantic_message(message, case_id, manifest["profile_hash"])
             except ArtifactError as exc:
                 caught = exc.code
             if caught != case["negative_expect"]:
@@ -2755,39 +2793,7 @@ def check_vectors(schemas: SchemaSet, manifest: Dict[str, Any]) -> int:
         elif isinstance(case.get("negative"), dict) and "trace" in case["negative"]:
             caught = None
             try:
-                trace = case["negative"]["trace"]
-                if trace.get("trace_type") == "event_order":
-                    semantic_event_trace(trace)
-                elif trace.get("trace_type") == "resource":
-                    semantic_resource_trace(trace)
-                elif trace.get("trace_type") == "transport":
-                    semantic_transport_trace(trace)
-                elif trace.get("trace_type") == "replay":
-                    semantic_replay_trace(trace)
-                elif trace.get("trace_type") == "request_state":
-                    semantic_request_trace(trace)
-                elif trace.get("trace_type") == "scoring":
-                    semantic_scoring_trace(trace)
-                elif trace.get("trace_type") == "welcome":
-                    semantic_welcome_trace(trace)
-                elif trace.get("trace_type") == "state_machine":
-                    semantic_state_trace(trace)
-                elif trace.get("trace_type") == "noten":
-                    semantic_noten_trace(trace)
-                elif trace.get("trace_type") == "ack":
-                    semantic_ack_trace(trace)
-                elif trace.get("trace_type") == "composite":
-                    semantic_composite_trace(trace)
-                elif trace.get("trace_type") == "request_lifecycle":
-                    semantic_lifecycle_trace(trace)
-                elif trace.get("trace_type") == "game_contract":
-                    semantic_game_trace(trace)
-                elif trace.get("trace_type") == "session":
-                    semantic_ledger_trace(trace, manifest["profile_hash"])
-                elif trace.get("trace_type") in session_types:
-                    semantic_session_trace(trace, manifest["profile_hash"])
-                else:
-                    semantic_score_trace(trace)
+                semantic_vector_trace(case["negative"]["trace"], manifest["profile_hash"])
             except ArtifactError as exc:
                 caught = exc.code
             if caught != case["negative_expect"]:

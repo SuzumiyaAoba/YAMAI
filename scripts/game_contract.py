@@ -264,6 +264,15 @@ def check_snapshot_public_history(kyoku: dict) -> None:
                     "snapshot river changes a discard after accepted riichi")
 
 
+def possible_first_call_before_discard(meld: dict, seat: int, oya: int) -> bool:
+    """A necessary turn-order candidate, not the call's actual chronology."""
+    offset = (seat - oya) % 4
+    if meld["type"] == "ankan":
+        return (meld["actor"] - oya) % 4 <= offset
+    # Kakan preserves the original pon's source; that pon came first.
+    return (meld["target"] - oya) % 4 < offset
+
+
 def check_snapshot_turn_progress(kyoku: dict, rules: dict | None = None) -> None:
     """Check uninterrupted dealer order and publicly forced round endings."""
     cause = kyoku["turn"]["last_event"]
@@ -789,11 +798,31 @@ def validate_snapshot_state(snapshot: dict, rules: dict | None = None) -> None:
                 require(any(t["reach"] for t in river), "accepted reach has no marked discard")
                 require(not s["double"] or river[0]["reach"],
                         "double flag differs from declaration-time eligibility")
-                require(s["double"] or not (river[0]["reach"] and not any(kyoku["melds"])),
+                committed = [m for row in kyoku["melds"] for m in row]
+                # Until the first call, dealer order is uninterrupted. If
+                # no committed meld could supply an earlier first call,
+                # every call followed this first-discard declaration.
+                earlier_call_possible = any(possible_first_call_before_discard(m, a, kyoku["oya"])
+                                            for m in committed)
+                require(s["double"] or not (river[0]["reach"] and not earlier_call_possible),
                         "double flag differs from declaration-time eligibility")
+                # A call before declaration forbids double riichi; a call
+                # after it cancels ippatsu. No ordering can preserve both.
+                require(not (s["double"] and s["ippatsu"]) or not any(kyoku["melds"]),
+                        "double riichi ippatsu survives a committed call or kan")
                 require(not s["ippatsu"] or river[-1]["reach"], "ippatsu survives a post-reach discard")
+                # Acceptance precedes a call on the declaration discard,
+                # so that call also cancels ordinary riichi's ippatsu.
+                require(not s["ippatsu"] or river[-1]["called_by"] is None,
+                        "ippatsu survives a called declaration discard")
                 require(s["ippatsu"] or not (river[-1]["reach"] and not any(kyoku["melds"])),
                         "ippatsu flag differs from the open reach window")
+                # With no own discard before or after declaration, ordinary
+                # riichi requires an earlier call and lost ippatsu a later
+                # one. A stored kakan includes both its pon and upgrade.
+                require(len(river) != 1 or s["double"] or s["ippatsu"]
+                        or sum(1 + (m["type"] == "kakan") for m in committed) >= 2,
+                        "first-discard ordinary riichi without ippatsu needs two committed calls")
                 hand = kyoku["hands"][a]
                 if (rules is not None and "tiles" in hand
                         and len(hand["tiles"]) + 3 * len(kyoku["melds"][a]) == 13):
@@ -1397,6 +1426,29 @@ class EventState:
                                 if cause["type"] != "ankan_declared" and "tiles" in r["hands"][winner]:
                                     require(reaction_completes_hand(self._scoring_hand(winner), tile, cause["type"], self.rules),
                                             "sanchaho winner lacks a complete visible hand")
+                                    # Shape alone does not authorize ron. A
+                                    # public situational yaku proves the role
+                                    # requirement without inventing hidden ura
+                                    # indicators. Otherwise evaluate the fully
+                                    # visible hand using its actual context.
+                                    guaranteed_yaku = (r["reach_status"][winner]["state"] == "accepted"
+                                                       or r["haitei"] or cause["type"] == "kakan_declared")
+                                    if not guaranteed_yaku:
+                                        data = {"actor": winner, "target": cause["actor"], "winning_tile": tile,
+                                                "win_method": "ron", "hand": self._scoring_hand(winner),
+                                                "dora_markers": r["dora_markers"], "ura_dora_markers": []}
+                                        context = {key: r[key] for key in ("oya", "bakaze", "wall_remaining", "kan_counts", "kyotaku")}
+                                        context.update(reach_accepted=False, double_riichi=False, ippatsu=False,
+                                                       first_turn=r["first_turn_eligible"][winner], rinshan=False,
+                                                       last_tile=False, pending_kan=None, furiten=False, events=[])
+                                        try:
+                                            score_hand(data, context, self.rules)
+                                        except ScoringError as error:
+                                            # A negotiated local role may supply
+                                            # the missing yaku; its owner, not
+                                            # this core reference, validates it.
+                                            if error.code != "no_yaku" or not self.rules["local_yaku"]:
+                                                raise GameError("sanchaho winner lacks a legal visible ron: " + str(error)) from error
                         if cause["type"] == "dahai":
                             river = r["rivers"][cause["actor"]]
                             require(not (river and river[-1]["reach"] and r["reach_status"][cause["actor"]]["state"] == "accepted"),

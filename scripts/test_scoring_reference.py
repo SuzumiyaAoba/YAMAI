@@ -510,6 +510,480 @@ class ScoringInvariants(unittest.TestCase):
                         calculate_fixture(f, self.rules)
                     self.assertEqual(error.exception.code, 'invalid_context')
 
+    def test_nonwinning_scalar_facts_cannot_contradict_themselves(self):
+        from score_oracle import validate_fixture_input
+        from validate_artifacts import SchemaSet
+        schemas = SchemaSet()
+        invalid = (
+            dict(double_riichi=True), dict(ippatsu=True),
+            dict(first_turn=True, reach_accepted=True, kyotaku=1),
+            dict(first_turn=True, kan_counts=[1, 0, 0, 0]),
+            dict(first_turn=True, pending_kan=dict(kind='kakan', actor=1, pai='5m')),
+            dict(rinshan=True),
+            dict(rinshan=True, ippatsu=True, reach_accepted=True, kyotaku=1,
+                 kan_counts=[1, 0, 0, 0]),
+            dict(rinshan=True, last_tile=True, kan_counts=[1, 0, 0, 0]),
+            dict(reach_accepted=True),
+            dict(kan_counts=[2, 1, 1, 1]),
+            dict(wall_remaining=70, kan_counts=[1, 0, 0, 0]),
+            dict(wall_remaining=69, kan_counts=[1, 0, 0, 0]),
+            dict(first_turn=True, wall_remaining=40),
+            dict(last_tile=True, wall_remaining=40),
+            dict(pending_kan=dict(kind='ankan', actor=1, pai='E'), wall_remaining=0),
+            dict(pending_kan=dict(kind='ankan', actor=1, pai='E'), kan_counts=[4, 0, 0, 0]),
+            dict(double_riichi=True, reach_accepted=True, kyotaku=1, wall_remaining=70),
+            dict(double_riichi=True, ippatsu=True, reach_accepted=True, kyotaku=1),
+            dict(double_riichi=True, ippatsu=True, reach_accepted=True, kyotaku=1,
+                 wall_remaining=65, kan_counts=[1, 0, 0, 0]),
+            dict(double_riichi=True, ippatsu=True, reach_accepted=True, kyotaku=1,
+                 wall_remaining=65, pending_kan=dict(kind='kakan', actor=1, pai='5m')),
+        )
+        for name in ('noten_1', 'settlement_chombo'):
+            for patch in invalid:
+                fixture = deepcopy(self.fixtures[name])
+                for state in (fixture['state'], fixture['state']['pre_state']):
+                    state.update(deepcopy(patch))
+                    state['scores'] = [25000 - 1000 * state['kyotaku'], 25000, 25000, 25000]
+                validate_fixture_input(fixture, self.rules, schemas)
+                with self.subTest(fixture=name, patch=patch):
+                    with self.assertRaises(ScoringError) as error:
+                        calculate_fixture(fixture, self.rules)
+                    self.assertEqual(error.exception.code, 'invalid_context')
+
+    def test_projection_cannot_launder_impossible_prior_scalar_facts(self):
+        for name in ('noten_1', 'settlement_chombo'):
+            fixture = deepcopy(self.fixtures[name])
+            # This call clears ippatsu in the output, but it cannot make an
+            # earlier ippatsu period without accepted riichi legitimate.
+            fixture['state']['pre_state']['ippatsu'] = True
+            fixture['state']['events'] = [dict(type='pon', actor=1)]
+            with self.subTest(fixture=name):
+                with self.assertRaisesRegex(ScoringError, 'without accepted riichi') as error:
+                    calculate_fixture(fixture, self.rules)
+                self.assertEqual(error.exception.code, 'invalid_context')
+        for patch in (dict(first_turn=False), dict(first_turn=False, reach_accepted=True, kyotaku=1),
+                      dict(first_turn=False, pending_kan=dict(kind='ankan', actor=3, pai='E'))):
+            fixture = deepcopy(self.fixtures['settlement_chombo'])
+            for state in (fixture['state'], fixture['state']['pre_state']):
+                state.update(patch)
+                state['scores'] = [25000 - 1000 * state['kyotaku'], 25000, 25000, 25000]
+            fixture['state']['pre_state']['wall_remaining'] = 70
+            fixture['state']['wall_remaining'] = 69
+            # A later first draw/call cannot legalize the impossible input
+            # checkpoint even when all contradictory flags disappear.
+            fixture['state']['events'] = [dict(type='tsumo', actor=0, pai='1m')]
+            if patch.get('pending_kan'):
+                fixture['state']['events'].extend([dict(type='ankan', actor=3, pai='E'),
+                                                  dict(type='tsumo', actor=3, pai='2p')])
+                fixture['state'].update(wall_remaining=68, pending_kan=None, kan_counts=[0, 0, 0, 1])
+            with self.subTest(initial_patch=patch):
+                with self.assertRaisesRegex(ScoringError, 'initial scalar state'):
+                    calculate_fixture(fixture, self.rules)
+
+    def test_projection_riichi_observations_are_once_per_seat(self):
+        from score_oracle import validate_fixture_input
+        from validate_artifacts import SchemaSet
+        schemas = SchemaSet()
+        for evaluated in range(4):
+            for seat in range(4):
+                for kinds in (('reach', 'reach'), ('reach_accepted', 'reach_accepted'),
+                              ('reach_accepted', 'reach'), ('reach', 'reach_accepted', 'reach'),
+                              ('reach', 'reach_accepted', 'reach_accepted')):
+                    fixture = deepcopy(self.fixtures['settlement_chombo'])
+                    fixture['input']['offender'] = evaluated
+                    accepted = kinds.count('reach_accepted')
+                    fixture['state']['events'] = [dict(type=kind, actor=seat) for kind in kinds]
+                    fixture['state']['kyotaku'] = accepted
+                    fixture['state']['scores'][seat] -= 1000 * accepted
+                    if evaluated == seat and accepted:
+                        fixture['state'].update(reach_accepted=True, ippatsu=True)
+                    validate_fixture_input(fixture, self.rules, schemas)
+                    with self.subTest(evaluated=evaluated, seat=seat, kinds=kinds):
+                        with self.assertRaises(ScoringError) as error:
+                            calculate_fixture(fixture, self.rules)
+                        self.assertEqual(error.exception.code, 'invalid_context')
+            for first, second in ((a, b) for a in range(4) for b in range(4)
+                                  if a != b and evaluated not in (a, b)):
+                fixture = deepcopy(self.fixtures['settlement_chombo'])
+                fixture['input']['offender'] = evaluated
+                # The other seats may already have declared before this
+                # projection. Their initial declaration facts are unrepresented;
+                # observing each distinct acceptance once remains legitimate.
+                fixture['state']['events'] = [dict(type='reach_accepted', actor=seat)
+                                               for seat in (first, second)]
+                fixture['state']['kyotaku'] = 2
+                for seat in (first, second):
+                    fixture['state']['scores'][seat] -= 1000
+                self.assertEqual(calculate_fixture(fixture, self.rules)['kyotaku'], 2)
+
+    def test_first_normal_draw_riichi_preserves_initial_dealer_ankan(self):
+        from scoring_reference import validate_scalar_context
+        for oya in range(4):
+            for evaluated in range(4):
+                for own_kans in range(3):
+                    for other_kans in range(2):
+                        for double in (False, True):
+                            state = deepcopy(self.fixtures['settlement_chombo']['state'])
+                            kans = [0] * 4
+                            kans[evaluated], kans[(evaluated + 1) % 4] = own_kans, other_kans
+                            state.update(oya=oya, wall_remaining=69 - sum(kans), kan_counts=kans,
+                                         reach_accepted=True, double_riichi=double, kyotaku=1)
+                            valid = evaluated == oya and double == (own_kans == 0)
+                            with self.subTest(oya=oya, evaluated=evaluated, own=own_kans,
+                                              other=other_kans, double=double):
+                                if valid:
+                                    validate_scalar_context(state, evaluated, self.rules)
+                                else:
+                                    with self.assertRaises(ScoringError) as error:
+                                        validate_scalar_context(state, evaluated, self.rules)
+                                    self.assertEqual(error.exception.code, 'invalid_context')
+        # The first normal draw can lead to an ankan, replacement draw,
+        # ordinary riichi and an opponent's call/discard without another
+        # normal draw. The call creates the dealer's next reaction request.
+        fixture = deepcopy(self.fixtures['settlement_chombo'])
+        fixture['state']['pre_state'].update(wall_remaining=70, first_turn=True)
+        fixture['state'].update(wall_remaining=68, kan_counts=[1, 0, 0, 0],
+                                reach_accepted=True, double_riichi=False, kyotaku=1,
+                                scores=[24000, 25000, 25000, 25000], events=[
+                                    dict(type='tsumo', actor=0, pai='E'),
+                                    dict(type='ankan_declared', actor=0, pai='E'),
+                                    dict(type='ankan', actor=0, pai='E'),
+                                    dict(type='tsumo', actor=0, pai='C'),
+                                    dict(type='reach', actor=0),
+                                    dict(type='dahai', actor=0, pai='C'),
+                                    dict(type='reach_accepted', actor=0),
+                                    dict(type='pon', actor=1, pai='C'),
+                                    dict(type='dahai', actor=1, pai='S')])
+        self.assertEqual(calculate_fixture(fixture, self.rules)['result_type'], 'penalty')
+
+    def test_initial_projected_event_requires_the_dealers_first_draw(self):
+        from scoring_reference import validate_state_projection
+        kinds = ('tsumo', 'dahai', 'reach', 'reach_accepted', 'chi', 'pon',
+                 'daiminkan', 'ankan_declared', 'ankan', 'kakan_declared', 'kakan')
+        for oya in range(4):
+            for evaluated in range(4):
+                for kind in kinds:
+                    for owner in range(4):
+                        state = deepcopy(self.fixtures['settlement_chombo']['state'])
+                        state.update(oya=oya, first_turn=True, wall_remaining=69,
+                                     events=[dict(type=kind, actor=owner, pai='E')])
+                        state['pre_state'].update(oya=oya, first_turn=True, wall_remaining=70)
+                        with self.subTest(oya=oya, evaluated=evaluated, kind=kind, owner=owner):
+                            if kind == 'tsumo' and owner == oya:
+                                validate_state_projection(state, evaluated, self.rules)
+                            else:
+                                with self.assertRaisesRegex(ScoringError, 'initial projection must begin'):
+                                    validate_state_projection(state, evaluated, self.rules)
+
+    def test_first_draw_riichi_observations_preserve_unknown_other_seat_status(self):
+        from scoring_reference import validate_state_projection
+        for oya in range(4):
+            for evaluated in range(4):
+                for owner in range(4):
+                    for acceptance_only in (False, True):
+                        if acceptance_only and owner == evaluated:
+                            continue  # The evaluated declaration must be captured.
+                        state = deepcopy(self.fixtures['settlement_chombo']['state'])
+                        state['pre_state'].update(oya=oya, first_turn=True, wall_remaining=69)
+                        state.update(oya=oya, wall_remaining=69, first_turn=evaluated != owner,
+                                     reach_accepted=evaluated == owner, double_riichi=evaluated == owner,
+                                     ippatsu=evaluated == owner, kyotaku=1)
+                        state['scores'][owner] -= 1000
+                        state['events'] = ([] if acceptance_only else
+                                           [dict(type='reach', actor=owner), dict(type='dahai', actor=owner, pai='E')])
+                        state['events'].append(dict(type='reach_accepted', actor=owner))
+                        with self.subTest(oya=oya, evaluated=evaluated, owner=owner,
+                                          acceptance_only=acceptance_only):
+                            if owner == oya:
+                                validate_state_projection(state, evaluated, self.rules)
+                            else:
+                                with self.assertRaises(ScoringError) as error:
+                                    validate_state_projection(state, evaluated, self.rules)
+                                self.assertEqual(error.exception.code, 'invalid_context')
+
+    def test_projection_cannot_repair_an_impossible_intermediate_qualification(self):
+        from scoring_reference import validate_state_projection
+        for double_ippatsu in (False, True):
+            state = deepcopy(self.fixtures['settlement_chombo']['state'])
+            state.update(wall_remaining=64 if double_ippatsu else 68,
+                         reach_accepted=double_ippatsu, double_riichi=double_ippatsu,
+                         kyotaku=int(double_ippatsu), scores=[24000 if double_ippatsu else 25000, 25000, 25000, 25000],
+                         events=[dict(type='tsumo', actor=1, pai='2m'),
+                                 dict(type='pon', actor=2, pai='2m'), dict(type='dahai', actor=2, pai='3m')])
+            state['pre_state'] = {key: deepcopy(value) for key, value in state.items()
+                                  if key not in {'pre_state', 'events', 'furiten'}}
+            state['pre_state'].update(wall_remaining=65 if double_ippatsu else 69,
+                                      first_turn=not double_ippatsu, ippatsu=double_ippatsu)
+            with self.subTest(double_ippatsu=double_ippatsu):
+                with self.assertRaisesRegex(ScoringError, 'first cycle|initial draw cycle'):
+                    validate_state_projection(state, 0, self.rules)
+
+    def test_projected_observed_successor_obligations_cannot_be_skipped(self):
+        from scoring_reference import validate_state_projection
+        kinds = ('tsumo', 'dahai', 'reach', 'reach_accepted', 'chi', 'pon',
+                 'daiminkan', 'ankan_declared', 'ankan', 'kakan_declared', 'kakan')
+        for evaluated in range(4):
+            for owner in range(4):
+                for kind in ('reach', 'chi', 'pon', 'ankan', 'kakan', 'daiminkan'):
+                    state = deepcopy(self.fixtures['settlement_chombo']['state'])
+                    kan = kind in {'ankan', 'kakan', 'daiminkan'}
+                    tile = '5mr' if kind == 'kakan' else 'E'
+                    prefix = ([dict(type=kind + '_declared', actor=owner, pai=tile)]
+                              if kind in {'ankan', 'kakan'} else [])
+                    prefix.append(dict(type=kind, actor=owner, pai=tile))
+                    if kan:
+                        state['kan_counts'][owner] = 1
+                        state['wall_remaining'] = 39
+                    state['events'] = prefix
+                    with self.subTest(evaluated=evaluated, owner=owner, kind=kind, suffix='omitted'):
+                        with self.assertRaisesRegex(ScoringError, 'omits its'):
+                            validate_state_projection(state, evaluated, self.rules)
+                    for following in kinds:
+                        for successor in range(4):
+                            if following == ('tsumo' if kan else 'dahai') and successor == owner:
+                                continue
+                            candidate = deepcopy(state)
+                            candidate['events'].append(dict(type=following, actor=successor, pai='2m'))
+                            with self.subTest(evaluated=evaluated, owner=owner, kind=kind,
+                                              following=following, successor=successor):
+                                with self.assertRaisesRegex(ScoringError, 'not followed by its'):
+                                    validate_state_projection(candidate, evaluated, self.rules)
+                    state['events'].append(dict(type='tsumo' if kan else 'dahai', actor=owner, pai='2m'))
+                    state['rinshan'] = kan and owner == evaluated
+                    validate_state_projection(state, evaluated, self.rules)
+
+    def test_projected_pending_kan_keeps_its_commit_and_terminal_reaction(self):
+        from scoring_reference import validate_state_projection
+        for kind, tile in (('ankan', 'E'), ('kakan', '5mr')):
+            for owner in range(4):
+                for evaluated in range(4):
+                    state = deepcopy(self.fixtures['settlement_chombo']['state'])
+                    state['pending_kan'] = dict(kind=kind, actor=owner, pai=tile)
+                    state['events'] = [dict(type=kind + '_declared', actor=owner, pai=tile)]
+                    # A final declaration is a legitimate robbery/penalty
+                    # reaction boundary; unlike a commit, it owes no draw.
+                    validate_state_projection(state, evaluated, self.rules)
+                    for other in ('tsumo', 'dahai', 'reach', 'reach_accepted', 'chi', 'pon',
+                                  'daiminkan', 'ankan_declared', 'kakan_declared'):
+                        candidate = deepcopy(state)
+                        candidate['events'].append(dict(type=other, actor=(owner + 1) % 4, pai='2m'))
+                        with self.subTest(kind=kind, owner=owner, evaluated=evaluated, other=other):
+                            with self.assertRaisesRegex(ScoringError, 'pending kan is interrupted'):
+                                validate_state_projection(candidate, evaluated, self.rules)
+                    # An explicitly pending pre-state can commit in this
+                    # capture; prior unrelated draw obligations are unknown.
+                    state['pre_state']['pending_kan'] = deepcopy(state['pending_kan'])
+                    state.update(pending_kan=None, wall_remaining=39, rinshan=owner == evaluated,
+                                 events=[dict(type=kind, actor=owner, pai=tile),
+                                         dict(type='tsumo', actor=owner, pai='2m')])
+                    state['kan_counts'][owner] = 1
+                    validate_state_projection(state, evaluated, self.rules)
+                    state['events'] = []
+                    state['pre_state'] = {key: deepcopy(value) for key, value in state.items()
+                                          if key not in {'pre_state', 'events', 'furiten'}}
+                    validate_state_projection(state, evaluated, self.rules)
+
+    def test_direct_scoring_preserves_double_riichi_ippatsu_boundaries(self):
+        for wall, valid in ((65, True), (63, False), (69, False)):
+            fixture = deepcopy(self.fixtures['yaku_double_riichi'])
+            fixture['state'].update(wall_remaining=wall, ippatsu=True, events=[])
+            with self.subTest(wall=wall):
+                if valid:
+                    ids = {y['id'] for y in score_hand(fixture['input'], fixture['state'], self.rules)['yakus']}
+                    self.assertTrue({'double_riichi', 'ippatsu'} <= ids)
+                else:
+                    with self.assertRaises(ScoringError) as error:
+                        score_hand(fixture['input'], fixture['state'], self.rules)
+                    self.assertEqual(error.exception.code, 'invalid_context')
+
+    def test_uninterrupted_pending_source_uses_the_current_draw_owner(self):
+        from scoring_reference import validate_scalar_context
+        for oya in range(4):
+            for actor in range(4):
+                offset = (actor - oya) % 4
+                first_wall = 69 - offset
+                for declarer in range(4):
+                    for wall in range(71):
+                        for first in (False, True):
+                            state = deepcopy(self.fixtures['settlement_chombo']['state'])
+                            state.update(oya=oya, wall_remaining=wall, first_turn=first,
+                                         double_riichi=not first, ippatsu=not first,
+                                         reach_accepted=not first, kyotaku=int(not first),
+                                         pending_kan=dict(kind='ankan', actor=declarer, pai='E'))
+                            current = (oya + 69 - wall) % 4
+                            valid = (first_wall <= wall < 70 if first else first_wall - 4 <= wall <= first_wall)
+                            valid = valid and declarer == current
+                            if not first and declarer == actor:
+                                valid = valid and wall == first_wall - 4
+                            with self.subTest(oya=oya, actor=actor, declarer=declarer, wall=wall, first=first):
+                                if valid:
+                                    validate_scalar_context(state, actor, self.rules)
+                                else:
+                                    with self.assertRaises(ScoringError) as error:
+                                        validate_scalar_context(state, actor, self.rules)
+                                    self.assertEqual(error.exception.code, 'invalid_context')
+
+    def test_double_riichi_ippatsu_win_and_penalty_sources_follow_next_cycle(self):
+        for oya in range(4):
+            for actor in range(4):
+                first_wall = 69 - (actor - oya) % 4
+                for wall in range(first_wall - 5, first_wall + 2):
+                    fixture = deepcopy(self.fixtures['yaku_double_riichi'])
+                    fixture['input']['actor'] = actor
+                    fixture['state'].update(oya=oya, wall_remaining=wall, ippatsu=True, events=[])
+                    for target in range(4):
+                        fixture['input'].update(target=target, win_method='tsumo' if actor == target else 'ron')
+                        valid = (wall == first_wall - 4 if actor == target else
+                                 first_wall - 3 <= wall <= first_wall - 1
+                                 and target == (oya + 69 - wall) % 4)
+                        with self.subTest(oya=oya, actor=actor, target=target, wall=wall):
+                            if valid:
+                                score_hand(fixture['input'], fixture['state'], self.rules)
+                            else:
+                                with self.assertRaises(ScoringError) as error:
+                                    score_hand(fixture['input'], fixture['state'], self.rules)
+                                self.assertEqual(error.exception.code, 'invalid_context')
+                    penalty = deepcopy(self.fixtures['settlement_chombo'])
+                    penalty['input']['offender'] = actor
+                    for state in (penalty['state'], penalty['state']['pre_state']):
+                        state.update(oya=oya, wall_remaining=wall, double_riichi=True,
+                                     ippatsu=True, reach_accepted=True, kyotaku=1,
+                                     scores=[24000, 25000, 25000, 25000])
+                    if first_wall - 4 <= wall < first_wall:
+                        self.assertEqual(calculate_fixture(penalty, self.rules)['result_type'], 'penalty')
+                    else:
+                        with self.assertRaises(ScoringError) as error:
+                            calculate_fixture(penalty, self.rules)
+                        self.assertEqual(error.exception.code, 'invalid_context')
+
+    def test_exhaustive_draw_qualifications_do_not_restrict_penalty_timing(self):
+        for offender in range(4):
+            own_kan = [int(seat == offender) for seat in range(4)]
+            other_kan = [int(seat == (offender + 1) % 4) for seat in range(4)]
+            contexts = (
+                dict(first_turn=True, wall_remaining=69),
+                dict(first_turn=offender != 0, wall_remaining=69 if offender else 68,
+                     pending_kan=dict(kind='ankan', actor=0 if offender else 1, pai='E')),
+                dict(reach_accepted=True, double_riichi=True, ippatsu=True, kyotaku=1,
+                     wall_remaining=68 - offender),
+                dict(reach_accepted=True, ippatsu=True, kyotaku=1),
+                dict(rinshan=True, kan_counts=own_kan),
+                dict(reach_accepted=True, rinshan=True, kan_counts=own_kan, kyotaku=1),
+                dict(kan_counts=other_kan),
+            )
+            for patch in contexts:
+                fixture = deepcopy(self.fixtures['settlement_chombo'])
+                fixture['input']['offender'] = offender
+                for state in (fixture['state'], fixture['state']['pre_state']):
+                    state.update(deepcopy(patch))
+                    state['scores'][offender] -= 1000 * state['kyotaku']
+                with self.subTest(offender=offender, patch=patch):
+                    self.assertEqual(calculate_fixture(fixture, self.rules)['result_type'], 'penalty')
+                    if patch.get('rinshan'):
+                        for state in (fixture['state'], fixture['state']['pre_state']):
+                            state['kan_counts'] = other_kan.copy()
+                        with self.assertRaisesRegex(ScoringError, 'no own committed kan'):
+                            calculate_fixture(fixture, self.rules)
+        for flag in ('first_turn', 'ippatsu', 'rinshan'):
+            fixture = deepcopy(self.fixtures['noten_1'])
+            if flag == 'rinshan':
+                hand = fixture['input']['hands'][0]
+                hand['concealed_tiles'] = [t for t in hand['concealed_tiles'] if t not in {'2p', '3p', '4p'}]
+                hand['melds'] = [dict(kind='ankan', open=False, tiles=['F'] * 4)]
+            for state in (fixture['state'], fixture['state']['pre_state']):
+                state[flag] = True
+                if flag == 'ippatsu':
+                    state.update(reach_accepted=True, kyotaku=1, scores=[24000, 25000, 25000, 25000])
+                if flag == 'rinshan':
+                    state['kan_counts'] = [1, 0, 0, 0]
+            with self.subTest(flag=flag):
+                with self.assertRaisesRegex(ScoringError, 'expired turn qualification|initial draw cycle'):
+                    calculate_fixture(fixture, self.rules)
+
+    def test_penalty_requires_a_decision_but_its_projection_can_start_before_play(self):
+        fixture = deepcopy(self.fixtures['settlement_chombo'])
+        for state in (fixture['state'], fixture['state']['pre_state']):
+            state.update(first_turn=True, wall_remaining=70)
+        with self.assertRaisesRegex(ScoringError, 'penalty decision precedes'):
+            calculate_fixture(fixture, self.rules)
+        fixture['state']['wall_remaining'] = 69
+        fixture['state']['events'] = [dict(type='tsumo', actor=0, pai='1m')]
+        self.assertEqual(calculate_fixture(fixture, self.rules)['result_type'], 'penalty')
+        for offender in range(4):
+            for declarer in range(4):
+                for rinshan in (False, True):
+                    candidate = deepcopy(self.fixtures['settlement_chombo'])
+                    candidate['input']['offender'] = offender
+                    for state in (candidate['state'], candidate['state']['pre_state']):
+                        state.update(pending_kan=dict(kind='ankan', actor=declarer, pai='E'),
+                                     rinshan=rinshan,
+                                     kan_counts=[int(rinshan and a == offender) for a in range(4)])
+                    with self.subTest(offender=offender, declarer=declarer, rinshan=rinshan):
+                        if offender == declarer or rinshan:
+                            with self.assertRaisesRegex(ScoringError, 'no request in the pending kan'):
+                                calculate_fixture(candidate, self.rules)
+                        else:
+                            self.assertEqual(calculate_fixture(candidate, self.rules)['result_type'], 'penalty')
+
+    def test_draw_scalar_riichi_belongs_only_to_evaluated_seat_zero(self):
+        from score_oracle import validate_fixture_input
+        from validate_artifacts import SchemaSet
+        schemas = SchemaSet()
+        original = self.fixtures['noten_1']
+        for ready_seat in range(4):
+            for accepted in (False, True):
+                fixture = deepcopy(original)
+                hands = fixture['input']['hands']
+                hands[0], hands[ready_seat] = hands[ready_seat], hands[0]
+                for state in (fixture['state'], fixture['state']['pre_state']):
+                    state['reach_accepted'] = accepted
+                    state['kyotaku'] = int(accepted)
+                    state['scores'][0] -= self.rules['riichi_stick_value'] * accepted
+                validate_fixture_input(fixture, self.rules, schemas)
+                with self.subTest(ready_seat=ready_seat, accepted=accepted):
+                    if accepted and ready_seat != 0:
+                        with self.assertRaisesRegex(ScoringError, 'accepted riichi.*tenpai') as error:
+                            calculate_fixture(fixture, self.rules)
+                        self.assertEqual(error.exception.code, 'invalid_context')
+                    else:
+                        actual = calculate_fixture(fixture, self.rules)
+                        self.assertEqual(actual['tenpai'], [seat == ready_seat for seat in range(4)])
+                        self.assertEqual(actual['kyotaku'], int(accepted))
+                        self.assertEqual(sum(actual['scores']) + actual['kyotaku'] * self.rules['riichi_stick_value'],
+                                         4 * self.rules['starting_points'])
+
+    def test_draw_evaluated_riichi_requires_a_closed_hand_and_deposit(self):
+        from score_oracle import validate_fixture_input
+        from validate_artifacts import SchemaSet
+        schemas = SchemaSet()
+        for kind in (None, 'chi', 'pon', 'daiminkan', 'ankan', 'kakan'):
+            for accepted in (False, True):
+                for kyotaku in (0, 1):
+                    fixture = deepcopy(self.fixtures['noten_1'])
+                    quad = kind in {'daiminkan', 'ankan', 'kakan'}
+                    if kind is not None:
+                        hand = fixture['input']['hands'][0]
+                        hand['concealed_tiles'] = [t for t in hand['concealed_tiles'] if t not in {'2p', '3p', '4p'}]
+                        meld = dict(kind=kind, open=kind != 'ankan',
+                                    tiles=['2p', '3p', '4p'] if kind == 'chi' else ['F'] * (4 if quad else 3))
+                        if kind != 'ankan':
+                            meld['source'] = 3 if kind == 'chi' else 1
+                        hand['melds'] = [meld]
+                    for state in (fixture['state'], fixture['state']['pre_state']):
+                        state.update(reach_accepted=accepted, kyotaku=kyotaku,
+                                     kan_counts=[int(quad), 0, 0, 0],
+                                     scores=[25000 - 1000 * kyotaku, 25000, 25000, 25000])
+                    validate_fixture_input(fixture, self.rules, schemas)
+                    valid = not accepted or (kind in {None, 'ankan'} and kyotaku > 0)
+                    with self.subTest(kind=kind, accepted=accepted, kyotaku=kyotaku):
+                        if valid:
+                            actual = calculate_fixture(fixture, self.rules)
+                            self.assertEqual(actual['tenpai'], [True, False, False, False])
+                        else:
+                            with self.assertRaises(ScoringError) as error:
+                                calculate_fixture(fixture, self.rules)
+                            self.assertEqual(error.exception.code, 'invalid_context')
+
     def test_draw_cannot_bypass_enabled_four_kan_abort(self):
         from score_oracle import validate_fixture_input
         from validate_artifacts import SchemaSet
@@ -561,6 +1035,11 @@ class ScoringInvariants(unittest.TestCase):
                 f = deepcopy(self.fixtures['yakuman_kokushi_ankan_robbery'])
                 for state in (f['state'], f['state']['pre_state']):
                     state.update(first_turn=not riichi, reach_accepted=riichi, ippatsu=riichi)
+                    if not riichi:
+                        # The dealer's first draw may be declared as an ankan
+                        # before any discard; later rounds of draws cannot
+                        # retain another player's first-turn eligibility.
+                        state['wall_remaining'] = 69
                     if riichi:
                         state.update(kyotaku=1, scores=[25000, 24000, 25000, 25000])
                 if riichi:
@@ -615,6 +1094,65 @@ class ScoringInvariants(unittest.TestCase):
         with self.assertRaises(ScoringError) as error:
             calculate_fixture(f, self.rules)
         self.assertEqual(error.exception.code, 'invalid_context')
+
+    def test_projected_kan_commit_preserves_declared_physical_tile(self):
+        from scoring_reference import validate_state_projection
+        for kind in ('ankan', 'kakan'):
+            for declared, committed, valid in (
+                ('1m', '1m', True), ('1m', '9m', False),
+                ('5m', '5m', True), ('5mr', '5mr', kind == 'kakan'),
+                ('5m', '5mr', False), ('5mr', '5m', False),
+            ):
+                f = deepcopy(self.fixtures['yaku_rinshan'])
+                f['state']['events'][0].update(type=kind + '_declared', pai=declared)
+                f['state']['events'][1].update(type=kind, pai=committed)
+                with self.subTest(kind=kind, declared=declared, committed=committed):
+                    if valid:
+                        validate_state_projection(f['state'], f['input']['actor'], self.rules)
+                    else:
+                        with self.assertRaises(ScoringError) as error:
+                            validate_state_projection(f['state'], f['input']['actor'], self.rules)
+                        self.assertEqual(error.exception.code, 'invalid_context')
+        f = deepcopy(self.fixtures['yaku_rinshan'])
+        f['state']['events'][0]['pai'] = '9m'
+        with self.assertRaises(ScoringError) as error:
+            calculate_fixture(f, self.rules)
+        self.assertEqual(error.exception.code, 'invalid_context')
+
+    def test_first_turn_ron_follows_uninterrupted_dealer_order(self):
+        for oya in range(4):
+            for actor in range(4):
+                for target in range(4):
+                    if actor == target:
+                        continue
+                    for kind in ('dahai', 'ankan_declared', 'kakan_declared'):
+                        for wall in (70, 69, 68, 67, 66, 65, 40, 0):
+                            f = deepcopy(self.fixtures['yakuman_kokushi_ankan_robbery'])
+                            f['input'].update(actor=actor, target=target)
+                            pending = (None if kind == 'dahai' else
+                                       dict(kind=kind.removesuffix('_declared'), actor=target, pai='E'))
+                            f['state'].update(oya=oya, kyoku=oya + 1, first_turn=True,
+                                              wall_remaining=wall, pending_kan=pending,
+                                              events=[dict(type=kind, actor=target, pai='E')])
+                            f['state']['pre_state'] = {key: deepcopy(value) for key, value in f['state'].items()
+                                                      if key not in {'events', 'pre_state', 'furiten'}}
+                            f['state']['pre_state']['pending_kan'] = None
+                            valid = (kind != 'kakan_declared'
+                                     and (target - oya) % 4 < (actor - oya) % 4
+                                     and wall == 69 - (target - oya) % 4)
+                            for projected in (False, True):
+                                candidate = deepcopy(f)
+                                if not projected:
+                                    candidate['state']['events'] = []
+                                    candidate['state']['pre_state']['pending_kan'] = deepcopy(pending)
+                                with self.subTest(oya=oya, actor=actor, target=target,
+                                                  kind=kind, wall=wall, projected=projected):
+                                    if valid:
+                                        self.assertEqual(calculate_fixture(candidate, self.rules)['result_type'], 'hora')
+                                    else:
+                                        with self.assertRaises(ScoringError) as error:
+                                            calculate_fixture(candidate, self.rules)
+                                        self.assertEqual(error.exception.code, 'invalid_context')
 
     def test_chankan_inventory_includes_the_opponents_entire_quad(self):
         for name in ('yaku_chankan', 'yakuman_kokushi_ankan_robbery'):
