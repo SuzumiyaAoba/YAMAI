@@ -342,6 +342,65 @@ class ValidatorBoundaries(unittest.TestCase):
                 with self.subTest(name=name, suffix=repr(suffix)):
                     self.assert_error('invalid_message', schemas.validate, value + suffix, schema)
 
+    def test_capability_names_are_closed_for_stable_values_in_every_message(self):
+        schemas = v.SchemaSet()
+        vectors = v.strict_load(v.ROOT / f'test-vectors/protocol/{v.PROTOCOL}/vectors.json')
+        trace = vectors['V63_version_refusal']['positive']['trace']
+        urn = f'urn:yamai:schema:protocol:{v.PROTOCOL}:'
+        for kind in ('hello', 'join', 'welcome'):
+            for field in (('required', 'optional') if kind != 'welcome' else (None,)):
+                for capability in ('resume', 'snapshot', 'x-review-feature',
+                                   'x-Acme-v1.feature_name', 'unknown_feature', 'a', 'a' * 64):
+                    message = deepcopy(trace[kind])
+                    if kind == 'welcome':
+                        message['capabilities'] = sorted(set(message['capabilities'] + [capability]))
+                    else:
+                        for values in message['capabilities'].values():
+                            if capability in values:
+                                values.remove(capability)
+                        message['capabilities'][field].append(capability)
+                    valid = capability in v.STABLE_CAPABILITIES or capability.startswith('x-')
+                    with self.subTest(kind=kind, field=field, capability=capability):
+                        schema_ids = (kind, 'message', 'join-proposal') if kind == 'join' else (kind, 'message')
+                        for sid in schema_ids:
+                            if valid:
+                                schemas.validate(message, {'$ref': urn + sid})
+                            else:
+                                self.assert_error('invalid_message', schemas.validate, message, {'$ref': urn + sid})
+                        if valid:
+                            v.semantic_message(message, 'capability-regression')
+                        else:
+                            self.assert_error('invalid_message', v.semantic_message, message, 'capability-regression')
+                            if kind == 'join':
+                                for key, value in (('version', '9.0'), ('profile_hash', 'sha256:' + '0' * 64)):
+                                    conflicting = deepcopy(message)
+                                    conflicting[key] = value
+                                    self.assert_error('invalid_message', v.semantic_message, conflicting,
+                                                      'capability-precedence', trace['join']['profile_hash'])
+
+    def test_stable_capability_registry_and_schema_cannot_drift(self):
+        original_load = v.strict_load
+        registry = (v.ROOT / f'registry/protocol/{v.PROTOCOL}/registry.json').resolve()
+        for mutation in ('extra', 'missing', 'duplicate', 'status'):
+            def load(path):
+                result = original_load(path)
+                if Path(path).resolve() == registry:
+                    capabilities = result['capabilities']
+                    if mutation == 'extra':
+                        capabilities.append({'id': 'future_feature', 'status': 'stable'})
+                    elif mutation == 'missing':
+                        capabilities.pop()
+                    elif mutation == 'duplicate':
+                        capabilities[1] = deepcopy(capabilities[0])
+                    else:
+                        capabilities[0]['status'] = 'experimental'
+                return result
+            with self.subTest(mutation=mutation), patch.object(v, 'strict_load', load):
+                self.assert_error('registry_error', v.check_registry, v.SchemaSet())
+        schemas = v.SchemaSet()
+        schemas.schemas[f'urn:yamai:schema:protocol:{v.PROTOCOL}:common']['$defs']['capabilityName']['anyOf'][0]['enum'].append('future_feature')
+        self.assert_error('registry_error', v.check_registry, schemas)
+
     def test_json_fraction_does_not_round_to_integer(self):
         value = v.strict_load_bytes(b'{"seq":1.00000000000000000000001}')
         self.assertEqual(value['seq'], Decimal('1.00000000000000000000001'))

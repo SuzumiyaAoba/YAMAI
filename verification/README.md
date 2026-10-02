@@ -84,7 +84,7 @@ stateful trace は1つの peer session の時刻付き message と不変の wire
 | 21 | §7.2 | V151–V175 | トビ・連荘・アガリ止め・延長の順序 |
 | 22 | §6.2/11 | V28/V30/V51/V78–V82/V94–V95/V143–V150/V412–V413/V415–V416 | mode/view/target、観戦のrequest/ACK禁止、初期snapshotとwelcomeの点数一致・seq=1 |
 | 23 | §7.6 | scoring_reference、採点fixture・索引・回帰テスト、N37–N41 | 全登録役、全符項目、限界点、支払いの再計算。投影省略時も第一巡と全seatの槓数、嶺上と一発、通常流局の全手牌と槓数の整合を検査 |
-| 24 | §6/14/19 | V63–V93/V127–V142 | revision対応表、hash、capabilityと拡張Schemaのsession分離 |
+| 24 | §5/6/14/19 | V63–V93/V127–V142/V423–V425 | revision対応表、hash、capabilityと拡張Schemaのsession分離 |
 | 25 | §8.1/8.4 | V31–V50/V52/V60/V254–V256、request形式モデル | 他家3人、個別/共通期限、選択後に一度だけ競合解決 |
 | 26 | §8.5/10、§7.6.7.3/7.6.8.2 | V26/V38/V250–V253/V338–V339、pao/penalty採点fixture | 公開meld順・責任seat、chomboによる取消しと結果、0点を含む支払い |
 | 27 | §7.2/7.5、§7.6.8 | V27/V57–V58/V151–V175、noten_0–noten_4 | 聴牌人数、供託繰越・配分・終了時残本数 |
@@ -120,6 +120,8 @@ private actionの候補検査は、名前付き引数・配列順・入れ子obj
 完全候補の照合では期待集合の一部だけを検査せず、順序とconsumedの並びを除いた集合全体を比較する。現行coreの候補数には余裕がある。自摸番は打牌15以下・リーチ15以下・暗槓3以下・加槓4以下・和了1・九種九牌1の合計39以下、反応はchiの3順子×4赤牌消費パターン×13打牌、ponの3消費パターン×13打牌、daiminkan4消費パターン、hora/none各1の合計201以下という保守的上限があり、512を超えない。実際の牌枚数・喰い替えはこれをさらに制限する。私的拡張は独自の上限・fixtureと第14節の契約を必要とする。
 
 追加回帰では、自摸番の単独requestにchi・pon・daiminkanが混在することを、原因eventを持たない部分captureでも拒否する。暗槓宣言の見逃しは、国士無双による槍槓がルール上許可された場合だけフリテン遷移の対象とし、単独のfuriten検査とevent適用で同じ条件を使用する。リーチ後の暗槓宣言を含むsnapshotでは、手牌が公開されている場合に待ち・面子構成の不変条件をevent適用と同様に検査し、非公開手牌の構成は推測しない。snapshotで元の終端ACKが省略された要求でも、一度観測した後着stale ACKの時計を別attemptや再接続後に変更できないことを検査する。河底の非空event投影は、最後の自摸とその直後の同一actorの打牌を要求し、原因自摸の欠落・別actorの打牌・二度目以降の打牌を拒否する。最後の自摸後の手出しは引き続き許可する。
+
+V423–V425は安定capabilityの閉じた列挙を検査する。`hello` / `join` のrequired・optionalと `welcome.capabilities` で、登録済みの `resume` / `snapshot` および妥当な実験値を正例とし、未登録の安定値をSchemaと意味検査の両方で `invalid_message` として拒否する。交渉回帰ではjoin-proposal入口、双方の同じ未知値の提示、版・profile・view・limit違反との優先順と拒否時の非変更を確認する。登録済み必須機能のpeer不対応と未知の必須実験値は従来どおり `unsupported_capability`、片側だけの任意実験値は無視し、交渉済み拡張Schemaの検査も維持する。registry・Schema・実装の登録済み安定値の一致をrelease検査で確認する。
 
 ## 検証の範囲
 

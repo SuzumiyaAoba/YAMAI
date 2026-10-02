@@ -3,7 +3,7 @@
   "protocol_version": "1.0-draft.1",
   "profile": "riichi-4p",
   "profile_revision": "1.0-draft.1",
-  "profile_hash": "sha256:fa03bde5a957761a730d4b771f6135d3a7285a6dfc0d52426cf2f99c08b2fbe8",
+  "profile_hash": "sha256:8515055f91e2cd603e52a3b9b5773923bc321e8db4dadd60a43e9e6ed220a0f3",
   "registry": [
     "registry/protocol/1.0-draft.1/registry.json",
     "registry/riichi-4p/1.0-draft.1/registry.json"
@@ -2552,6 +2552,24 @@
     {
       "id": "V422_action_original_seq_is_fatal",
       "area": "direction-error-precedence",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V423_hello_closed_stable_capabilities",
+      "area": "closed-stable-capabilities",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V424_join_closed_stable_capabilities",
+      "area": "closed-stable-capabilities",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V425_welcome_closed_stable_capabilities",
+      "area": "closed-stable-capabilities",
       "expect_positive": "valid",
       "expect_negative": "invalid_message"
     }

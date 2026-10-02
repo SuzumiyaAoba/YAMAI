@@ -41,6 +41,7 @@ MAX_INT = 9007199254740991
 ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,64}$")
 EXTENSION_FIELD_RE = re.compile(r"^x_(?=[A-Za-z0-9_]{3,62}$)[A-Za-z0-9]+_[A-Za-z0-9][A-Za-z0-9_]*$")
 CAPABILITY_RE = re.compile(r"^(?:[a-z][a-z0-9_]{0,63}|x-(?=[A-Za-z0-9_.-]{3,62}$)[A-Za-z0-9]+-[A-Za-z0-9][A-Za-z0-9_.-]*)$")
+STABLE_CAPABILITIES = frozenset({"resume", "snapshot"})
 ERROR_CODE_RE = re.compile(r"^[a-z][a-z0-9_]{1,63}$")
 PROFILE_HASH_INPUTS = [
     "schemas/protocol/1.0-draft.1/profile/riichi-4p.schema.json",
@@ -520,6 +521,17 @@ def check_registry(schemas: SchemaSet) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     r = strict_load(ROOT / "registry/riichi-4p/1.0-draft.1/registry.json")
     if p["protocol_version"] != PROTOCOL or r["protocol_version"] != PROTOCOL:
         raise ArtifactError("registry_error", "registry protocol version mismatch")
+    capabilities = p.get("capabilities", [])
+    _require(isinstance(capabilities, list) and len(capabilities) == len(STABLE_CAPABILITIES)
+             and all(isinstance(entry, dict) and entry.get("status") == "stable"
+                     and isinstance(entry.get("id"), str) for entry in capabilities)
+             and {entry["id"] for entry in capabilities} == STABLE_CAPABILITIES,
+             "registry_error", "stable capability registry differs from this protocol version")
+    capability_schema = schema_by_id(schemas, f"urn:yamai:schema:protocol:{PROTOCOL}:common")["$defs"]["capabilityName"]
+    branches = capability_schema.get("anyOf")
+    _require(isinstance(branches, list) and bool(branches) and isinstance(branches[0], dict)
+             and branches[0].get("enum") == sorted(STABLE_CAPABILITIES),
+             "registry_error", "stable capability schema and registry differ")
     bounds = r["arithmetic"]["score_range"]
     _require(p["limits"]["max_event_count"] == bounds["max_game_events"] == MAX_GAME_EVENTS
              and bounds["max_hand_points"] == MAX_HAND_POINTS and bounds["max_integer"] == MAX_INT,
@@ -965,6 +977,13 @@ def _check_event_visibility(event: Mapping[str, Any], mode: str, view: Any, seat
         _require((event.get("pai") is not None) == (full or event["actor"] == visible_seat), "invalid_message", "draw visibility differs")
 
 
+def _check_capability_name(value: Any) -> None:
+    _require(isinstance(value, str) and CAPABILITY_RE.fullmatch(value) is not None,
+             "invalid_message", "capability name is invalid")
+    _require(value in STABLE_CAPABILITIES or value.startswith("x-"),
+             "invalid_message", "unregistered stable capability")
+
+
 def _check_capabilities(capabilities: Any) -> None:
     _require(isinstance(capabilities, dict), "invalid_message", "capabilities must be an object")
     required, optional = capabilities.get("required"), capabilities.get("optional")
@@ -973,7 +992,7 @@ def _check_capabilities(capabilities: Any) -> None:
     _require(len(set(required)) == len(required) and len(set(optional)) == len(optional), "invalid_message", "capabilities contain duplicates")
     _require(not set(required) & set(optional), "invalid_message", "capability appears in both arrays")
     for value in required + optional:
-        _require(CAPABILITY_RE.fullmatch(value) is not None, "invalid_message", "capability name is invalid")
+        _check_capability_name(value)
 
 
 def _check_rules(rules: Any) -> None:
@@ -1286,11 +1305,11 @@ def semantic_message(message: Mapping[str, Any], case_id: str, expected_profile_
                     expected = {seat: points for seat, points in expected.items() if points}
                     _require(shares == expected, "invalid_message", "penalty split does not follow the chombo distribution")
     elif kind == "join":
+        _check_capabilities(message.get("capabilities"))
         if message.get("version") != PROTOCOL:
             raise ArtifactError("unsupported_version", "unsupported protocol version")
         if expected_profile_hash is not None and message.get("profile_hash") != expected_profile_hash:
             raise ArtifactError("profile_mismatch", "profile hash does not match the selected release")
-        _check_capabilities(message.get("capabilities"))
         mode, view = message.get("mode"), message.get("view")
         _require(mode in {"play", "spectate", "replay"}, "invalid_message", "unknown join mode")
         if mode == "play":
@@ -1321,6 +1340,8 @@ def semantic_message(message: Mapping[str, Any], case_id: str, expected_profile_
         _require(isinstance(resumed, bool), "invalid_message", "welcome resumed is invalid")
         capabilities = message.get("capabilities")
         _require(isinstance(capabilities, list) and all(isinstance(c, str) for c in capabilities) and capabilities == sorted(set(capabilities)), "invalid_message", "welcome capabilities must be sorted and unique")
+        for capability in capabilities:
+            _check_capability_name(capability)
         resume_enabled = message["mode"] == "play" and "resume" in capabilities
         _require(("resume" in message) == resume_enabled, "invalid_message", "welcome resume capability/member differs")
         _require(message["mode"] == "play" or "resume" not in capabilities, "invalid_message", "resume enabled in a non-play mode")
@@ -1795,7 +1816,7 @@ def semantic_game_trace(trace: Mapping[str, Any]) -> None:
 def _session_schema_validator(schemas: SchemaSet, expected_hash: str, definitions: Sequence[Mapping[str, Any]] = (), enabled: Sequence[str] = (), rules: Mapping[str, Any] | None = None):
     urn = f"urn:yamai:schema:protocol:{PROTOCOL}:"
     extension_contexts: dict[str, Sequence[str]] = {}
-    if definitions or any(cap not in {"resume", "snapshot"} for cap in enabled):
+    if definitions or any(cap not in STABLE_CAPABILITIES for cap in enabled):
         schemas = deepcopy(schemas)
         registered = {definition["capability"]: definition for definition in definitions}
         _require(len(registered) == len(definitions), "unsupported_capability", "duplicate extension capability definition")
@@ -1811,7 +1832,7 @@ def _session_schema_validator(schemas: SchemaSet, expected_hash: str, definition
             extension_schema_ids.add(sid)
             return {"$ref": sid}
         for capability in enabled:
-            if capability in {"resume", "snapshot"}:
+            if capability in STABLE_CAPABILITIES:
                 continue
             _require(capability in registered and re.fullmatch(r"x-(?=[A-Za-z0-9_.-]{3,62}$)[A-Za-z0-9]+-[A-Za-z0-9][A-Za-z0-9_.-]*", capability), "unsupported_capability", "extension schema is not installed")
             definition = registered[capability]

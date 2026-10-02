@@ -28,6 +28,85 @@ class SessionInvariants(unittest.TestCase):
     def raw(message):
         return json.dumps(message, ensure_ascii=False, separators=(',',':')).encode()
 
+    def test_unknown_stable_capabilities_are_structural_errors(self):
+        validate = v._session_schema_validator(self.schemas, self.digest)
+        for peers in (('hello',), ('join',), ('hello', 'join')):
+            for field in ('required', 'optional'):
+                for conflict in (None, 'version', 'profile', 'profile_hash', 'view', 'limit'):
+                    trace = self.trace('version_refusal')
+                    for peer in peers:
+                        trace[peer]['capabilities'][field].append('unknown_feature')
+                    # Even mutual advertisement and a matching selection are invalid.
+                    if len(peers) == 2:
+                        trace['welcome']['capabilities'].append('unknown_feature')
+                    if conflict in ('version', 'profile', 'profile_hash'):
+                        trace['join'][conflict] = {'version': '9.0', 'profile': 'other',
+                                                  'profile_hash': 'sha256:' + '0' * 64}[conflict]
+                    elif conflict == 'view':
+                        trace['context']['supported_views'] = {'play': ['public']}
+                    elif conflict == 'limit':
+                        trace['join']['receive_limits']['max_message_bytes'] = 65536
+                    before = deepcopy(trace)
+                    with self.subTest(peers=peers, field=field, conflict=conflict):
+                        with self.assertRaises(SessionError) as caught:
+                            negotiate(trace['hello'], trace['join'], trace['welcome'], trace['context'],
+                                      validate, v.PROTOCOL, v.PROFILE_REVISION, self.digest)
+                        self.assertEqual(caught.exception.code, 'invalid_message')
+                        self.assertEqual(caught.exception.severity, 'fatal')
+                        self.assertEqual(trace, before)
+
+    def test_capability_policy_preserves_registered_and_experimental_negotiation(self):
+        validate = v._session_schema_validator(self.schemas, self.digest)
+        for capability in ('resume', 'snapshot', 'x-review-feature'):
+            for peer in ('hello', 'join'):
+                for required in (False, True):
+                    trace = self.trace('version_refusal')
+                    for kind in ('hello', 'join'):
+                        trace[kind]['capabilities'] = {'required': [], 'optional': ['resume', 'snapshot']}
+                    if capability.startswith('x-'):
+                        trace[peer]['capabilities']['required' if required else 'optional'].append(capability)
+                    else:
+                        # Registered required values work when the peer advertises them.
+                        trace[peer]['capabilities']['optional'].remove(capability)
+                        trace[peer]['capabilities']['required' if required else 'optional'].append(capability)
+                    with self.subTest(capability=capability, peer=peer, required=required):
+                        if capability.startswith('x-') and required:
+                            with self.assertRaises(SessionError) as caught:
+                                negotiate(trace['hello'], trace['join'], trace['welcome'], trace['context'],
+                                          validate, v.PROTOCOL, v.PROFILE_REVISION, self.digest)
+                            self.assertEqual(caught.exception.code, 'unsupported_capability')
+                        else:
+                            result = negotiate(trace['hello'], trace['join'], trace['welcome'], trace['context'],
+                                               validate, v.PROTOCOL, v.PROFILE_REVISION, self.digest)
+                            self.assertEqual(result['capabilities'], ['resume', 'snapshot'])
+                        if not capability.startswith('x-') and required:
+                            other = 'join' if peer == 'hello' else 'hello'
+                            trace[other]['capabilities']['optional'].remove(capability)
+                            with self.assertRaises(SessionError) as caught:
+                                negotiate(trace['hello'], trace['join'], trace['welcome'], trace['context'],
+                                          validate, v.PROTOCOL, v.PROFILE_REVISION, self.digest)
+                            self.assertEqual(caught.exception.code, 'unsupported_capability')
+
+    def test_unknown_stable_welcome_selection_is_rejected(self):
+        trace = self.trace('version_refusal')
+        trace['welcome']['capabilities'].append('unknown_feature')
+        validate = v._session_schema_validator(self.schemas, self.digest)
+        with self.assertRaises(SessionError) as caught:
+            negotiate(trace['hello'], trace['join'], trace['welcome'], trace['context'],
+                      validate, v.PROTOCOL, v.PROFILE_REVISION, self.digest)
+        self.assertEqual(caught.exception.code, 'invalid_message')
+        resumed = self.trace('resume_preserves_rules')
+        receiver = self.receiver(resumed['context']['resume_state']['welcome'],
+                                 last_seq=resumed['join']['resume']['last_seq'])
+        resumed['welcome']['capabilities'].append('unknown_feature')
+        before = deepcopy(vars(receiver))
+        with self.assertRaises(SessionError) as caught:
+            receiver.begin_resume(resumed['welcome'])
+        self.assertEqual(caught.exception.code, 'invalid_message')
+        self.assertEqual(receiver.welcome, before['welcome'])
+        self.assertEqual(receiver.resume_tokens, before['resume_tokens'])
+        self.assertEqual(receiver.applied, before['applied'])
+
     def test_resume_immutable_facts_use_json_value_equality(self):
         for field in ('rules', 'players'):
             for old, new, valid in ((True, 1, False), (False, 0, False),

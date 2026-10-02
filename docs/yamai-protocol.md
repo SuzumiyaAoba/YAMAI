@@ -286,7 +286,7 @@ ID以外の交渉用文字列・配列にも、次の閉じた上限を適用す
 |---|---|
 | Protocol Version / profile revision | 第1節の版文法、ASCIIで32文字以下 |
 | profile名 | 1～32文字、先頭は小文字英字、以降は小文字英字・数字・hyphen |
-| 安定capability名 | 1～64文字、先頭は小文字英字、以降は小文字英字・数字・underscore。実験値は第14節 |
+| 安定capability名 | 第19節の閉じた列挙 `resume`、`snapshot` のみ。標準名の字句は1～64文字、先頭は小文字英字、以降は小文字英字・数字・underscoreだが、字句への適合だけでは未登録値を許可しない。実験値は第14節 |
 | `client.name`、`players[].name`、`join.room` | 存在する場合は1～128文字。表示名やroomを認証済みの主体IDとして扱わない |
 | `client.version` | 1～64文字。クライアント自身の版を表す文字列であり、Protocol Versionの文法を要求しない |
 | `hello.versions`、`profiles[].revisions`、`profiles[].protocol_versions[revision]` | 各1～16要素、同じ配列内の重複を禁止 |
@@ -347,7 +347,7 @@ hostは同一 `seq` の再送、resume replayおよびrange replayに、ledger e
         "1.0-draft.1"
       ],
       "hashes": {
-        "1.0-draft.1": "sha256:fa03bde5a957761a730d4b771f6135d3a7285a6dfc0d52426cf2f99c08b2fbe8"
+        "1.0-draft.1": "sha256:8515055f91e2cd603e52a3b9b5773923bc321e8db4dadd60a43e9e6ed220a0f3"
       },
       "protocol_versions": {
         "1.0-draft.1": [
@@ -382,7 +382,7 @@ hostは同一 `seq` の再送、resume replayおよびrange replayに、ledger e
   "seat": 0,
   "profile": "riichi-4p",
   "profile_revision": "1.0-draft.1",
-  "profile_hash": "sha256:fa03bde5a957761a730d4b771f6135d3a7285a6dfc0d52426cf2f99c08b2fbe8",
+  "profile_hash": "sha256:8515055f91e2cd603e52a3b9b5773923bc321e8db4dadd60a43e9e6ed220a0f3",
   "client": {
     "name": "ExampleAI",
     "version": "2.3.0"
@@ -412,7 +412,7 @@ profile_hashは、vector manifestのprofile_hash_inputsに列挙したJSONをpro
 投影objectを[RFC 8785] JCSで直列化し、UTF-8 byte列へSHA-256を適用する（MUST）。member順・空白・Unicode escape・数値をJCS以外の方法で扱わない。現行のhash入力文書はsafe整数だけを数値値として用いる。小数等の構文試験はraw JSON文字列で保持し、公開artifactで数値範囲を拡張する場合はvalidatorも完全なJCS直列化へ対応させる。welcomeは選択済みのrevision/hashをそのまま返す。
 
 
-`capabilities` は `required` と `optional` の2配列を持たなければならない（MUST）。重複および両配列への同一値の記載は禁止する（MUST NOT）。`required` はpeerが理解しない場合に交渉を拒否する機能、`optional` は両者が提示した場合だけ有効になる機能である。両者の `required` はpeerの `required` または `optional` に含まれなければならず（MUST）、満たせない場合は `unsupported_capability` で拒否する。未知のexperimental capabilityは `optional` なら無視できるが、`required` なら拒否しなければならない。安定 capability は小文字 snake case、実験用 capability は `x-<owner>-<name>` とする。`resume` capabilityは `play` modeでだけ有効であり、`spectate` または `replay` modeでは交渉済みoptional一覧に双方が含めても有効化してはならない（MUST NOT）。
+`capabilities` は `required` と `optional` の2配列を持たなければならない（MUST）。重複および両配列への同一値の記載は禁止する（MUST NOT）。`required` はpeerが理解しない場合に交渉を拒否する機能、`optional` は両者が提示した場合だけ有効になる機能である。両者の `required` はpeerの `required` または `optional` に含まれなければならず（MUST）、満たせない場合は `unsupported_capability` で拒否する。未知のexperimental capabilityは `optional` なら無視できるが、`required` なら拒否しなければならない。安定 capability は第5節・第19節の閉じた列挙 `resume`、`snapshot` のみとし、実験用 capability は `x-<owner>-<name>` とする。未登録の安定値は `hello` と `join` の `required` / `optional` および `welcome.capabilities` のいずれでも禁止し（MUST NOT）、構造検査でfatal `invalid_message` として拒否する（MUST）。双方が同じ未登録値を提示しても有効化してはならず、`optional` でも黙って無視してはならない。これは、妥当な登録済み値または実験値の必須条件がpeerとの間で満たせない場合の `unsupported_capability` と区別する。`resume` capabilityは `play` modeでだけ有効であり、`spectate` または `replay` modeでは交渉済みoptional一覧に双方が含めても有効化してはならない（MUST NOT）。
 
 新規sessionを要求する `join` は `resume` memberを省略する。`play` の新規joinでは `seat` memberを省略してもよく（MAY）、その場合hostは空いているseatのうち最小のseatを割り当てる。`seat` memberを指定した場合、hostはそのseatを割り当てなければならず（MUST）、既に予約済み・参加済みまたはprofile上割り当て不能なら `resource_limit` で拒否しなければならない（MUST）。hostはjoinの到着順以外の隠れた規則でseatを変更してはならず（MUST NOT）、assignment結果を `welcome.seat` に記録する。従って `welcome.seat == join.seat` は `join.seat` が存在する場合だけ要求され、省略時は `welcome.seat` がhostの最小空席割当と一致しなければならない（MUST）。seat割当は `welcome`送信前にsession stateへcommitされ、失敗時に別seatへ暗黙にfallbackしてはならない（MUST NOT）。
 
@@ -426,7 +426,7 @@ profile_hashは、vector manifestのprofile_hash_inputsに列挙したJSONをpro
   "view": "seat",
   "profile": "riichi-4p",
   "profile_revision": "1.0-draft.1",
-  "profile_hash": "sha256:fa03bde5a957761a730d4b771f6135d3a7285a6dfc0d52426cf2f99c08b2fbe8",
+  "profile_hash": "sha256:8515055f91e2cd603e52a3b9b5773923bc321e8db4dadd60a43e9e6ed220a0f3",
   "client": {
     "name": "ExampleAI",
     "version": "2.3.0"
@@ -472,7 +472,7 @@ profile_hashは、vector manifestのprofile_hash_inputsに列挙したJSONをpro
   "view": "seat",
   "profile": "riichi-4p",
   "profile_revision": "1.0-draft.1",
-  "profile_hash": "sha256:fa03bde5a957761a730d4b771f6135d3a7285a6dfc0d52426cf2f99c08b2fbe8",
+  "profile_hash": "sha256:8515055f91e2cd603e52a3b9b5773923bc321e8db4dadd60a43e9e6ed220a0f3",
   "players": [
     {
       "seat": 0,
@@ -2511,7 +2511,7 @@ YAMAI Project は次の registry を本書と同じ repository で管理する�
 |---|---|
 | Protocol Versions | `1.0-draft.1` |
 | Profiles | `riichi-4p@1.0-draft.1` (`sha256:` hashはrelease manifestとprotocol registryで確定) |
-| Capabilities | required/optional交渉。登録済み値: `resume`, `snapshot`（requiredでの提示も第6.2節に従う） |
+| Capabilities | 安定値の閉じた列挙: `resume`, `snapshot`。未登録の安定値は広告・選択とも禁止。required/optional交渉と拒否分類は第6.2節、Private Useは第14節に従う |
 | Message Kinds | `hello`, `join`, `welcome`, `event`, `request`, `action`, `ack`, `error`, `snapshot` |
 | Event Types | 第7.4節の値（`pao`を含む） |
 | Action Types | `none`, `dahai`, `chi`, `pon`, `daiminkan`, `ankan`, `kakan`, `reach`, `hora`, `ryukyoku` |
