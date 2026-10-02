@@ -604,11 +604,13 @@ class GameContractTests(unittest.TestCase):
         kyoku['turn'].update(last_event_seq=None, last_event=cause)
         return snapshot
 
-    def _restore_public_snapshot(self, snapshot, rules=None):
+    def _restore_public_snapshot(self, snapshot, rules=None, *, scores=None):
         rules = self.rules if rules is None else rules
         v._check_snapshot(snapshot, rules=rules)
         EventState(rules).restore(snapshot['state'])
         receiver = self._observer_receiver(rules=rules, initial_snapshot=True)
+        if scores is not None:
+            receiver.welcome['scores'] = scores.copy()
         self.assertEqual(receiver.receive(json.dumps(snapshot).encode()), 'applied')
         return receiver
 
@@ -1719,6 +1721,186 @@ class GameContractTests(unittest.TestCase):
             state.restore(snapshot)
         after = {k: getattr(state, k) for k in ("self_seat","game_phase","scores","kyotaku","next","round","last_cause")}
         self.assertEqual(before, after)
+
+
+    def _assert_public_snapshot_rejected_initial_and_gap(self, snapshot, pattern, rules=None):
+        rules = self.rules if rules is None else rules
+        for recovery in (False, True):
+            with self.subTest(recovery=recovery):
+                message = deepcopy(snapshot)
+                receiver = self._observer_receiver(rules=rules, initial_snapshot=not recovery)
+                if recovery:
+                    # Keep a real prefix and miss the intervening events.
+                    source = self._dealt(seat=None)
+                    self._send_event(receiver, dict(type='start_game', players=receiver.welcome['players'],
+                                                    rules=rules, scores=[25000] * 4))
+                    self._send_event(receiver, source.last_cause)
+                    gap = self._event_message(receiver, message['state']['kyoku']['turn']['last_event'])
+                    gap['seq'] = 100
+                    self.assertEqual(receiver.receive(json.dumps(gap).encode()), 'sequence_gap')
+                    message.update(seq=101, replaces_through_seq=100)
+                    message['state']['kyoku']['turn']['last_event_seq'] = 100
+                else:
+                    receiver.welcome['scores'] = message['state']['scores'].copy()
+                self._assert_receiver_rejects_atomically(receiver, message, pattern)
+
+    def test_snapshot_uninterrupted_dealer_order_across_seats_and_rounds(self):
+        for dealer in range(4):
+            state = self._dealt(seat=None)
+            # Rotate to an otherwise identical later ordinary round.
+            state.round.update(oya=dealer, kyoku=dealer + 1)
+            state.round['turn']['actor'] = dealer
+            state.last_cause.update(oya=dealer, kyoku=dealer + 1)
+            self._restore_public_snapshot(self._public_snapshot(state))
+            for index, tile in enumerate(('1m', '2m', '3m', '4m', '6m', '7m', '8m', '9m', '1s')):
+                actor = (dealer + index) % 4
+                state.apply(dict(type='tsumo', actor=actor, pai=None))
+                for phase in ('awaiting_action', 'resolving'):
+                    snapshot = self._public_snapshot(state)
+                    snapshot['state']['kyoku']['turn']['phase'] = phase
+                    with self.subTest(dealer=dealer, index=index, phase=phase):
+                        self._restore_public_snapshot(snapshot)
+                if index in (0, 4, 8):
+                    for declared in (False, True):
+                        current = deepcopy(state)
+                        if declared:
+                            current.apply(dict(type='ankan_declared', actor=actor, consumed=['E'] * 4))
+                        valid = self._public_snapshot(current)
+                        self._restore_public_snapshot(valid)
+                        bad = deepcopy(valid)
+                        kyoku = bad['state']['kyoku']
+                        wrong = (actor + 1) % 4
+                        kyoku['turn']['actor'] = wrong
+                        kyoku['turn']['last_event']['actor'] = wrong
+                        kyoku['hands'][actor]['count'] -= 1
+                        kyoku['hands'][wrong]['count'] += 1
+                        if declared:
+                            kyoku['pending_kan']['actor'] = wrong
+                        with self.subTest(dealer=dealer, index=index, declared=declared):
+                            self._assert_public_snapshot_rejected_initial_and_gap(bad, 'uninterrupted dealer order')
+                if index == 1:
+                    bad = self._public_snapshot(state)
+                    kyoku = bad['state']['kyoku']
+                    kyoku['rivers'][(dealer + 2) % 4] = kyoku['rivers'][dealer]
+                    kyoku['rivers'][dealer] = []
+                    kyoku['first_turn_eligible'] = [not river for river in kyoku['rivers']]
+                    self._assert_public_snapshot_rejected_initial_and_gap(bad, 'rivers.*uninterrupted dealer order')
+                state.apply(dict(type='dahai', actor=actor, pai=tile, tsumogiri=True))
+                self._restore_public_snapshot(self._public_snapshot(state))
+
+    def test_snapshot_call_skips_uninterrupted_dealer_order_inference(self):
+        state = self._dealt(seat=None)
+        for event in (
+            dict(type='tsumo', actor=0, pai=None),
+            dict(type='dahai', actor=0, pai='1m', tsumogiri=True),
+            dict(type='pon', actor=2, target=0, pai='1m', consumed=['1m', '1m']),
+            dict(type='dahai', actor=2, pai='2m', tsumogiri=False),
+            dict(type='tsumo', actor=3, pai=None),
+        ):
+            state.apply(event)
+        self.assertEqual([len(river) for river in state.round['rivers']], [1, 0, 1, 0])
+        self._restore_public_snapshot(self._public_snapshot(state))
+
+    def test_snapshot_cannot_cross_mandatory_four_riichi_or_four_winds(self):
+        for reason in ('suucha_riichi', 'suufon_renda'):
+            rules = deepcopy(self.rules)
+            disabled = deepcopy(rules)
+            disabled['abortive_draws'].remove(reason)
+            state = EventState(disabled)
+            events = self._four_winds_reach_events(3 if reason == 'suucha_riichi' else 0)
+            events[0]['rules'] = deepcopy(disabled)
+            if reason == 'suucha_riichi':
+                # Distinct winds isolate four-riichi from four-winds.
+                for event in events:
+                    if event['type'] == 'dahai':
+                        event['pai'] = ('E', 'S', 'W', 'N')[event['actor']]
+            else:
+                events = [event for event in events if event['type'] not in {'reach', 'reach_accepted'}]
+            for event in events:
+                state.apply(event)
+            boundary = self._public_snapshot(state)
+            for phase in ('awaiting_responses', 'resolving'):
+                allowed = deepcopy(boundary)
+                allowed['state']['kyoku']['turn']['phase'] = phase
+                self._restore_public_snapshot(allowed, rules, scores=state.scores)
+            if reason == 'suucha_riichi':
+                state.apply(dict(type='reach_accepted', actor=3, deltas=[0, 0, 0, -1000],
+                                 scores=[24000] * 4, kyotaku=4))
+            enabled = deepcopy(state)
+            enabled.rules = rules
+            with self.assertRaisesRegex(GameError, 'next draw after automatic round end'):
+                enabled.apply(dict(type='tsumo', actor=0, pai=None))
+            for event in (dict(type='tsumo', actor=0, pai=None),
+                          dict(type='dahai', actor=0, pai='1m', tsumogiri=True)):
+                state.apply(event)
+                snapshot = self._public_snapshot(state)
+                with self.subTest(reason=reason, cause=event['type']):
+                    self._restore_public_snapshot(snapshot, disabled, scores=state.scores)
+                    self._assert_public_snapshot_rejected_initial_and_gap(snapshot, 'mandatory four-', rules)
+
+    def test_snapshot_riichi_rivers_preserve_every_later_tsumogiri(self):
+        state = self._dealt(seat=None)
+        for event in (
+            dict(type='tsumo', actor=0, pai=None),
+            dict(type='reach', actor=0),
+            # The declaration itself may legitimately be a hand discard.
+            dict(type='dahai', actor=0, pai='9m', tsumogiri=False),
+            dict(type='reach_accepted', actor=0, deltas=[-1000, 0, 0, 0],
+                 scores=[24000, 25000, 25000, 25000], kyotaku=1),
+        ):
+            state.apply(event)
+        for tiles in (('1m', '2m', '3m', '4m'), ('1p', '2p', '3p', '4p')):
+            for actor, tile in zip((1, 2, 3, 0), tiles):
+                state.apply(dict(type='tsumo', actor=actor, pai=None))
+                state.apply(dict(type='dahai', actor=actor, pai=tile, tsumogiri=actor == 0))
+        valid = self._public_snapshot(state)
+        self._restore_public_snapshot(valid, scores=state.scores)
+        for index in (1, 2):
+            bad = deepcopy(valid)
+            kyoku = bad['state']['kyoku']
+            kyoku['rivers'][0][index]['tsumogiri'] = False
+            if index == 2:
+                kyoku['turn']['last_event']['tsumogiri'] = False
+            with self.subTest(discard=index):
+                self._assert_public_snapshot_rejected_initial_and_gap(bad, 'discard after accepted riichi')
+
+    def test_three_ron_on_discard_checks_visible_winning_shapes(self):
+        rules = deepcopy(self.rules)
+        rules['ron_policy'] = 'double_only'
+        rules['abortive_draws'] = sorted(set(rules['abortive_draws']) | {'sanchaho'})
+        orphans = [TILES[tile] for tile in sorted(ORPHANS) if TILES[tile] != '9m']
+        dealt = [['9m'] * 3 + ['3p'] * 3 + ['4p'] * 3 + ['6p'] * 3 + ['7p'],
+                 *(orphans + [pair] for pair in ('1m', '1p', '1s'))]
+        # Three distinct pairs keep all three Kokushi waits physically possible.
+        inventory([*sum(dealt, []), '9m', '2p'], rules)
+        for view in ('public', 'full', {'seat': 0}, {'seat': 1}, {'seat': 2}, {'seat': 3}):
+            for invalid_seat in (None, 1, 2, 3):
+                with self.subTest(view=view, invalid_seat=invalid_seat):
+                    receiver = self._observer_receiver(rules=rules, mode='replay', view=view)
+                    hands = deepcopy(dealt)
+                    if invalid_seat is not None:
+                        # Replacing a required orphan destroys every winning shape.
+                        hands[invalid_seat][hands[invalid_seat].index('9p')] = '2m'
+                    visible = [view == 'full' or view == {'seat': seat} for seat in range(4)]
+                    self._send_event(receiver, dict(type='start_game', players=receiver.welcome['players'],
+                                                   rules=rules, scores=[25000] * 4))
+                    self._send_event(receiver, dict(type='start_kyoku', bakaze='E', kyoku=1, oya=0,
+                                                   honba=0, kyotaku=0, extension_round=0, scores=[25000] * 4,
+                                                   dora_marker='2p', hands=[{'tiles': hand} if shown else {'count': 13}
+                                                                          for hand, shown in zip(hands, visible)]))
+                    self._send_event(receiver, dict(type='tsumo', actor=0, pai='9m' if visible[0] else None))
+                    self._send_event(receiver, dict(type='dahai', actor=0, pai='9m', tsumogiri=True))
+                    result = dict(type='end_kyoku', result=dict(type='ryukyoku', reason='sanchaho', tenpai=None),
+                                  deltas=[0] * 4, scores=[25000] * 4,
+                                  next=dict(type='renchan', bakaze='E', kyoku=1, oya=0,
+                                            honba=1, kyotaku=0, extension_round=0))
+                    if invalid_seat is not None and visible[invalid_seat]:
+                        self._assert_receiver_rejects_atomically(receiver, self._event_message(receiver, result),
+                                                               'sanchaho winner lacks a complete visible hand')
+                    else:
+                        # Shape validation is limited to hands disclosed by this view.
+                        self._send_event(receiver, result)
+                        self.assertEqual(receiver.game.game_phase, 'between_kyoku')
 
 
 if __name__ == "__main__":

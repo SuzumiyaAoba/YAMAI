@@ -876,9 +876,14 @@ class ProtocolRegressionTests(unittest.TestCase):
                                  last_event={"type": "tsumo", "actor": 1, "pai": None})
             kyoku["hands"][1]["count"] = 14
         else:
+            # The declarer's second turn follows all three other seats;
+            # those completed discards remain observable in the rivers.
+            for seat, pai in enumerate(("1m", "2m", "3m"), 1):
+                kyoku["rivers"][seat].append({"pai": pai, "tsumogiri": True, "reach": False, "called_by": None})
+                kyoku["first_turn_eligible"][seat] = False
             kyoku["turn"]["last_event"] = {"type": "dahai", "actor": 0, "pai": "5p", "tsumogiri": True}
             kyoku["rivers"][0].append({"pai": "5p", "tsumogiri": True, "reach": False, "called_by": None})
-        kyoku["wall_remaining"] = 68
+        kyoku["wall_remaining"] = 68 if ippatsu_window else 65
         return snapshot
 
     def test_snapshot_accepted_reach_needs_a_marked_discard(self):

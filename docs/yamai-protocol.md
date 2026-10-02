@@ -2334,7 +2334,9 @@ resolvingは、単独decisionまたは反応groupの全選択が固定されline
 
 reach_statusはseatごとのstate（none/declared/accepted）、double、ippatsuを持つ。doubleはリーチ宣言時に第一巡の条件を満たしていたか、ippatsuは現在の一発資格を表す。declaredは宣言打牌への反応が未解決の間だけ存在し、受理または宣言の破棄で遷移する。したがってdeclaredを持つ局stateは、宣言seatをturn.actor、その宣言打牌をlast_eventとするawaiting_responsesまたはresolvingに限る。noneではdouble・ippatsuともfalse、declaredではippatsuはfalseとし、宣言中または受理済みのリーチは宣言牌がrivers内に `reach:true` として残る（MUST）。first_turn_eligibleは自分の最初の打牌前かつ全卓で鳴き・槓がない場合だけtrueとする。kan_counts、rinshan、haiteiは第7.3.1節・第10節のevent適用後の値である。dora eventだけで槓数を増やしてはならない。
 
-局内snapshotの各seatの `reach:true` は、reach stateがnoneなら0個、declaredまたはacceptedなら正確に1個でなければならない（MUST）。declared/acceptedのseatは門前を維持し、副露列に含められるのは暗槓だけである。暗槓以外の副露とリーチ成立を同時に復元したり、複数の宣言牌から都合のよい第一巡・一発資格を選んだりしてはならない（MUST NOT）。
+局内snapshotの各seatの `reach:true` は、reach stateがnoneなら0個、declaredまたはacceptedなら正確に1個でなければならない（MUST）。declared/acceptedのseatは門前を維持し、副露列に含められるのは暗槓だけである。暗槓以外の副露とリーチ成立を同時に復元したり、複数の宣言牌から都合のよい第一巡・一発資格を選んだりしてはならない（MUST NOT）。acceptedのseatでは、宣言牌より後の全河牌が `tsumogiri:true` でなければならない（MUST）。宣言牌そのものへの手出しは許可する。
+
+全seatのmeldsが空なら、その局には成立した鳴き・槓がなく、河の総枚数をdとして親からの通常手番順が保持される。各seatの河枚数は `floor(d/4) + (((seat-oya+4)%4) < (d%4) ? 1 : 0)` に一致し、tsumo・ankan_declaredのactorは `(oya+d)%4`、dahaiのactorは `(oya+d-1)%4` とする（MUST）。副露がある場合にこの式を適用してはならない。採用済みの四風連打の条件を満たす無副露局面は4枚目の打牌の反応窓だけに存在でき、その後の自摸・打牌をsnapshotで復活させてはならない（MUST NOT）。四家立直が採用されている場合、4人目のreach_acceptedとend_kyokuは同じ結果transactionに属するため、全員acceptedの局内snapshotは存在しない。
 
 局内playにはself_stateを必須とし、temporary_furiten、riichi_furiten、kuikae_forbidden、time_bank_msを保持する。time_bank_msはstate.time_bank_msと同値である。複合打牌の途中ではsnapshotを取らないため、現行profileのkuikae_forbiddenは空配列になる。これらの自己情報を他seatやspectate/replayへ送信してはならない（MUST NOT）。
 

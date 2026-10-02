@@ -258,6 +258,36 @@ def check_snapshot_public_history(kyoku: dict) -> None:
         require(marks == int(reach["state"] != "none"), "riichi must have exactly one declaration discard")
         require(reach["state"] == "none" or all(m["type"] == "ankan" for m in kyoku["melds"][seat]),
                 "riichi snapshot contains an open meld")
+        if reach["state"] == "accepted":
+            declaration = next(index for index, tile in enumerate(kyoku["rivers"][seat]) if tile["reach"])
+            require(all(tile["tsumogiri"] for tile in kyoku["rivers"][seat][declaration + 1:]),
+                    "snapshot river changes a discard after accepted riichi")
+
+
+def check_snapshot_turn_progress(kyoku: dict, rules: dict | None = None) -> None:
+    """Check uninterrupted dealer order and publicly forced round endings."""
+    cause = kyoku["turn"]["last_event"]
+    if not any(kyoku["melds"]):
+        # With no committed call/kan, each ordinary draw belongs to the next
+        # seat in dealer order. The rivers retain every completed discard.
+        counts = [len(river) for river in kyoku["rivers"]]
+        turns, remainder = divmod(sum(counts), 4)
+        require(counts == [turns + int((seat - kyoku["oya"]) % 4 < remainder)
+                           for seat in range(4)],
+                "snapshot rivers do not follow uninterrupted dealer order")
+        actor = (kyoku["oya"] + sum(counts) - int(cause["type"] == "dahai")) % 4
+        require(kyoku["turn"]["actor"] == actor,
+                "snapshot turn does not follow uninterrupted dealer order")
+        if rules is not None and "suufon_renda" in rules["abortive_draws"]:
+            first = [river[0]["pai"] for river in kyoku["rivers"] if river]
+            four_winds = len(first) == 4 and len(set(first)) == 1 and first[0] in {"E", "S", "W", "N"}
+            require(not four_winds or (sum(counts) == 4 and cause["type"] == "dahai"),
+                    "snapshot crossed the mandatory four-winds draw")
+    if rules is not None and "suucha_riichi" in rules["abortive_draws"]:
+        # The fourth acceptance and the abortive ending share one result
+        # transaction; no in-round checkpoint exists after that acceptance.
+        require(not all(reach["state"] == "accepted" for reach in kyoku["reach_status"]),
+                "snapshot crossed the mandatory four-riichi draw")
 
 
 def known_round_tiles(kyoku: dict) -> list[str]:
@@ -890,6 +920,7 @@ def validate_snapshot_state(snapshot: dict, rules: dict | None = None) -> None:
             entry_scores = [score + rules["riichi_stick_value"] * paid
                             for score, paid in zip(snapshot["scores"], accepted)]
             check_round_entry_scores(kyoku, entry_scores, snapshot["kyotaku"] - sum(accepted), rules)
+        check_snapshot_turn_progress(kyoku, rules)
         for a in range(4):
             require(kyoku["first_turn_eligible"][a] == (not kyoku["rivers"][a] and not any(kyoku["melds"])),
                     "first-turn eligibility differs from public discard/call history")
@@ -1363,6 +1394,9 @@ class EventState:
                         for winner in range(4):
                             if winner != cause["actor"]:
                                 self._check_ron_furiten(winner, tile)
+                                if cause["type"] != "ankan_declared" and "tiles" in r["hands"][winner]:
+                                    require(reaction_completes_hand(self._scoring_hand(winner), tile, cause["type"], self.rules),
+                                            "sanchaho winner lacks a complete visible hand")
                         if cause["type"] == "dahai":
                             river = r["rivers"][cause["actor"]]
                             require(not (river and river[-1]["reach"] and r["reach_status"][cause["actor"]]["state"] == "accepted"),
