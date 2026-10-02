@@ -23,6 +23,38 @@ class ValidatorBoundaries(unittest.TestCase):
             operation(*args, **kwargs)
         self.assertEqual(caught.exception.code, code)
 
+    def test_fixture_wire_json_preserves_ordinary_bytes_and_nested_numbers(self):
+        ordinary = {'z': '\u96ea\U0001f600', 'a': [None, True, False, -1, 0.25, '\\"\n'],
+                    'nested': {'last': 1, 'first': 2}}
+        self.assertEqual(v._fixture_wire_json(ordinary),
+                         json.dumps(ordinary, ensure_ascii=False, separators=(',', ':')))
+        values = v.strict_load_bytes(('[0.5,-0.5,1e-1000,' + '1' * 641 + '.5,1e-'
+                                      + '9' * 30 + ']').encode())
+        original = {'z': values, 'a': {'values': list(reversed(values)), 'bool': False}}
+        with localcontext() as context:
+            context.prec = 1
+            encoded = v._fixture_wire_json(original)
+        self.assertTrue(v._json_equal(v.strict_load_bytes(encoded.encode()), original))
+        self.assertLess(len(encoded), 2000)
+
+    def test_fixture_wire_json_rejects_non_json_values(self):
+        for value in (float('nan'), float('inf'), Decimal('NaN'), Decimal('Infinity'),
+                      '\ud800', {1: 'non-string key'}, {'value': {1, 2}}):
+            with self.subTest(value=repr(value)):
+                self.assert_error('invalid_json', v._fixture_wire_json, value)
+
+    def test_fixture_wire_json_exact_number_roundtrip_across_seeds(self):
+        for seed in (19, 20261003, 991337):
+            rng = random.Random(seed)
+            with localcontext() as context:
+                context.prec = 2
+                for _ in range(200):
+                    raw = f'{rng.randrange(-10**15, 10**15)}e-{rng.randrange(1, 1001)}'
+                    number = v.strict_load_bytes(raw.encode())
+                    original = {'x_test_number': [number, {'nested': number}], 'bool': True}
+                    decoded = v.strict_load_bytes(v._fixture_wire_json(original).encode())
+                    self.assertTrue(v._json_equal(original, decoded), (seed, raw))
+
     def test_turn_request_rejects_reaction_only_candidates_without_cause(self):
         request = {"request_id": "r", "seat": 0, "caused_by_seq": 1,
                    "timeout_ms": 100, "time_bank_ms": 0,

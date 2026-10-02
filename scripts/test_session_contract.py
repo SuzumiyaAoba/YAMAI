@@ -28,6 +28,31 @@ class SessionInvariants(unittest.TestCase):
     def raw(message):
         return json.dumps(message, ensure_ascii=False, separators=(',',':')).encode()
 
+    def test_receiver_fixture_messages_preserve_exact_fraction_annotations(self):
+        numbers = ('0.5', '-0.5', '1e-1000', '1' * 641 + '.5',
+                   '1e-' + '9' * 30)
+        for number in numbers:
+            trace = self.trace('wire_complete_game')
+            step = trace['steps'][0]
+            raw = self.raw(step['message']).decode()[:-1] + ',"x_test_number":' + number + '}'
+            step['raw'] = raw
+            del step['message']
+            with self.subTest(number=number[:40]):
+                # The actual wire receiver already accepts this exact JSON.
+                v.semantic_session_trace(trace, self.digest)
+                step['message'] = v.strict_load_bytes(step.pop('raw').encode())
+                v.semantic_session_trace(trace, self.digest)
+
+    def test_reused_transport_fixture_messages_preserve_exact_fractions(self):
+        for number in ('0.5', '1e-1000', '1' * 641 + '.5', '1e-' + '9' * 30):
+            trace = self.trace('transport_reused_after_game_end')
+            for session in trace['sessions']:
+                message = session['messages'][0]
+                raw = self.raw(message).decode()[:-1] + ',"x_test_number":' + number + '}'
+                session['messages'][0] = v.strict_load_bytes(raw.encode())
+            with self.subTest(number=number[:40]):
+                v.semantic_session_trace(trace, self.digest)
+
     def test_unknown_stable_capabilities_are_structural_errors(self):
         validate = v._session_schema_validator(self.schemas, self.digest)
         for peers in (('hello',), ('join',), ('hello', 'join')):

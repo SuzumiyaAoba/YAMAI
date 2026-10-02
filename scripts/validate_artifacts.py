@@ -1913,6 +1913,32 @@ def _session_schema_validator(schemas: SchemaSet, expected_hash: str, definition
     return validate
 
 
+def _fixture_wire_json(value: Any) -> str:
+    """Encode decoded fixture data without rounding its exact JSON numbers.
+
+    This only supplies bytes when a fixture omits an explicit raw capture.
+    Keep the existing member order and ordinary JSON spelling, so it never
+    changes retained wire bytes or substitutes canonical/JCS serialization.
+    """
+    _walk_json(value)
+
+    def encode(item: Any) -> str:
+        if isinstance(item, ExactDecimal):
+            return item.canonical()
+        if isinstance(item, Decimal):
+            return str(item)
+        if isinstance(item, list):
+            return "[" + ",".join(encode(child) for child in item) + "]"
+        if isinstance(item, dict):
+            _require(all(isinstance(key, str) for key in item),
+                     "invalid_json", "fixture JSON object names must be strings")
+            return "{" + ",".join(json.dumps(key, ensure_ascii=False) + ":" + encode(child)
+                                  for key, child in item.items()) + "}"
+        return json.dumps(item, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+
+    return encode(value)
+
+
 def semantic_session_trace(trace: Mapping[str, Any], expected_hash: str) -> None:
     schemas = SchemaSet()
     validate = _session_schema_validator(schemas, expected_hash)
@@ -1957,7 +1983,7 @@ def semantic_session_trace(trace: Mapping[str, Any], expected_hash: str) -> None
                         outcome = "resumed"
                     else:
                         _require(step["op"] == "receive", "invalid_message", "unknown receiver operation")
-                        raw = step["raw"] if "raw" in step else json.dumps(step["message"], ensure_ascii=False, separators=(",", ":"))
+                        raw = step["raw"] if "raw" in step else _fixture_wire_json(step["message"])
                         outcome = receiver.receive(raw.encode("utf-8"))
                 except (SessionError, ArtifactError) as error:
                     outcome = error.code
@@ -1981,7 +2007,7 @@ def semantic_session_trace(trace: Mapping[str, Any], expected_hash: str) -> None
                     _require(result["code"] == "ignored", "invalid_message", "retired session affected new negotiation")
                 receiver = Receiver(w, lambda raw: strict_load_bytes(raw, max_bytes=1048576), _session_schema_validator(schemas, expected_hash, rules=w["rules"]))
                 for message in session["messages"]:
-                    receiver.receive(json.dumps(message, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+                    receiver.receive(_fixture_wire_json(message).encode("utf-8"))
                 actual.append({"session_id":w["session_id"],"game_id":w["game_id"],"last_seq":receiver.applied,"ended":receiver.ended})
                 seen_sessions.append(w["session_id"])
                 seen_games.append(w["game_id"])
