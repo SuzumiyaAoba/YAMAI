@@ -100,6 +100,8 @@ module yamai_request_liveness {
     state.phase.in(Set(Idle, Open, Closed)) implies state.chosen == Set(),
     state.phase == Decided implies state.acked != state.members,
     state.phase.in(Set(Acked, Resolved)) implies state.acked == state.members,
+    // The global generation order precedes each peer's independent ledger.
+    state.acked.forall(seat => state.members.filter(other => other < seat).subseteq(state.acked)),
     state.phase == Resolved implies state.publish_count == 1,
     state.phase != Resolved implies state.publish_count == 0,
   }
@@ -208,6 +210,7 @@ module yamai_request_liveness {
 
   action ack_member(seat) = all {
     state.phase == Decided, state.members.contains(seat), not(state.acked.contains(seat)),
+    state.members.filter(other => other < seat).subseteq(state.acked),
     state' = {
       phase: if (state.acked.union(Set(seat)) == state.members) Acked else Decided,
       acked: state.acked.union(Set(seat)), statuses: state.statuses.set(seat, expected_ack(seat)),
@@ -257,4 +260,21 @@ module yamai_request_liveness {
     .then(all {assert(witness_zero_deadline), assert(protocol_invariant), state' = state})
   run zeroDeadlineRejectsActionTest = init_with(Multiple, 0).then(open_decision_group)
     .then(submit(1, Hora).fail())
+  run ascendingAckOrderTest = init_with(Multiple, 2).then(open_decision_group)
+    .then(submit(1, Pass)).then(submit(2, Pass)).then(submit(3, Pass)).then(decide)
+    .then(ack_member(1))
+    .then(all {assert(state.acked == Set(1)), assert(protocol_invariant), state' = state})
+    .then(ack_member(2))
+    .then(all {assert(state.acked == Set(1, 2)), assert(protocol_invariant), state' = state})
+    .then(ack_member(3))
+    .then(all {assert(state.acked == GROUP), assert(protocol_invariant), state' = state})
+  run reversedAckOrderFailsTest = init_with(Multiple, 2).then(open_decision_group)
+    .then(submit(1, Pass)).then(submit(2, Pass)).then(submit(3, Pass)).then(decide)
+    .then(ack_member(2).fail())
+  run lastAckBeforeFirstFailsTest = init_with(Multiple, 2).then(open_decision_group)
+    .then(submit(1, Pass)).then(submit(2, Pass)).then(submit(3, Pass)).then(decide)
+    .then(ack_member(3).fail())
+  run skippedAckOrderFailsTest = init_with(Multiple, 2).then(open_decision_group)
+    .then(submit(1, Pass)).then(submit(2, Pass)).then(submit(3, Pass)).then(decide)
+    .then(ack_member(1)).then(ack_member(3).fail())
 }

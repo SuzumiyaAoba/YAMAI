@@ -269,6 +269,9 @@ module yamai_protocol_extended {
     state.decided implies state.chosen_members == expected_chosen,
     not(state.decided) implies state.chosen_members == Set(),
     state.terminal_members.forall(seat => state.ack_statuses.get(seat) == expected_ack(seat)),
+    // Terminal ACK generation is a seat-ordered prefix (specification 8.1.1).
+    state.terminal_members.forall(seat =>
+      state.pending_members.filter(other => other < seat).subseteq(state.terminal_members)),
   }
 
   val request_capacity_invariant: bool =
@@ -919,6 +922,7 @@ module yamai_protocol_extended {
     state.pending_members.contains(2),
     state.responded_members.contains(2),
     not(state.terminal_members.contains(2)),
+    state.pending_members.filter(seat => seat < 2).subseteq(state.terminal_members),
     state.host_seq < state.seq_reservation_end,
     state' = {
       host_seq: state.host_seq + 1,
@@ -1249,4 +1253,13 @@ module yamai_protocol_extended {
     .then(ack_single).then(resolve_group).then(end_kyoku).then(end_game).then(resume)
     .then(begin_resume_replay).then(finish_resume_replay)
     .then(all {assert(state.session == Ended), assert(state.applied_seq == state.host_seq), assert(protocol_invariant), state' = state})
+  run ascendingAckOrderTest = init.then(send_hello).then(send_join_good).then(send_welcome).then(open_decision_group)
+    .then(submit_group_one_call).then(submit_group_two_pass).then(decide_group)
+    .then(ack_group_one)
+    .then(all {assert(state.terminal_members == Set(1)), assert(protocol_invariant), state' = state})
+    .then(ack_group_two)
+    .then(all {assert(state.terminal_members == Set(1, 2)), assert(protocol_invariant), state' = state})
+  run reversedAckOrderFailsTest = init.then(send_hello).then(send_join_good).then(send_welcome).then(open_decision_group)
+    .then(submit_group_one_call).then(submit_group_two_pass).then(decide_group)
+    .then(ack_group_two.fail())
 }

@@ -22,6 +22,7 @@
 | 交渉の一致と拒否 | extendedのsend_hello/send_join_*/send_welcome/reject_join、negotiation_invariant | [YAMAI 仕様書](../../docs/yamai-protocol.md) §6 |
 | seqの増加、欠落・重複・内容衝突 | extendedのwire_invariant、host_replay_range、player_*、各witness。deliveryのhistoryとapply_counts | YAMAI 仕様書 §5・§12 |
 | 全選択を固定してからACKを生成 | baseline/extendedのGroupOpen→GroupClosed→decided、request_lifecycle_invariant。requestのOpen→Closed→Decided→Acked→Resolved | YAMAI 仕様書 §8・§9 |
+| 終端ACKをseat昇順で生成 | baseline/extendedのterminal_members、requestのackedがmember集合の昇順prefixである不変条件と各ACK操作のguard。ascendingAckOrderTestと逆順失敗test | YAMAI 仕様書 §8.1.1 |
 | 個別期限、未応答だけのdefault、期限前の選択を保持 | requestのremaining/original_deadlines/selected_at、default_member、request_data_invariant、late_ack_* | YAMAI 仕様書 §8.1・§9.1 |
 | 優先順位、頭ハネ、三家和、noneとsupersededの区別 | requestのexpected_chosen/expected_ack、sanchahoTest、selectionBeforeAckTest | YAMAI 仕様書 §8.4 |
 | 切断で時計・ACK・内部解決を止めない | deliveryのinternal_progressとdisconnected_internal_invariant。baseline/extendedも内部操作をConnectedで制限しない | YAMAI 仕様書 §8.4・§13 |
