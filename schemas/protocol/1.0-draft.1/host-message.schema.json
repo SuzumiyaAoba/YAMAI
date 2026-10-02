@@ -18,7 +18,14 @@
       "$ref": "urn:yamai:schema:protocol:1.0-draft.1:ack"
     },
     {
-      "$ref": "urn:yamai:schema:protocol:1.0-draft.1:error#/$defs/hostMessage"
+      "allOf": [
+        {
+          "$ref": "urn:yamai:schema:protocol:1.0-draft.1:error"
+        },
+        {
+          "$ref": "urn:yamai:schema:protocol:1.0-draft.1:error#/$defs/hostMessage"
+        }
+      ]
     },
     {
       "$ref": "urn:yamai:schema:protocol:1.0-draft.1:snapshot"

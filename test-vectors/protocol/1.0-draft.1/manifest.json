@@ -3,7 +3,7 @@
   "protocol_version": "1.0-draft.1",
   "profile": "riichi-4p",
   "profile_revision": "1.0-draft.1",
-  "profile_hash": "sha256:a189dece5cedebfc545a8300970ea375220ec0436a34401d42a4cadf8fb3c27a",
+  "profile_hash": "sha256:fa03bde5a957761a730d4b771f6135d3a7285a6dfc0d52426cf2f99c08b2fbe8",
   "registry": [
     "registry/protocol/1.0-draft.1/registry.json",
     "registry/riichi-4p/1.0-draft.1/registry.json"

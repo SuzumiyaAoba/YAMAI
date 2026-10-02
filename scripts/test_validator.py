@@ -14,6 +14,7 @@ from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 import validate_artifacts as v
+from session_contract import SessionError
 
 
 class ValidatorBoundaries(unittest.TestCase):
@@ -542,6 +543,26 @@ class ValidatorBoundaries(unittest.TestCase):
             source.write_text('{"value": NaN}', encoding='utf-8')
             self.assert_error('invalid_json', v.strict_load, source)
 
+    def test_manifest_paths_reject_symlink_escapes(self):
+        with TemporaryDirectory() as directory:
+            base = Path(directory)
+            root, outside = base / 'repo', base / 'outside'
+            root.mkdir()
+            outside.mkdir()
+            (root / 'included.json').write_text('{}', encoding='utf-8')
+            (outside / 'excluded.json').write_text('{}', encoding='utf-8')
+            (root / 'internal.json').symlink_to(root / 'included.json')
+            (root / 'external.json').symlink_to(outside / 'excluded.json')
+            (root / 'external-dir').symlink_to(outside, target_is_directory=True)
+            (root / 'cycle').symlink_to(root / 'cycle')
+            with patch.object(v, 'ROOT', root):
+                for name in ('included.json', 'internal.json'):
+                    self.assertEqual(v._repo_file(name, 'input'), root / name)
+                for name in ('external.json', 'external-dir/excluded.json', 'cycle',
+                             '../outside/excluded.json', str(outside / 'excluded.json')):
+                    with self.subTest(name=name):
+                        self.assert_error('manifest_error', v._repo_file, name, 'input')
+
     def test_schema_literal_members_are_not_schema_keywords(self):
         schemas = v.SchemaSet()
         schemas.schemas = {'urn:test':{'type':'object','properties':{'prefixItems':{'type':'integer'},'$ref':{'const':{'$ref':'not-a-schema'}}},'additionalProperties':False}}
@@ -728,6 +749,179 @@ class RequestPayloadBoundaries(unittest.TestCase):
                     case['negative_expect'] = 'invalid_action'
                     with self.assertRaises(AssertionError):
                         check_jsonschema.main()
+
+
+class DirectionalExtensionConstraints(unittest.TestCase):
+    def setUp(self):
+        self.schemas = v.SchemaSet()
+        self.extension = {
+            "capability": "x-acme-diagnostic-v1",
+            "message_schemas": {
+                "error": {
+                    "$id": "urn:acme:diagnostic:v1",
+                    "type": "object",
+                    "required": ["x_acme_diagnostic"],
+                    "properties": {"x_acme_diagnostic": {"const": "required"}},
+                }
+            },
+        }
+        self.digest = "sha256:" + "0" * 64
+        self.active = v._session_schema_validator(
+            self.schemas, self.digest, [self.extension], [self.extension["capability"]])
+
+    @staticmethod
+    def error(direction):
+        message = {
+            "kind": "error", "yamai": v.PROTOCOL, "session_id": "s1", "game_id": "g1",
+            "code": "internal_error", "severity": "fatal", "message": "diagnostic",
+        }
+        if direction == "host":
+            message["seq"] = 1
+        return message
+
+    def assert_invalid(self, validator, kind, message):
+        with self.assertRaises(SessionError) as caught:
+            validator(kind, message)
+        self.assertEqual(caught.exception.code, "invalid_message")
+
+    def test_negotiated_error_constraint_applies_to_both_directions(self):
+        for direction in ("host", "player"):
+            kind = direction + "-application"
+            message = self.error(direction)
+            with self.subTest(direction=direction):
+                self.assert_invalid(self.active, "error", message)
+                self.assert_invalid(self.active, kind, message)
+                self.assert_invalid(self.active, kind, dict(message, x_acme_diagnostic="wrong"))
+                self.active(kind, dict(message, x_acme_diagnostic="required"))
+
+    def test_extension_preserves_direction_and_envelope_constraints(self):
+        for direction in ("host", "player"):
+            message = dict(self.error(direction), x_acme_diagnostic="required")
+            kind = direction + "-application"
+            self.active(kind, message)
+            self.assert_invalid(self.active, kind, dict(message, original_seq=1))
+            bad_code = dict(message, code="sequence_conflict" if direction == "host" else "resume_unavailable")
+            self.assert_invalid(self.active, kind, bad_code)
+        player_error = dict(self.error("player"), x_acme_diagnostic="required", seq=1)
+        self.assert_invalid(self.active, "player-application", player_error)
+        host_error = dict(self.error("host"), x_acme_diagnostic="required")
+        del host_error["seq"]
+        self.assert_invalid(self.active, "host-application", host_error)
+
+    def test_error_constraints_do_not_leak_to_plain_sessions(self):
+        plain = v._session_schema_validator(self.schemas, self.digest)
+        inactive = v._session_schema_validator(self.schemas, self.digest, [self.extension], [])
+        for direction in ("host", "player"):
+            kind = direction + "-application"
+            message = self.error(direction)
+            with self.subTest(direction=direction):
+                plain(kind, message)
+                inactive(kind, message)
+                self.assert_invalid(self.active, kind, message)
+        self.assertNotIn("allOf", self.schemas.schemas[f"urn:yamai:schema:protocol:{v.PROTOCOL}:error"])
+
+    def test_independent_schema_engine_enforces_directional_error_composition(self):
+        try:
+            from jsonschema import Draft202012Validator
+            from referencing import Registry, Resource
+            from referencing.jsonschema import DRAFT202012
+        except ImportError:
+            self.skipTest("independent schema check requires optional jsonschema package")
+        # Compose the normative error schema directly so this independently
+        # checks the directional schema references, not the Python callback.
+        schemas = deepcopy(self.schemas.schemas)
+        constraint = self.extension["message_schemas"]["error"]
+        schemas[constraint["$id"]] = constraint
+        urn = f"urn:yamai:schema:protocol:{v.PROTOCOL}:"
+        schemas[urn + "error"]["allOf"] = [{"$ref": constraint["$id"]}]
+        registry = Registry().with_resources(
+            (sid, Resource.from_contents(schema, default_specification=DRAFT202012))
+            for sid, schema in schemas.items())
+        for direction in ("host", "player"):
+            validator = Draft202012Validator({"$ref": urn + direction + "-message"}, registry=registry)
+            message = self.error(direction)
+            with self.subTest(direction=direction):
+                self.assertFalse(validator.is_valid(message))
+                self.assertTrue(validator.is_valid(dict(message, x_acme_diagnostic="required")))
+
+
+class TransportFixtureInputValidation(unittest.TestCase):
+    def assert_error(self, code, operation, *args):
+        with self.assertRaises(v.ArtifactError) as caught:
+            operation(*args)
+        self.assertEqual(caught.exception.code, code)
+
+    def test_jsonl_hex_chunks_require_an_array_of_strings(self):
+        for chunks in ({}, {'7b7d0a': 'ignored'}, '', '7b7d0a', None,
+                       True, 1, [None], [False], [1], [{}], [[]], ['zz']):
+            with self.subTest(chunks=chunks):
+                self.assert_error('invalid_frame', v.semantic_transport_trace,
+                                  {'trace_type': 'transport', 'transport': 'jsonl',
+                                   'chunks_hex': chunks})
+        for chunks, expected in (([], []), ([''], []),
+                                 (['7b7d0a'], [{}]), (['7b', '7d0d', '0a'], [{}])):
+            v.semantic_transport_trace({'trace_type': 'transport', 'transport': 'jsonl',
+                                        'chunks_hex': chunks, 'expected_messages': expected})
+
+    def test_jsonl_chunk_boundaries_require_an_integer_array(self):
+        for splits in (None, False, 1, '', {}, [None], [True], ['1'],
+                       [{}], [[]], [0], [3], [2, 1], [1, 1]):
+            with self.subTest(splits=splits):
+                self.assert_error('invalid_frame', v.semantic_transport_trace,
+                                  {'trace_type': 'transport', 'transport': 'jsonl',
+                                   'lines': ['{}\n'], 'split_at': splits})
+        for splits in ([], [1], [1, 2]):
+            v.semantic_transport_trace({'trace_type': 'transport', 'transport': 'jsonl',
+                                        'lines': ['{}\n'], 'split_at': splits,
+                                        'expected_messages': [{}]})
+
+    def test_websocket_fragment_members_are_checked_before_joining(self):
+        for fragments in (None, False, 1, '{}', {}, [None], [False], [1],
+                          [{}], [[]], ['{', None, '}'], ['{', ']']):
+            with self.subTest(fragments=fragments):
+                self.assert_error('invalid_frame', v.semantic_transport_trace,
+                                  {'trace_type': 'transport', 'transport': 'websocket',
+                                   'message_type': 'text', 'message': '{}',
+                                   'fragments': fragments})
+        for fragments in (['{}'], ['{', '}'], ['', '{', '', '}', '']):
+            v.semantic_transport_trace({'trace_type': 'transport', 'transport': 'websocket',
+                                        'message_type': 'text', 'message': '{}',
+                                        'fragments': fragments})
+
+    def test_websocket_message_type_is_checked_before_set_lookup(self):
+        for message_type in (None, False, 1, '', [], {}, ['text']):
+            with self.subTest(message_type=message_type):
+                self.assert_error('invalid_frame', v.semantic_transport_trace,
+                                  {'trace_type': 'transport', 'transport': 'websocket',
+                                   'message_type': message_type, 'message': '{}'})
+        self.assert_error('unsupported_frame', v.semantic_transport_trace,
+                          {'trace_type': 'transport', 'transport': 'websocket',
+                           'message_type': 'binary'})
+
+    def test_resource_summary_counts_do_not_accept_booleans(self):
+        for field in ('send_backlog_bytes', 'send_backlog_messages'):
+            for value in (True, False, None, '0', 0.0, -1):
+                with self.subTest(field=field, value=value):
+                    self.assert_error('invalid_message', v.semantic_resource_trace,
+                                      {'trace_type': 'resource', field: value})
+        for field, value in (('send_backlog_bytes', 8388609),
+                             ('send_backlog_messages', 1025)):
+            self.assert_error('resource_limit', v.semantic_resource_trace,
+                              {'trace_type': 'resource', field: value})
+
+    def test_resource_summary_optional_fields_keep_their_json_types(self):
+        for value in (None, 0, 1, '', 'false', [], {}):
+            with self.subTest(peer_reads=value):
+                self.assert_error('invalid_message', v.semantic_resource_trace,
+                                  {'trace_type': 'resource', 'peer_reads': value})
+        for value in (None, True, False, -1, 60000.0, '60000', [], {}, v.MAX_INT + 1):
+            with self.subTest(write_deadline_ms=value):
+                self.assert_error('invalid_message', v.semantic_resource_trace,
+                                  {'trace_type': 'resource', 'write_deadline_ms': value})
+        v.semantic_resource_trace({'trace_type': 'resource'})
+        for peer_reads in (True, False):
+            v.semantic_resource_trace({'trace_type': 'resource', 'peer_reads': peer_reads,
+                                       'write_deadline_ms': 60000})
 
 
 if __name__ == '__main__':

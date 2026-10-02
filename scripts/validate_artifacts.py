@@ -782,6 +782,10 @@ def _repo_file(value: Any, field: str) -> Path:
     if not isinstance(value, str) or not value or Path(value).is_absolute() or ".." in Path(value).parts:
         raise ArtifactError("manifest_error", f"{field} is not a safe repository-relative path")
     path = ROOT / value
+    try:
+        path.resolve().relative_to(ROOT.resolve())
+    except (ValueError, OSError, RuntimeError) as exc:
+        raise ArtifactError("manifest_error", f"{field} resolves outside the repository or cannot be resolved") from exc
     if not path.is_file():
         raise ArtifactError("manifest_error", f"{field} points to a missing file: {value}")
     return path
@@ -1396,8 +1400,13 @@ def semantic_resource_trace(trace: Mapping[str, Any]) -> None:
     _require(trace.get("trace_type") == "resource", "invalid_message", "resource trace type is invalid")
     backlog_bytes = trace.get("send_backlog_bytes", 0)
     backlog_messages = trace.get("send_backlog_messages", 0)
-    _require(isinstance(backlog_bytes, int) and isinstance(backlog_messages, int), "invalid_message", "backlog values are invalid")
+    _require(type(backlog_bytes) is int and type(backlog_messages) is int, "invalid_message", "backlog values are invalid")
     _require(backlog_bytes >= 0 and backlog_messages >= 0, "invalid_message", "backlog values are negative")
+    if "peer_reads" in trace:
+        _require(type(trace["peer_reads"]) is bool, "invalid_message", "peer_reads must be a boolean")
+    if "write_deadline_ms" in trace:
+        _require(type(trace["write_deadline_ms"]) is int and 0 <= trace["write_deadline_ms"] <= MAX_INT,
+                 "invalid_message", "write deadline must be a nonnegative safe integer")
     if backlog_bytes > 8388608 or backlog_messages > 1024:
         raise ArtifactError("resource_limit", "send backlog exceeds the protocol limit")
     if (trace.get("peer_reads") is False and trace.get("write_deadline_ms") == 60000
@@ -1431,6 +1440,8 @@ def semantic_transport_trace(trace: Mapping[str, Any]) -> None:
     transport = trace.get("transport")
     if transport == "jsonl":
         if "chunks_hex" in trace:
+            _require(isinstance(trace["chunks_hex"], list) and all(isinstance(value, str) for value in trace["chunks_hex"]),
+                     "invalid_frame", "byte chunks must be an array of hexadecimal strings")
             try:
                 chunks = [bytes.fromhex(value) for value in trace["chunks_hex"]]
             except (ValueError, TypeError) as exc:
@@ -1440,18 +1451,21 @@ def semantic_transport_trace(trace: Mapping[str, Any]) -> None:
             _require(isinstance(lines, list) and all(isinstance(line, str) for line in lines), "invalid_frame", "invalid JSONL input")
             stream = "".join(lines).encode("utf-8")
             splits = trace.get("split_at", [])
-            _require(all(type(i) is int and 0 < i < len(stream) for i in splits) and splits == sorted(set(splits)), "invalid_frame", "invalid chunk boundaries")
+            _require(isinstance(splits, list) and all(type(i) is int and 0 < i < len(stream) for i in splits)
+                     and splits == sorted(set(splits)), "invalid_frame", "invalid chunk boundaries")
             cuts = [0, *splits, len(stream)]
             chunks = [stream[a:b] for a,b in zip(cuts,cuts[1:])]
         messages = parse_jsonl_chunks(chunks)
         if "expected_messages" in trace:
             _require(_json_equal(messages, trace["expected_messages"]), "invalid_message", "decoded JSONL messages differ")
     elif transport == "websocket":
-        _require(trace.get("message_type") in {"text", "binary"}, "invalid_frame", "invalid websocket message type")
+        _require(isinstance(trace.get("message_type"), str) and trace["message_type"] in {"text", "binary"},
+                 "invalid_frame", "invalid websocket message type")
         if trace.get("message_type") == "text":
             _require(isinstance(trace.get("message"), str), "invalid_frame", "websocket text payload must be a string")
             if "fragments" in trace:
-                _require(isinstance(trace["fragments"], list) and "".join(trace["fragments"]) == trace["message"], "invalid_frame", "websocket fragments do not reconstruct the message")
+                _require(isinstance(trace["fragments"], list) and all(isinstance(fragment, str) for fragment in trace["fragments"])
+                         and "".join(trace["fragments"]) == trace["message"], "invalid_frame", "websocket fragments do not reconstruct the message")
             message = strict_load_bytes(trace["message"].encode("utf-8"), max_bytes=1048576)
             _require(isinstance(message, dict), "invalid_message", "WebSocket payload must be an object")
         if trace.get("message_type") == "binary":

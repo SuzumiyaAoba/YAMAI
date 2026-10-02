@@ -202,7 +202,11 @@ class Receiver:
         self.floor = 0
         self.gap_received = 0
         self.recovery = "resume" if welcome["resumed"] else "initial" if initial_snapshot else None
+        # A gap changes the recovery strategy, not the negotiated bootstrap.
+        # Mid-game spectators must never restart the game's event history.
+        self.initial_snapshot_required = initial_snapshot
         self.resume_snapshot_allowed = welcome["resumed"]
+        self.resume_tokens = {welcome["resume"]["token"]} if "resume" in welcome else set()
         self.through = welcome.get("replay_through_seq", last_seq)
         self.started = bool(last_seq)
         self.ended = False
@@ -242,6 +246,11 @@ class Receiver:
                 "invalid_message", "resume changed session identity")
         require(welcome["replay_from_seq"] == self.applied + 1 and welcome["replay_through_seq"] >= self.applied,
                 "invalid_message", "resume does not start at the applied prefix")
+        require(welcome["replay_through_seq"] >= max(self.gap_received, self.through),
+                "invalid_message", "resume frontier rewound issued history")
+        require(welcome["resume"]["token"] not in self.resume_tokens,
+                "invalid_message", "resume token was not fresh")
+        self.resume_tokens.add(welcome["resume"]["token"])
         self.welcome = welcome
         self.through = welcome["replay_through_seq"]
         self.recovery = "resume" if self.applied < self.through else None
@@ -590,6 +599,7 @@ class Receiver:
             self.unadopted_reaction = None
             if self.recovery == "initial":
                 self.recovery = None
+            self.initial_snapshot_required = False
         else:
             if seq != self.applied + 1:
                 self.gap_received = max(self.gap_received, seq)
@@ -598,6 +608,9 @@ class Receiver:
             require(self.started or kind == "event" and message["event"]["type"] == "start_game"
                     or kind == "error" and message["severity"] == "fatal",
                     "invalid_message", "nonfatal message precedes session initialization")
+            require(not self.initial_snapshot_required
+                    or kind == "error" and message["severity"] == "fatal",
+                    "invalid_message", "mid-game observer must initialize from a snapshot")
             require(not self.end_game_due or kind == "event" and message["event"]["type"] == "end_game"
                     or kind == "error" and message["severity"] == "fatal",
                     "invalid_message", "message interrupts the mandatory end_game continuation")

@@ -9,7 +9,14 @@
       "$ref": "urn:yamai:schema:protocol:1.0-draft.1:action"
     },
     {
-      "$ref": "urn:yamai:schema:protocol:1.0-draft.1:error#/$defs/playerMessage"
+      "allOf": [
+        {
+          "$ref": "urn:yamai:schema:protocol:1.0-draft.1:error"
+        },
+        {
+          "$ref": "urn:yamai:schema:protocol:1.0-draft.1:error#/$defs/playerMessage"
+        }
+      ]
     }
   ]
 }

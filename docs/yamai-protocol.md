@@ -347,7 +347,7 @@ hostは同一 `seq` の再送、resume replayおよびrange replayに、ledger e
         "1.0-draft.1"
       ],
       "hashes": {
-        "1.0-draft.1": "sha256:a189dece5cedebfc545a8300970ea375220ec0436a34401d42a4cadf8fb3c27a"
+        "1.0-draft.1": "sha256:fa03bde5a957761a730d4b771f6135d3a7285a6dfc0d52426cf2f99c08b2fbe8"
       },
       "protocol_versions": {
         "1.0-draft.1": [
@@ -382,7 +382,7 @@ hostは同一 `seq` の再送、resume replayおよびrange replayに、ledger e
   "seat": 0,
   "profile": "riichi-4p",
   "profile_revision": "1.0-draft.1",
-  "profile_hash": "sha256:a189dece5cedebfc545a8300970ea375220ec0436a34401d42a4cadf8fb3c27a",
+  "profile_hash": "sha256:fa03bde5a957761a730d4b771f6135d3a7285a6dfc0d52426cf2f99c08b2fbe8",
   "client": {
     "name": "ExampleAI",
     "version": "2.3.0"
@@ -426,7 +426,7 @@ profile_hashは、vector manifestのprofile_hash_inputsに列挙したJSONをpro
   "view": "seat",
   "profile": "riichi-4p",
   "profile_revision": "1.0-draft.1",
-  "profile_hash": "sha256:a189dece5cedebfc545a8300970ea375220ec0436a34401d42a4cadf8fb3c27a",
+  "profile_hash": "sha256:fa03bde5a957761a730d4b771f6135d3a7285a6dfc0d52426cf2f99c08b2fbe8",
   "client": {
     "name": "ExampleAI",
     "version": "2.3.0"
@@ -472,7 +472,7 @@ profile_hashは、vector manifestのprofile_hash_inputsに列挙したJSONをpro
   "view": "seat",
   "profile": "riichi-4p",
   "profile_revision": "1.0-draft.1",
-  "profile_hash": "sha256:a189dece5cedebfc545a8300970ea375220ec0436a34401d42a4cadf8fb3c27a",
+  "profile_hash": "sha256:fa03bde5a957761a730d4b771f6135d3a7285a6dfc0d52426cf2f99c08b2fbe8",
   "players": [
     {
       "seat": 0,

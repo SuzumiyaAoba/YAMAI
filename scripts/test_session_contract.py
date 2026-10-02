@@ -857,7 +857,9 @@ class SessionInvariants(unittest.TestCase):
         self.assertEqual(len(observed), 3)
         self.assertEqual(receiver.receive(self.raw(first)), 'duplicate')
         repeated['state']['pending_requests'][0]['decision_group_members'].reverse()
-        receiver.begin_resume(dict(trace['welcome'], resumed=True, replay_from_seq=7, replay_through_seq=7))
+        receiver.begin_resume(dict(trace['welcome'],
+                                   resume={**trace['welcome']['resume'], 'token': 'rt_' + 'Z' * 22},
+                                   resumed=True, replay_from_seq=7, replay_through_seq=7))
         self.assertEqual(receiver.receive(self.raw(repeated)), 'applied')
         self.assertEqual(receiver.observed_request_ids, observed)
         self.assertEqual(receiver.request_ids, {'r1'})
@@ -879,7 +881,9 @@ class SessionInvariants(unittest.TestCase):
                     request['request_id'] = request['decision_group_members'][0]['request_id'] = 'reaction12'
                 elif collision == 'old_peer_same_seat':
                     request['decision_group_members'][2]['request_id'] = 'reaction13'
-                receiver.begin_resume(dict(trace['welcome'], resumed=True, replay_from_seq=10, replay_through_seq=13))
+                receiver.begin_resume(dict(trace['welcome'],
+                                           resume={**trace['welcome']['resume'], 'token': 'rt_' + 'Z' * 22},
+                                           resumed=True, replay_from_seq=10, replay_through_seq=13))
                 if collision == 'none':
                     self.assertEqual(receiver.receive(self.raw(snapshot)), 'applied')
                     self.assertEqual(receiver.observed_request_ids['reaction12'], (2, 8, 'greaction1'))
@@ -918,7 +922,9 @@ class SessionInvariants(unittest.TestCase):
             truth.receive(self.raw(step['message']))
         snapshot = self.request_identity_snapshot(truth)
         snapshot['state']['pending_requests'][0]['request_id'] = 'hidden-prior'
-        receiver.begin_resume(dict(trace['welcome'], resumed=True,
+        receiver.begin_resume(dict(trace['welcome'],
+                                   resume={**trace['welcome']['resume'], 'token': 'rt_' + 'Z' * 22},
+                                   resumed=True,
                                    replay_from_seq=receiver.applied + 1, replay_through_seq=20))
         self.assert_rejected_atomically(receiver, snapshot)
 
@@ -938,7 +944,9 @@ class SessionInvariants(unittest.TestCase):
                     self.assertEqual(receiver.receive(self.raw(first)), 'applied')
                     self.assertEqual(receiver.receive(self.raw(first)), 'duplicate')
                     if checkpoint == 'resume':
-                        receiver.begin_resume(dict(trace['welcome'], resumed=True,
+                        receiver.begin_resume(dict(trace['welcome'],
+                                                   resume={**trace['welcome']['resume'], 'token': 'rt_' + 'Z' * 22},
+                                                   resumed=True,
                                                    replay_from_seq=receiver.applied + 1,
                                                    replay_through_seq=receiver.applied))
                     elif checkpoint == 'snapshot':
@@ -987,7 +995,9 @@ class SessionInvariants(unittest.TestCase):
                 snapshot = deepcopy(self.vectors['V58_snapshot_ended_rankings']['positive'])
                 snapshot.update(seq=22, replaces_through_seq=21)
                 snapshot['state'].update(players=trace['welcome']['players'], time_bank_ms=0)
-                receiver.begin_resume(dict(trace['welcome'], resumed=True,
+                receiver.begin_resume(dict(trace['welcome'],
+                                           resume={**trace['welcome']['resume'], 'token': 'rt_' + 'Z' * 22},
+                                           resumed=True,
                                            replay_from_seq=receiver.applied + 1, replay_through_seq=21))
                 self.assertEqual(receiver.receive(self.raw(snapshot)), 'applied')
                 self.assertNotIn('reaction1', receiver.terminal_acks)
@@ -1020,6 +1030,7 @@ class SessionInvariants(unittest.TestCase):
             live.receive(self.raw(message))
         resumed = deepcopy(welcome)
         resumed.update(resumed=True, replay_from_seq=5, replay_through_seq=4)
+        resumed['resume']['token'] = 'rt_' + 'Z' * 22
         live.begin_resume(resumed)
         for message in messages[4:]:
             live.receive(self.raw(message))
@@ -1201,6 +1212,7 @@ class SessionInvariants(unittest.TestCase):
                     welcome = deepcopy(trace['welcome'])
                     welcome.update(resumed=True, replay_from_seq=receiver.applied + 1,
                                    replay_through_seq=receiver.applied)
+                    welcome['resume']['token'] = 'rt_' + 'Z' * 22
                     receiver.begin_resume(welcome)
                 elif checkpoint == 'snapshot':
                     identity = {key: trace['welcome'][key] for key in ('yamai', 'session_id', 'game_id')}
@@ -1549,6 +1561,8 @@ class SessionInvariants(unittest.TestCase):
         for variant in ('scores', 'tiles', 'request_id', 'ack_without_result'):
             with self.subTest(variant=variant):
                 trace = self.trace('historical_snapshot_replay')
+                # This shortened history is captured before the later fixture events.
+                trace['welcome']['replay_through_seq'] = 6
                 receiver = self.receiver(trace['welcome'])
                 for step in trace['steps'][:4]:
                     receiver.receive(self.raw(step['message']))
@@ -1566,7 +1580,9 @@ class SessionInvariants(unittest.TestCase):
                     receiver.receive(self.raw(ack))
                     state['pending_requests'] = []
                     state['kyoku']['turn']['phase'] = 'resolving'
-                receiver.begin_resume(dict(trace['welcome'], resumed=True, replay_from_seq=receiver.applied + 1,
+                receiver.begin_resume(dict(trace['welcome'],
+                                           resume={**trace['welcome']['resume'], 'token': 'rt_' + 'Z' * 22},
+                                           resumed=True, replay_from_seq=receiver.applied + 1,
                                            replay_through_seq=8))
                 snapshot.update(seq=9, replaces_through_seq=8)
                 self.assert_rejected_atomically(receiver, snapshot)
@@ -1576,6 +1592,8 @@ class SessionInvariants(unittest.TestCase):
             for selected in (False, True):
                 with self.subTest(received_request=received_request, selected=selected):
                     trace = self.trace('historical_snapshot_replay')
+                    # This shortened history is captured before the later fixture events.
+                    trace['welcome']['replay_through_seq'] = 6
                     receiver = self.receiver(trace['welcome'])
                     for step in trace['steps'][:4 if received_request else 3]:
                         receiver.receive(self.raw(step['message']))
@@ -1587,7 +1605,9 @@ class SessionInvariants(unittest.TestCase):
                         request.update(remaining_ms=0, selection=dict(action_id=request['default_action_id'],
                                        source='user', elapsed_ms=6500, time_bank_ms=14500))
                         state['time_bank_ms'] = state['kyoku']['self_state']['time_bank_ms'] = 14500
-                    receiver.begin_resume(dict(trace['welcome'], resumed=True, replay_from_seq=receiver.applied + 1,
+                    receiver.begin_resume(dict(trace['welcome'],
+                                               resume={**trace['welcome']['resume'], 'token': 'rt_' + 'Z' * 22},
+                                               resumed=True, replay_from_seq=receiver.applied + 1,
                                                replay_through_seq=6))
                     snapshot.update(seq=7, replaces_through_seq=6)
                     self.assertEqual(receiver.receive(self.raw(snapshot)), 'applied')
@@ -1605,7 +1625,9 @@ class SessionInvariants(unittest.TestCase):
                     receiver = self.receiver(trace['welcome'])
                     for step in trace['steps'][:6]:
                         receiver.receive(self.raw(step['message']))
-                    receiver.begin_resume(dict(trace['welcome'], resumed=True, replay_from_seq=7,
+                    receiver.begin_resume(dict(trace['welcome'],
+                                               resume={**trace['welcome']['resume'], 'token': 'rt_' + 'Z' * 22},
+                                               resumed=True, replay_from_seq=7,
                                                replay_through_seq=121))
                     snapshot = deepcopy(self.vectors['V57_snapshot_between_kyoku_deposits']['positive'])
                     snapshot.update(seq=122, replaces_through_seq=121)
@@ -1710,7 +1732,9 @@ class SessionInvariants(unittest.TestCase):
                 through = receiver.applied
                 if jump:
                     through += 2
-                    receiver.begin_resume(dict(welcome, replay_from_seq=receiver.applied + 1,
+                    receiver.begin_resume(dict(welcome,
+                                               resume={**welcome['resume'], 'token': 'rt_' + 'Z' * 22},
+                                               replay_from_seq=receiver.applied + 1,
                                                replay_through_seq=through))
                 snapshot.update(seq=through + 1, replaces_through_seq=through)
                 snapshot['state']['pending_requests'][0]['decision_group_remaining_ms'] += 1
@@ -1734,7 +1758,9 @@ class SessionInvariants(unittest.TestCase):
                 snapshot = trace['steps'][0]['message']
                 receiver.receive(self.raw(snapshot))
                 if jump:
-                    receiver.begin_resume(dict(trace['welcome'], replay_from_seq=receiver.applied + 1,
+                    receiver.begin_resume(dict(trace['welcome'],
+                                               resume={**trace['welcome']['resume'], 'token': 'rt_' + 'Z' * 22},
+                                               replay_from_seq=receiver.applied + 1,
                                                replay_through_seq=receiver.applied + 2))
                 through = receiver.applied + (2 if jump else 0)
                 snapshot.update(seq=through + 1, replaces_through_seq=through)
@@ -3273,7 +3299,9 @@ class PenaltyDecisionBindings(unittest.TestCase):
         snapshot = deepcopy(self.vectors['V58_snapshot_ended_rankings']['positive'])
         snapshot.update(seq=receiver.applied + 10, replaces_through_seq=receiver.applied + 9)
         snapshot['state'].update(players=receiver.welcome['players'], time_bank_ms=0)
-        receiver.begin_resume(dict(receiver.welcome, resumed=True,
+        receiver.begin_resume(dict(receiver.welcome,
+                                   resume={**receiver.welcome['resume'], 'token': 'rt_' + 'Z' * 22},
+                                   resumed=True,
                                    replay_from_seq=receiver.applied + 1,
                                    replay_through_seq=snapshot['replaces_through_seq']))
         self.assertEqual(receiver.receive(self.raw(snapshot)), 'applied')
@@ -3381,6 +3409,147 @@ class PenaltyDecisionBindings(unittest.TestCase):
                     else:
                         self.check_compacted_late(receiver, ack, valid=source == 'default')
                         self.assert_rejected_atomically(receiver, ack)
+
+
+class SessionLifecycleReview(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.schemas = v.SchemaSet()
+        manifest = v.strict_load(v.ROOT / f'test-vectors/protocol/{v.PROTOCOL}/manifest.json')
+        cls.digest = manifest['profile_hash']
+        cls.vectors = v.strict_load(v.ROOT / manifest['vectors'])
+
+    def trace(self, key):
+        return deepcopy(self.vectors[key]['positive']['trace'])
+
+    def receiver(self, welcome, **kwargs):
+        return Receiver(welcome, v.strict_load_bytes,
+                        v._session_schema_validator(self.schemas, self.digest), **kwargs)
+
+    @staticmethod
+    def raw(message):
+        return json.dumps(message, ensure_ascii=False, separators=(',', ':')).encode()
+
+    @staticmethod
+    def start(welcome):
+        return {**{key: welcome[key] for key in ('yamai', 'session_id', 'game_id')},
+                'kind': 'event', 'seq': 1,
+                'event': {'type': 'start_game', 'players': deepcopy(welcome['players']),
+                          'rules': deepcopy(welcome['rules']), 'scores': welcome['scores'][:]}}
+
+    def test_midgame_observer_rejects_start_game_before_and_after_gap(self):
+        trace = self.trace('V112_observer_bootstrap_authorization')
+        for gap in (False, True):
+            with self.subTest(gap=gap):
+                receiver = self.receiver(trace['welcome'], initial_snapshot=True)
+                start = self.start(trace['welcome'])
+                if gap:
+                    self.assertEqual(receiver.receive(self.raw({**start, 'seq': 2})), 'sequence_gap')
+                prior = {key: deepcopy(value) for key, value in vars(receiver).items()
+                         if key not in {'validate', 'decode', 'welcome', 'closed'}}
+                with self.assertRaisesRegex(SessionError, 'must initialize from a snapshot'):
+                    receiver.receive(self.raw(start))
+                self.assertTrue(receiver.closed)
+                self.assertEqual(receiver.applied, 0)
+                self.assertFalse(receiver.started)
+                self.assertTrue(receiver.initial_snapshot_required)
+                for key, expected in prior.items():
+                    if key != 'game':
+                        self.assertEqual(getattr(receiver, key), expected, key)
+                self.assertEqual(vars(receiver.game), vars(prior['game']))
+
+    def test_pre_game_observer_still_accepts_start_game(self):
+        trace = self.trace('V112_observer_bootstrap_authorization')
+        receiver = self.receiver(trace['welcome'])
+        self.assertEqual(receiver.receive(self.raw(self.start(trace['welcome']))), 'applied')
+        self.assertTrue(receiver.started)
+
+    def test_midgame_observer_can_bootstrap_or_fail_after_a_gap(self):
+        trace = self.trace('V112_observer_bootstrap_authorization')
+        for gap in (False, True):
+            for fatal in (False, True):
+                with self.subTest(gap=gap, fatal=fatal):
+                    receiver = self.receiver(trace['welcome'], initial_snapshot=True)
+                    if gap:
+                        self.assertEqual(receiver.receive(self.raw({**self.start(trace['welcome']), 'seq': 2})),
+                                         'sequence_gap')
+                    message = deepcopy(trace['steps'][0]['message'])
+                    if fatal:
+                        message = {key: message[key] for key in ('yamai', 'session_id', 'game_id', 'seq')}
+                        message.update(kind='error', code='internal_error', severity='fatal',
+                                       message='Initialization failed')
+                    self.assertEqual(receiver.receive(self.raw(message)), 'applied')
+                    self.assertEqual(receiver.closed, fatal)
+                    self.assertEqual(receiver.initial_snapshot_required, fatal)
+
+    def resumed(self, welcome, token, receiver):
+        welcome = deepcopy(welcome)
+        welcome.update(resumed=True, replay_from_seq=receiver.applied + 1,
+                       replay_through_seq=receiver.applied)
+        welcome['resume']['token'] = token
+        return welcome
+
+    def test_resume_rejects_current_or_previously_issued_token(self):
+        welcome = self.trace('V104_wire_complete_game')['welcome']
+        original_token = welcome['resume']['token']
+        second_token = 'rt_' + 'B' * 22
+        for old_token in (original_token, second_token):
+            with self.subTest(old_token=old_token):
+                receiver = self.receiver(welcome)
+                receiver.begin_resume(self.resumed(welcome, second_token, receiver))
+                previous = deepcopy(receiver.welcome)
+                previous_tokens = receiver.resume_tokens.copy()
+                with self.assertRaisesRegex(SessionError, 'token was not fresh'):
+                    receiver.begin_resume(self.resumed(welcome, old_token, receiver))
+                self.assertEqual(receiver.welcome, previous)
+                self.assertEqual(receiver.resume_tokens, previous_tokens)
+
+    def test_failed_resume_does_not_consume_a_new_token(self):
+        welcome = self.trace('V104_wire_complete_game')['welcome']
+        receiver = self.receiver(welcome)
+        resumed = self.resumed(welcome, 'rt_' + 'C' * 22, receiver)
+        invalid = deepcopy(resumed)
+        invalid['session_id'] = 'different-session'
+        with self.assertRaisesRegex(SessionError, 'changed session identity'):
+            receiver.begin_resume(invalid)
+        self.assertEqual(receiver.resume_tokens, {welcome['resume']['token']})
+        receiver.begin_resume(resumed)
+        self.assertEqual(receiver.welcome, resumed)
+        self.assertEqual(receiver.resume_tokens, {welcome['resume']['token'], resumed['resume']['token']})
+
+    def test_resume_frontier_keeps_observed_and_announced_sequences(self):
+        welcome = self.trace('V104_wire_complete_game')['welcome']
+        for source in ('future_message', 'interrupted_replay'):
+            for through in (0, 9, 10, 11):
+                with self.subTest(source=source, through=through):
+                    receiver = self.receiver(welcome)
+                    if source == 'future_message':
+                        message = {key: welcome[key] for key in ('yamai', 'session_id', 'game_id')}
+                        message.update(kind='error', code='invalid_action', severity='recoverable',
+                                       message='Unknown request', seq=10)
+                        self.assertEqual(receiver.receive(self.raw(message)), 'sequence_gap')
+                    else:
+                        resumed = self.resumed(welcome, 'rt_' + 'B' * 22, receiver)
+                        resumed['replay_through_seq'] = 10
+                        receiver.begin_resume(resumed)
+                    resumed = self.resumed(welcome, 'rt_' + 'C' * 22, receiver)
+                    resumed['replay_through_seq'] = through
+                    previous = deepcopy(receiver.welcome)
+                    previous_tokens = receiver.resume_tokens.copy()
+                    previous_gap = receiver.gap_received
+                    previous_through = receiver.through
+                    if through < 10:
+                        with self.assertRaises(SessionError) as error:
+                            receiver.begin_resume(resumed)
+                        self.assertEqual(error.exception.code, 'invalid_message')
+                        self.assertEqual(receiver.welcome, previous)
+                        self.assertEqual(receiver.resume_tokens, previous_tokens)
+                        self.assertEqual(receiver.gap_received, previous_gap)
+                        self.assertEqual(receiver.through, previous_through)
+                    else:
+                        receiver.begin_resume(resumed)
+                        self.assertEqual(receiver.through, through)
+                        self.assertEqual(receiver.recovery, 'resume')
 
 
 if __name__ == '__main__':
