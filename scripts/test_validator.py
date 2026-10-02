@@ -661,6 +661,100 @@ class RequestPayloadBoundaries(unittest.TestCase):
         with patch.object(v, 'strict_load', load):
             return v.check_vectors(v.SchemaSet(), manifest)
 
+    def test_request_state_contains_only_one_active_decision(self):
+        def turn(seat, request_id):
+            return {'request_id': request_id, 'seat': seat, 'caused_by_seq': 1,
+                    'timeout_ms': 100, 'time_bank_ms': 0,
+                    'legal_actions': [{'action_id': 'd', 'action': {
+                        'type': 'dahai', 'actor': seat, 'pai': '1m', 'tsumogiri': True}}],
+                    'default_action_id': 'd'}
+
+        key = 'V31_group_grace_zero'
+        for seat in range(4):
+            trace = {'trace_type': 'request_state', 'requests': [turn(seat, 'turn')]}
+            v.semantic_request_trace(trace)
+            self.assertEqual(self.check_single_vector(key, trace), 1)
+        v.semantic_request_trace({'requests': []})
+        for order in permutations(range(3)):
+            trace = self.trace(key)
+            trace['requests'] = [trace['requests'][index] for index in order]
+            v.semantic_request_trace(trace)
+            self.assertEqual(self.check_single_vector(key, trace), 1)
+
+        invalid = [
+            {'trace_type': 'request_state',
+             'requests': [turn(seat, 'turn' + str(seat)) for seat in range(count)]}
+            for count in (2, 3, 4)
+        ]
+        invalid.append({'trace_type': 'request_state',
+                        'requests': [turn(0, 'same'), turn(1, 'same')]})
+        concurrent = self.trace(key)
+        concurrent['requests'].append(turn(0, 'turn'))
+        invalid.append(concurrent)
+        for index, trace in enumerate(invalid):
+            with self.subTest(case=index):
+                self.assert_error('invalid_message', v.semantic_request_trace, trace)
+                self.assert_error('invalid_message', self.check_single_vector, key, trace)
+                self.assertEqual(self.check_single_vector(key, trace, negative=True), 1)
+
+    def test_reaction_calls_match_the_group_cause_and_chi_direction(self):
+        key = 'V49_pon_over_chi'
+        schemas = v.SchemaSet()
+        schema = v.request_payload_schema(schemas)
+        for rotation in range(4):
+            valid = self.trace(key)
+            valid['target'] = (valid['target'] + rotation) % 4
+            for request in valid['requests']:
+                request['seat'] = (request['seat'] + rotation) % 4
+                for member in request['decision_group_members']:
+                    member['seat'] = (member['seat'] + rotation) % 4
+                request['decision_group_members'].reverse()
+                for candidate in request['legal_actions']:
+                    action = candidate['action']
+                    for field in ('actor', 'target'):
+                        if field in action:
+                            action[field] = (action[field] + rotation) % 4
+                    if 'dahai' in action:
+                        action['dahai']['actor'] = (action['dahai']['actor'] + rotation) % 4
+            valid['expected'] = v.evaluate_request_contract(valid)[-1]
+            valid.pop('checkpoints', None)
+            v.semantic_lifecycle_trace(valid)
+            self.assertEqual(self.check_single_vector(key, valid), 1)
+
+            invalid = []
+            for kind in ('chi', 'pon', 'daiminkan'):
+                trace = deepcopy(valid)
+                request = trace['requests'][0]
+                action = next(candidate['action'] for candidate in request['legal_actions']
+                              if candidate['action']['type'] == ('pon' if kind == 'daiminkan' else kind))
+                action['target'] = (request['seat'] + 1) % 4
+                if kind == 'daiminkan':
+                    action['type'] = kind
+                    action['consumed'].append(action['pai'])
+                    del action['dahai']
+                invalid.append((kind, trace, request))
+            trace = deepcopy(valid)
+            request = trace['requests'][1]
+            chi = deepcopy(next(candidate for candidate in trace['requests'][0]['legal_actions']
+                                if candidate['action']['type'] == 'chi'))
+            chi['action']['actor'] = request['seat']
+            chi['action']['dahai']['actor'] = request['seat']
+            request['legal_actions'].append(chi)
+            trace['steps'][0]['action_id'] = 'n'
+            trace['steps'][1]['action_id'] = chi['action_id']
+            invalid.append(('chi direction', trace, request))
+
+            for kind, trace, request in invalid:
+                with self.subTest(rotation=rotation, kind=kind):
+                    # The messages are structurally valid; the three declared
+                    # member seats alone identify the excluded cause actor.
+                    schemas.validate(request, schema)
+                    trace['expected'] = v.evaluate_request_contract(trace)[-1]
+                    self.assert_error('invalid_message', v._check_request, request)
+                    self.assert_error('invalid_message', v.semantic_lifecycle_trace, trace)
+                    self.assert_error('invalid_message', self.check_single_vector, key, trace)
+                    self.assertEqual(self.check_single_vector(key, trace, negative=True), 1)
+
     def test_group_descriptor_order_is_not_semantic(self):
         for order in permutations(range(3)):
             trace = self.trace()

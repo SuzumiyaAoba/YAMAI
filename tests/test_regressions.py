@@ -372,6 +372,9 @@ class ProtocolRegressionTests(unittest.TestCase):
         snapshot = {"at_ms": 8, "direction": "out", "client_id": "peer",
                     "transaction_id": "snapshot", "operation_id": "snapshot",
                     "message": copy.deepcopy(VECTORS["V18_snapshot_state"]["positive"])}
+        if not resumed:
+            # The request was issued at 7ms; this live snapshot is sent at 8ms.
+            snapshot["message"]["state"]["pending_requests"][0]["remaining_ms"] = 20999
         trace["messages"].append(snapshot)
         return trace
 

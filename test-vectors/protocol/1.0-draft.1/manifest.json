@@ -3,7 +3,7 @@
   "protocol_version": "1.0-draft.1",
   "profile": "riichi-4p",
   "profile_revision": "1.0-draft.1",
-  "profile_hash": "sha256:8515055f91e2cd603e52a3b9b5773923bc321e8db4dadd60a43e9e6ed220a0f3",
+  "profile_hash": "sha256:228a0e7fbb17503506a090e8afa791495d5f5344e9ec991b9d0315a2a55e4265",
   "registry": [
     "registry/protocol/1.0-draft.1/registry.json",
     "registry/riichi-4p/1.0-draft.1/registry.json"
@@ -2570,6 +2570,30 @@
     {
       "id": "V425_welcome_closed_stable_capabilities",
       "area": "closed-stable-capabilities",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V426_request_state_one_active_decision",
+      "area": "request-decision-topology",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V427_reaction_call_matches_group_cause",
+      "area": "request-cause-identity",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V428_live_snapshot_obeys_capture_clock",
+      "area": "snapshot-original-clock",
+      "expect_positive": "valid",
+      "expect_negative": "invalid_message"
+    },
+    {
+      "id": "V429_live_snapshot_selection_has_ingress",
+      "area": "snapshot-selection-evidence",
       "expect_positive": "valid",
       "expect_negative": "invalid_message"
     }

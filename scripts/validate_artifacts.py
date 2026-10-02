@@ -1115,6 +1115,13 @@ def _check_request(message: Mapping[str, Any], *, grace_ms: int | None = None, e
             member_seats.append(member["seat"])
         _require(len(set(member_ids)) == len(member_ids) and len(set(member_seats)) == len(member_seats), "invalid_message", "group members are not unique")
         _require((request_id, seat) in set(zip(member_ids, member_seats)), "invalid_message", "request/seat pair is absent from its group")
+        cause_actor = next(iter(set(range(4)) - set(member_seats)))
+        for candidate in actions:
+            action = candidate["action"]
+            if action["type"] in {"chi", "pon", "daiminkan"}:
+                _require(action["target"] == cause_actor, "invalid_message", "call target differs from its reaction group cause actor")
+                _require(action["type"] != "chi" or cause_actor == (seat + 3) % 4,
+                         "invalid_message", "chi is not from the preceding seat")
         _require(message.get("decision_group_close") == "all_selected_or_deadline", "invalid_message", "unsupported group close")
 
 
@@ -1635,6 +1642,15 @@ def semantic_request_trace(trace: Mapping[str, Any]) -> None:
             _require(request.get("decision_group_deadline_ms") == reference.get("decision_group_deadline_ms"), "invalid_message", "group deadline differs across requests")
             _require(request.get("decision_group_close") == reference.get("decision_group_close"), "invalid_message", "group close policy differs across requests")
     _require(len(seats) == len(set(seats)), "invalid_message", "a seat has duplicate pending requests")
+    request_ids = [request["request_id"] for request in requests]
+    _require(len(request_ids) == len(set(request_ids)), "invalid_message", "pending request IDs are not unique")
+    # This is one game's active decision, not independent seat-local turns.
+    # The empty state is permitted between decisions; otherwise only one
+    # turn or one complete three-seat reaction group may be pending.
+    if len(requests) > 1:
+        _require(len(requests) == 3 and len(groups) == 1
+                 and all(request.get("decision_group_id") in groups for request in requests),
+                 "invalid_message", "pending requests must belong to one decision")
     for group_id, reference in groups.items():
         declared = {(member["request_id"], member["seat"]) for member in reference["decision_group_members"]}
         observed = {(request["request_id"], request["seat"]) for request in requests if request.get("decision_group_id") == group_id}
@@ -2255,12 +2271,47 @@ def semantic_ledger_trace(trace: Mapping[str, Any], expected_hash: str) -> None:
                 if receiver.closed:
                     fatal_at = now
                 if not duplicate:
-                    if kind == "snapshot" and receiver.welcome["resumed"]:
+                    if kind == "snapshot":
                         for request in msg["state"].get("pending_requests", []):
                             rid = request["request_id"]
-                            if rid not in starts or rid in resumed_requests:
+                            if receiver.welcome["resumed"] and (rid not in starts or rid in resumed_requests):
                                 restore_request(request)
                             selected = request["selection"]
+                            if not historical and rid in starts and rid not in retained_states:
+                                # A live snapshot may be queued after it was fixed,
+                                # but cannot show time or a choice from its future.
+                                # The same known request clock applies to new and
+                                # resumed connections, including post-resume issues.
+                                grace = receiver.welcome["rules"]["time_control"]["grace_ms"]
+                                deadline = grace + request["timeout_ms"] + request["time_bank_ms"]
+                                upper = max(0, now - starts[rid])
+                                elapsed = deadline - request["remaining_ms"] if selected is None else selected["elapsed_ms"]
+                                _require(elapsed <= upper and (selected is None or now >= starts[rid]),
+                                         "invalid_message", "live snapshot clock exceeds its captured request time")
+                                if request.get("decision_group_remaining_ms", 0) > 0:
+                                    group_elapsed = request["decision_group_deadline_ms"] - request["decision_group_remaining_ms"]
+                                    _require(group_elapsed <= upper, "invalid_message",
+                                             "live snapshot group clock exceeds its captured request time")
+                                if rid not in selections and now >= starts[rid]:
+                                    # Group choices can be checked from this seat's
+                                    # ingress even without all three lifecycles.
+                                    choices = {c["action_id"] for c in request["legal_actions"]}
+                                    policy = receiver.welcome["rules"]["invalid_action_policy"]
+                                    for _, aid, at_ms in lifecycle_ingress.get(rid, []):
+                                        at = max(0, at_ms - starts[rid])
+                                        if at >= deadline:
+                                            selections[rid] = (request["default_action_id"], "default", deadline)
+                                        elif aid in choices:
+                                            selections[rid] = (aid, "user", at)
+                                        elif policy != "reject":
+                                            selections[rid] = (request["default_action_id"],
+                                                               "default" if policy == "default" else "cancelled", at)
+                                        if rid in selections:
+                                            break
+                                    if rid not in selections and upper >= deadline:
+                                        selections[rid] = (request["default_action_id"], "default", deadline)
+                                _require(selected is None or rid in selections, "invalid_message",
+                                         "live snapshot selection has no captured input or original timeout")
                             if rid in retained_states:
                                 # Creation follows the fixed replay frontier,
                                 # but queueing may delay capture. Bound the
@@ -2283,8 +2334,16 @@ def semantic_ledger_trace(trace: Mapping[str, Any], expected_hash: str) -> None:
                                     elapsed = request["decision_group_deadline_ms"] - request["decision_group_remaining_ms"]
                                     _require(elapsed <= upper and (historical or elapsed >= resume_at - starts[rid]),
                                              "invalid_message", "snapshot group clock lies outside retained capture interval")
-                            _require(historical or selected is not None or rid not in selections,
-                                     "invalid_message", "snapshot reopened a retained selection")
+                            if not historical and selected is None and rid in selections:
+                                # A new resume snapshot is fixed no earlier than
+                                # the retained checkpoint. It may predate later
+                                # ingress, but cannot undo a checkpoint selection.
+                                _require(rid not in retained_states or retained_states[rid]["selection"] is None,
+                                         "invalid_message", "snapshot reopened a retained selection")
+                                snapshot_deadline = (receiver.welcome["rules"]["time_control"]["grace_ms"]
+                                                     + request["timeout_ms"] + request["time_bank_ms"])
+                                _require(snapshot_deadline - request["remaining_ms"] <= selections[rid][2],
+                                         "invalid_message", "live OPEN snapshot follows the captured selection")
                             if selected is not None:
                                 value = (selected["action_id"], selected["source"], selected["elapsed_ms"])
                                 _require(historical or rid not in resumed_requests or rid in retained_states or rid in selections,

@@ -2338,6 +2338,143 @@ class _LedgerTraceFixture(unittest.TestCase):
         v.semantic_ledger_trace(trace, self.digest)
 
 
+class LedgerLiveSnapshotClockTests(_LedgerTraceFixture):
+    def live_snapshot(self, *, group=False, at_ms=8, remaining=None, selection=None,
+                      ingress=None, policy='reject', start=None, group_remaining=None):
+        name = 'V267_session_three_member_group_is_atomic' if group else 'V261_session_immutable_wire_ledger'
+        trace = deepcopy(self.vectors[name]['positive']['trace'])
+        trace.pop('request_lifecycles', None)
+        request_index = next(i for i, step in enumerate(trace['messages']) if step['message']['kind'] == 'request')
+        action = deepcopy(trace['messages'][request_index + 1])
+        trace['messages'] = trace['messages'][:request_index + 1]
+        trace['allow_open_requests'] = True
+        for step in trace['messages']:
+            msg = step['message']
+            if msg['kind'] == 'welcome':
+                msg['rules']['invalid_action_policy'] = policy
+            if msg.get('event', {}).get('type') == 'start_game':
+                msg['event']['rules']['invalid_action_policy'] = policy
+        if start is not None:
+            trace['messages'][-1]['group_start'] = start
+        welcome = trace['messages'][2]['message']
+        receiver = self.receiver(welcome)
+        for step in trace['messages'][3:]:
+            receiver.receive(self.raw(step['message']))
+        request = deepcopy(trace['messages'][-1]['message'])
+        for key in ('yamai', 'session_id', 'game_id', 'kind', 'seq'):
+            request.pop(key)
+        deadline = welcome['rules']['time_control']['grace_ms'] + request['timeout_ms'] + request['time_bank_ms']
+        request.update(remaining_ms=deadline if remaining is None else remaining, selection=deepcopy(selection))
+        if group:
+            request['decision_group_remaining_ms'] = request['decision_group_deadline_ms'] if group_remaining is None else group_remaining
+        game = deepcopy(receiver.game)
+        bank = receiver.time_bank_ms
+        if selection is not None:
+            request['remaining_ms'] = 0
+            game.acknowledge(request, {**selection, 'status': 'defaulted'})
+            bank = selection['time_bank_ms']
+            game.round['self_state']['time_bank_ms'] = bank
+        game.round['turn'].update(last_event_seq=receiver.last_event_seq, last_event=deepcopy(game.last_cause))
+        state = {k: deepcopy(welcome[k]) for k in ('mode', 'view', 'seat', 'players')}
+        state.update(scores=game.scores, kyotaku=game.kyotaku, game_phase=game.game_phase,
+                     kyoku=game.round, next_kyoku=None, final_rankings=None, pending_requests=[request], time_bank_ms=bank)
+        snapshot = {k: welcome[k] for k in ('yamai', 'session_id', 'game_id')}
+        snapshot.update(kind='snapshot', seq=receiver.applied + 1, replaces_through_seq=receiver.applied, state=state)
+        if ingress is not None:
+            action['at_ms'], action['message']['action_id'] = ingress
+            trace['messages'].append(action)
+        trace['messages'].append(dict(at_ms=at_ms, direction='out', client_id='peer',
+                                      transaction_id='snapshot', operation_id='snapshot', message=snapshot))
+        return trace
+
+    def test_live_open_snapshot_cannot_run_ahead_of_capture(self):
+        for remaining, valid in ((21000, True), (20999, True), (20998, False), (18000, False)):
+            with self.subTest(remaining=remaining):
+                trace = self.live_snapshot(remaining=remaining)
+                if valid:
+                    self.check_ledger(trace)
+                else:
+                    with self.assertRaisesRegex(v.ArtifactError, 'live snapshot clock'):
+                        self.check_ledger(trace)
+
+    def test_live_snapshot_timeout_and_user_selection_need_original_evidence(self):
+        for at_ms, source, elapsed, ingress, valid in (
+                (8, 'default', 21000, None, False), (21007, 'default', 21000, None, True),
+                (8, 'user', 1, None, False), (8, 'user', 1, (8, 'a1'), True),
+                (9, 'user', 2, (8, 'a1'), False)):
+            selection = LedgerResumeCaptureTests.selected(elapsed=elapsed, source=source)
+            with self.subTest(at_ms=at_ms, source=source, elapsed=elapsed, ingress=ingress):
+                trace = self.live_snapshot(at_ms=at_ms, selection=selection, ingress=ingress)
+                if valid:
+                    self.check_ledger(trace)
+                else:
+                    with self.assertRaises(v.ArtifactError):
+                        self.check_ledger(trace)
+
+    def test_live_snapshot_preserves_queued_open_and_early_default_controls(self):
+        # A snapshot fixed before ingress may still be waiting in the queue.
+        self.check_ledger(self.live_snapshot(at_ms=10, remaining=21000, ingress=(9, 'a1')))
+        with self.assertRaisesRegex(v.ArtifactError, 'OPEN snapshot follows'):
+            self.check_ledger(self.live_snapshot(at_ms=10, remaining=20997, ingress=(9, 'a1')))
+        selected = LedgerResumeCaptureTests.selected(elapsed=1, source='default')
+        self.check_ledger(self.live_snapshot(selection=selected, ingress=(8, 'bad'), policy='default'))
+        with self.assertRaisesRegex(v.ArtifactError, 'no captured input'):
+            self.check_ledger(self.live_snapshot(selection=selected, policy='default'))
+
+    def test_live_snapshot_selection_waits_for_buffered_request_start(self):
+        selection = LedgerResumeCaptureTests.selected(elapsed=0)
+        self.check_ledger(self.live_snapshot(at_ms=10, selection=selection, ingress=(8, 'a1'), start=10))
+        with self.assertRaisesRegex(v.ArtifactError, 'live snapshot clock'):
+            self.check_ledger(self.live_snapshot(at_ms=9, selection=selection, ingress=(8, 'a1'), start=10))
+
+    def test_live_group_snapshot_binds_local_ingress_and_group_clock(self):
+        selected = dict(action_id='h', source='user', elapsed_ms=1, time_bank_ms=1)
+        self.check_ledger(self.live_snapshot(group=True, selection=selected, ingress=(8, 'h'), group_remaining=2))
+        with self.assertRaisesRegex(v.ArtifactError, 'no captured input'):
+            self.check_ledger(self.live_snapshot(group=True, selection=selected, group_remaining=2))
+        with self.assertRaisesRegex(v.ArtifactError, 'group clock'):
+            self.check_ledger(self.live_snapshot(group=True, selection=selected, ingress=(8, 'h'), group_remaining=1))
+        self.check_ledger(self.live_snapshot(group=True, at_ms=9, remaining=3,
+                                            ingress=(8, 'h'), group_remaining=3))
+        with self.assertRaisesRegex(v.ArtifactError, 'OPEN snapshot follows'):
+            self.check_ledger(self.live_snapshot(group=True, at_ms=9, remaining=1,
+                                                ingress=(8, 'h'), group_remaining=1))
+        # Closed-group zero is not an elapsed-time claim.
+        trace = self.live_snapshot(group=True, selection=selected, ingress=(8, 'h'), group_remaining=0)
+        self.check_ledger(trace)
+
+    def test_queued_resume_open_snapshot_can_precede_post_checkpoint_ingress(self):
+        helper = LedgerResumeCaptureTests()
+        for remaining, valid in ((20004, True), (19998, True), (19997, False)):
+            with self.subTest(remaining=remaining):
+                source = self.live_snapshot(at_ms=10, remaining=remaining, ingress=(9, 'a1'))
+                trace = helper.resume_trace(source, through=4, offset=1000,
+                                            keep_actions=True, compact=False)
+                helper.retain(trace, issued_at_ms=7)
+                if valid:
+                    self.check_ledger(trace)
+                else:
+                    with self.assertRaisesRegex(v.ArtifactError, 'OPEN snapshot follows'):
+                        self.check_ledger(trace)
+        source = self.live_snapshot(at_ms=10, remaining=20004)
+        trace = helper.resume_trace(source, through=4, offset=1000, keep_actions=True, compact=False)
+        helper.retain(trace, helper.selected(elapsed=900), issued_at_ms=7)
+        with self.assertRaisesRegex(v.ArtifactError, 'reopened a retained selection'):
+            self.check_ledger(trace)
+
+    def test_post_resume_new_request_uses_its_new_snapshot_clock(self):
+        helper = LedgerResumeCaptureTests()
+        for remaining, valid in ((21000, True), (20999, True), (20998, False)):
+            with self.subTest(remaining=remaining):
+                source = self.live_snapshot(remaining=remaining)
+                trace = helper.resume_trace(source, through=3, offset=1000, keep_actions=True, compact=False)
+                if valid:
+                    self.check_ledger(trace)
+                else:
+                    with self.assertRaisesRegex(v.ArtifactError, 'live snapshot clock'):
+                        self.check_ledger(trace)
+
+
 class LedgerStartClockTests(_LedgerTraceFixture):
     def buffered_turn(self, start):
         trace = deepcopy(self.vectors['V261_session_immutable_wire_ledger']['positive']['trace'])
