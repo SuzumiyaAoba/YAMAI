@@ -2,6 +2,14 @@
 
 このディレクトリはYAMAI 仕様書 `1.0-draft.1` の制御フローを有限状態へ射影した6モデルを収録する。JSON parser、麻雀の合法手・点数エンジン、認証実装を置き換えるものではない。実際のwireと採点の検査範囲は[検証ガイド](../README.md)および公式vectorを併せて確認する。
 
+[仕様案内](../../docs/README.md) / [検証ガイド](../README.md) / [規範本文](../../docs/yamai-protocol.md)
+
+## 読み方
+
+[6モデルの範囲](#6モデルの範囲)と[検証の限界](#検証の限界)で対象を確認してから、[実行方法](#実行方法)へ進む。時間的性質を報告する場合は[前提](#時間的性質と前提)を添え、各checkの実行結果と具体的run・witnessの結果を区別する。
+
+本書はモデルと検査方法の説明であり、特定の commit の実行結果ではない。環境、対象 commit、実行したcheckと未実行のcheckを記録する。
+
 ## 6モデルの範囲
 
 | モデル | 検証する対象 | 有限境界と解釈 |
@@ -61,7 +69,7 @@ nix develop --command quint verify --backend tlc verification/quint/yamai_resume
 nix develop --command quint test verification/quint/yamai_resume_delivery.qnt
 ```
 
-Nixの各出力にはquint-verify.log、時間的性質がある場合はquint-verify-temporal.log、quint-tests.log、quint-witness.logを残す。checkの正確なコマンドと不変条件一覧は[flake.nix](../../flake.nix)に固定する。
+ログは各checkの出力に保存する。安全性・時間的性質・witnessが別checkの場合は出力も分かれ、witness出力だけでは依存先の検証ログを含まない。安全性は `quint-verify.log`、時間的性質は通常 `quint-verify-temporal.log`（detachedは `quint-temporal.log`）、具体的runと到達性は `quint-tests.log` / `quint-witness.log` を参照する。checkの正確な依存関係・コマンド・不変条件一覧は[flake.nix](../../flake.nix)に固定する。
 
 TLC backendはq_init/q_stepの有限到達状態を検査する。CLIのmax-stepsを用いたランダムシミュレーションの成功と混同しない。runはTLCの状態機械から除かれ、quint testで別途実行する。
 
@@ -95,7 +103,6 @@ Nix環境のquint wrapperは、verify/compileごとに未使用のloopback port�
 `yamai_detached_seats` は、準備前・OPEN・SELECTEDでのfatal閉鎖を扱い、閉鎖時の選択/時計/ledgerを保存する。次の反応groupと自摸番の2判断が通常期限のdefaultで解決されることを安全性・時間的性質・12個の具体的runで確認する。prepare/start/tick/default/resolve/next_decisionが弱公平に進むことと、存続sessionに必要な出力容量があることを前提とする。game-scoped bankだけをモデル化し、kyoku補充や全閉鎖seat集合はPython契約の独立検査で補う。
 
 固定seed20261001、70step、1,000sampleのRust実行で5witness全ての到達を要求する。TLCによる有限到達グラフ全体の安全性/temporal検査とは別の到達性確認である。実装全体のrefinementや暗号学的token管理を証明するものではない。
-
 
 ## 新しい要求と再開同期の境界
 

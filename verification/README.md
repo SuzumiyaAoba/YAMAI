@@ -1,13 +1,39 @@
 # YAMAI 検証ガイド
 
-本書は YAMAI draft 1 の検査方法、適合35項目との対応、各検査の範囲を定義する。Protocol Version と `riichi-4p` revision は `1.0-draft.1`。規範要件は [仕様書](../docs/yamai-protocol.md)、対象ファイルは [release manifest](../release-manifest.json) に従う。
+本書は YAMAI draft 1 の検査方法、適合35項目との対応、各検査の範囲を説明する。Protocol Version と `riichi-4p` revision は `1.0-draft.1`。規範要件は [仕様書](../docs/yamai-protocol.md)、対象ファイルは [release manifest](../release-manifest.json) に従う。
+
+[仕様案内](../docs/README.md) / [規範本文](../docs/yamai-protocol.md) / [成果物の仕様](../docs/artifacts.md) / [形式モデル](quint/README.md)
+
+## 読み方
+
+まず[実行方法](#実行方法)、[検査の役割](#検査の役割)、[検証の範囲](#検証の範囲)を確認する。特定の要件を追う場合は[適合35項目との対応](#適合35項目との対応)から公式vector・回帰へ進む。
+
+本書は検査方法と収録された検査の範囲を示す。特定の commit で全検査が実行済みであることを示す実行記録ではない。結果を報告するときは、対象 commit・実行環境・実行したコマンドと、失敗・未実行の検査を区別する。
+
+| 調べたいこと | 参照先 |
+|---|---|
+| まず整合性を確認したい | [成果物検査](#1-成果物の整合性)、[Python回帰](#2-python-の回帰と採点) |
+| 独立Schema・固定環境・形式検証を実行したい | [固定環境での検査](#3-独立schema検査と固定環境)、[Quintの実行方法](quint/README.md#実行方法) |
+| 検査層と保証の限界を知りたい | [検査の役割](#検査の役割)、[検証の範囲](#検証の範囲)、[境界条件](#境界条件の検査) |
+| 規範のどこをどの試験で扱うか知りたい | [適合35項目](#適合35項目との対応)、[領域別の回帰](#領域別の回帰と補足) |
+| 再開用captureを作りたい | [復旧・局結果の対照回帰](#復旧局結果の対照回帰)、[fixtureのwire生成](#反復差分検査とfixtureのwire生成) |
+| 文書を編集・閲覧したい | [文書の原本と生成物](../docs/artifacts.md#文書の原本と生成物) |
 
 ## 実行方法
 
-コマンドはリポジトリのルートで実行する。次の検査には Python 3 の標準ライブラリだけを使用する。
+コマンドはリポジトリのルートで実行する。1と2は Python 3 の標準ライブラリだけを使用する。3の独立 Schema 検査には追加パッケージが、形式検証には固定した toolchain が必要になる。
+
+### 1. 成果物の整合性
 
 ```sh
 python3 scripts/validate_artifacts.py
+```
+
+これは本文例・manifest・Schema・registry・hash・公式vectorの整合性を確認する入口であり、以下の全回帰や形式検証をまとめて実行するコマンドではない。
+
+### 2. Python の回帰と採点
+
+```sh
 python3 scripts/test_validator.py
 python3 scripts/test_exact_decimal.py
 python3 scripts/test_scoring_reference.py
@@ -20,7 +46,15 @@ python3 tests/test_regressions.py
 python3 scripts/score_oracle.py
 ```
 
-[flake.nix](../flake.nix) と [flake.lock](../flake.lock) は Python、JSON Schema 検査実装、Quint、TLC、Java、Z3 を含む検証環境を固定する。Nix の flakes が有効な環境では、次のコマンドで上記の検査、独立した Draft 2020-12 検査、6つの形式モデルの検査を実行できる。
+### 3. 独立Schema検査と固定環境
+
+`jsonschema` と `referencing` が利用できる Python 環境では、独立した Draft 2020-12 検査を個別に実行できる。このコマンドは意味検査や回帰テストを代替しない。
+
+```sh
+python3 scripts/check_jsonschema.py
+```
+
+再現可能な固定環境で実行する場合は Nix を使用する。[flake.nix](../flake.nix) と [flake.lock](../flake.lock) は Python、JSON Schema 検査実装、Quint、TLC、Java、Z3 を含む検証環境を固定する。Nix の flakes が有効な環境では、次のコマンドで上記の検査、独立した Draft 2020-12 検査、6つの形式モデルの検査を実行できる。
 
 ```sh
 nix flake check path:. --no-update-lock-file
@@ -32,7 +66,11 @@ nix flake check path:. --no-update-lock-file
 nix build path:.#checks.aarch64-darwin.artifact-validator --no-link --print-out-paths
 ```
 
-出力ディレクトリには `validate.log`、各回帰テストのログ、`jsonschema.log`、`score-oracle.log` が保存される。形式モデルを個別に実行する方法、有限境界、時間的性質と前提は [Quint モデルの説明](quint/README.md) を参照する。
+artifact-validator の出力ディレクトリには `validate.log`、各回帰テストのログ、`jsonschema.log`、`score-oracle.log` が保存される。形式モデルを個別に実行する方法、有限境界、時間的性質と前提は [Quint モデルの説明](quint/README.md) を参照する。
+
+### 4. 結果の読み方
+
+Python の個別コマンドが成功しても、`nix flake check` 全体、別OS、実ネットワーク、独立実装間の相互運用試験が成功したことにはならない。Nix の対象systemを変更した場合は、そのsystem上の実行結果を別に確認する。HTML 生成も検証gateの代わりにはならない。
 
 ## 検査の役割
 
@@ -54,6 +92,46 @@ nix build path:.#checks.aarch64-darwin.artifact-validator --no-link --print-out-
 stateful trace は1つの peer session の時刻付き message と不変の wire ledger を照合する。transaction 境界、request/ACK の終端、timeout、snapshot 置換、情報公開範囲を検査し、他 seat の選択は全3 member の request lifecycle trace と組み合わせて確認する。
 
 採点検査は fixture の期待値や ID から結果を選ばず、手牌・ルール・event 投影を入力として計算する。`score_oracle.py` と `scoring_reference.py` は同じ採点実装である。
+
+## 検証の範囲
+
+- 標準ライブラリの validator は、この版で使用する JSON Schema assertion の部分集合を実装する。未対応 keyword と nested `$id` は拒否する。Nix の検査では固定した JSON Schema 実装によるメタ Schema と正例の検査も行う。
+- game_contractは完全な1判断局面の候補生成、精算済み条件からの次局、受信者が観測できるevent状態を検査する。和了では役IDの重複・排他、複合役満の両立、門前／副露、適用ルール、公開されたリーチ・和了原因と20符・25符の例外条件との整合を検査してから、符・飜・役満による金額、本場・供託・責任払いを含む差額を照合する。和了牌・可視手牌・公開副露の牌種条件、字牌面子の残り枠、公開面子で確定する役の欠落と符の下限も検査する。他家の非公開手牌やホストの牌山順列は復元しない。これらの必要条件の通過だけで非公開部分の役・符の成立を証明したとは扱わず、完全な判定にはホストの完全情報と採点fixtureが必要である。
+- event 投影の fixture は event payload と前後状態を検査する。envelope、request、ACK の配送と時計は wire trace、request contract、形式モデルで扱い、Receiver で観測可能な部分を接続する。
+- 6つの形式モデルは、それぞれの有限境界と環境仮定の下で性質を検査する。牌の全組合せ、任意の拡張・ネットワーク、認証サービス、実装コードとの refinement 証明、モデル間の合成証明は対象外である。
+
+### 規範起点の反復レビュー範囲
+
+既存試験の再実行に加え、次の本文領域をSchema・registry・検査実装・fixture・有限モデルの担当範囲へ対応付け、独立した生成ケースと修正後レビューで照合する。
+
+| 本文領域 | 照合した規範と追加探索 | 残る境界 |
+|---|---|---|
+| §1–6、§14、§16、§19–20 | 完全一致の交渉、閉じた識別子、JSON/UTF-8と分割frame、hash identityと不透明データ、拡張Schema分離、manifest | 相互運用・完全な拡張意味検査は別実装・所有者の試験を必要とする |
+| §3、§5、§6、§12–13、Appendix A | 初期化、連続prefix、byte再送、fatal優先、snapshot生成/復旧権限、mode、終了後再利用、原子的拒否 | 単一peerのcaptureにない別sessionの秘密選択や外部記録の由来は補わない |
+| §7、§10、§11 | 牌在庫、合法候補、リーチ/槓/振聴、局進行、採点投影、役/符/精算、public/full/座席投影 | 非公開手牌の成立を必要条件の検査だけで証明しない |
+| §8–9、§13、§15、Appendix A | 全3seatの優先順位、期限前後、固定時計、再送、取消し、全DETACHED組合せ、資源境界 | ホスト全体のschedulerと実ネットワークの進行性は実運用検査を必要とする |
+| §17–18 | 適合項目、秘密情報を含まない投影、tokenと信頼されたtransportの境界 | 実サービスの認可・TLS・乱数強度・秘密を含む任意注釈は、このfixtureだけでは証明しない |
+| 有限モデルと上記本文 | ACK生成のseat昇順prefix、全6安全性、13時間的性質、具体runと複数seedの到達性 | モデル間の合成証明やPython実装へのrefinement証明ではない |
+
+変更のたびに最小再現、正しい隣接例、回帰、別seed/別視点の再探索を行う。完了判定はこの範囲の検査成功と未解決の確証ある指摘がないことであり、未知の欠陥が存在しない保証ではない。
+
+## 境界条件の検査
+
+| 対象 | 主な検査 |
+|---|---|
+| 交渉と識別子 | version/profile/hash の組、mode/view の拒否理由、文字列全体の制約、session ごとの拡張Schema |
+| JSON と方向 | 不正JSON、frame、未交渉の kind、送信方向。同じ seq や置換済み範囲でも必要な構造検査を行う |
+| 要求とACK | 全3人の選択、期限ちょうどの既定選択、選択元と計時の固定、優先結果、不採用・見送り・取消しと結果eventの対応 |
+| 再接続とsnapshot | 不変の再送範囲、範囲内のsnapshot、未使用seq、終端要求を復活させないこと、transaction途中の置換拒否、連続prefixの状態照合、残時間・選択・ACKの時計の単調性 |
+| 牌と公開履歴 | 河と副露の一致、赤五を含む加槓、槓宣言牌の在庫、リーチ成立、複合打牌、槓ドラ公開時点 |
+| 局進行 | 通常・途中流局、次局、延長の場風循環、配牌回数、局内・局間・終局での復元 |
+| 採点と精算 | 全和了fixture、複数ロンの共有局面、役・符・本場・供託・責任払い、表裏表示牌を含む物理牌在庫 |
+| 原子性 | 不正入力の拒否で既存状態を部分更新しないこと、失敗した再開でtokenを消費しないこと |
+| hash | identity hashだけを正規化し、同じ文字列を持つ注釈・配列・nested member・wireの他のbyteを保持すること |
+
+公式ベクトルの `schema_negative: true` は、独立した JSON Schema 検査でも拒否すべき入力を指定する。残りの意味的な不正入力は、状態検査や採点検査で拒否を確認する。完結した wire trace では、見送りや不採用の ACK に対応する結果も検査する。
+
+検査の成功は各検査層の範囲内の結果である。適合表明は [仕様書第17節](../docs/yamai-protocol.md#17-適合性) に従い、独立実装間の相互運用性は別途検証する。
 
 ## 適合35項目との対応
 
@@ -97,6 +175,12 @@ stateful trace は1つの peer session の時刻付き message と不変の wire
 | 34 | §7.2/10.3 | V151–V175/V241–V249 | 連続槓・リーチの取消し、延長の上限と通し番号 |
 | 35 | §11/13.3 | V53–V62/V143–V150/V264–V265 | snapshot・last_eventを含む全viewの非漏洩 |
 
+## 領域別の回帰と補足
+
+以下は対応表だけでは表しきれない検査入力・対照例・観測限界の説明である。新しい wire member や規範要件を定義するものではない。capture 専用の注釈は wire 上のデータと区別する。
+
+### snapshot・初期化・配送の回帰
+
 V409–V410は項目18のsnapshot復元を補完する。嶺上手番と、その嶺上牌から連続槓を宣言した反応待ちの両方で、他seatの一発資格を復活させる負例を拒否する。正常な一発なしの復元と、拒否時の状態・ledger・適用seqの原子性も回帰検査する。N37–N41の対照として、第一自摸、一発なしのリーチ嶺上和了、暗槓を含む通常流局の正例を使用する。未成立の槓宣言への槍槓では一発・第一巡資格を誤って失効させないことも確認する。
 
 V411–V417は、初期化・mode別のエラー優先順・後着通知・観戦初期snapshot・WebSocketの空payloadを補完する。Receiver回帰ではplay/spectate/replay、現在と未来のseq、同一byteの再送と別seqの再通知、resume/snapshotを挟む同一attempt、観戦初期snapshotを欠落後に再送する経路を区別する。WebSocketの実frame、Closeの送信、失敗後のdata停止はtransport実装での結合試験対象であり、このpayload検査だけではRFC 6455の接続終了を実証しない。
@@ -109,11 +193,15 @@ Receiverとvalidatorの回帰テストは項目15・16・30を補完する。Rec
 
 観戦初期化の追加回帰では、途中参加sessionの初期snapshot要件が欠番検出後も残り、start_gameで代用できないことを確認する。再開welcomeは新しいtokenを要求し、現在・過去のtoken再利用、および既に受信または告知されたseq上限の巻戻しを拒否する。拒否した再開はtoken履歴・適用位置・復旧状態を変更しない。V384–V388の正常な再開もtokenを更新し、V384–V387は初回の告知上限と後の再開範囲を一致させる。
 
+### 拡張Schema・fixture・数値の回帰
+
 拡張Schemaの回帰では、交渉済みerror制約をHost/Player両方向のapplication入口へ適用し、方向固有のenvelope制約とsession分離を保持する。独立したDraft 2020-12実装でも合成結果を検査する。検査fixture自身の回帰では、JSONL chunk・WebSocket fragmentの型不正を拒否し、資源カウンタにbooleanを受理しない。これらは検証ハーネスの入力検査であり、実transport実装の検証を代替しない。manifestのrepository外参照は、symlinkを経由する場合も拒否する。
 
 数値の回帰テストは、有限な小数の受信、拡張候補の数値同値性、`multipleOf` の厳密な判定を検査する。binary64への変換やDecimal contextの精度によって結果を変えず、巨大な指数差でもその指数分の整数を展開しない。要求の回帰では、交渉済みgraceを含むgroup期限を現在・未来seqの両方で検査し、拒否されたattemptと固定済みselectionの時計を分離する。未知requestのrecoverable診断やreject-policyのACK・errorを入力ごとに照合し、診断ID省略、再送、期限後と終局後を区別する。公開手牌の回帰では、全4面子から否定できる役の申告を拒否し、正しい隣接形と非公開部分が残る局面を区別する。
 
 単独requestの起点と入力履歴が揃うcaptureでは、診断応答の過不足も検査する。groupの診断はrequest lifecycleと組み合わせ、snapshotで省略された過去の診断は復旧検査の範囲として扱う。受信側に記録がないrequest IDを、ホストにも未知であると推測してはならない。
+
+### 合法候補・公開局面・識別子の回帰
 
 private actionの候補検査は、名前付き引数・配列順・入れ子objectを保持した構造比較で完全同値の重複を拒否する。所有者が注釈として定めたmemberを除いた意味的同値性や、core action上の状態を変えるnamespaced memberの意味検査は、所有capabilityの実装が別途行う。この参照検査の通過だけで、意味検査を持たないendpointがその拡張に対応していると表明してはならない。
 
@@ -123,6 +211,8 @@ private actionの候補検査は、名前付き引数・配列順・入れ子obj
 
 V423–V425は安定capabilityの閉じた列挙を検査する。`hello` / `join` のrequired・optionalと `welcome.capabilities` で、登録済みの `resume` / `snapshot` および妥当な実験値を正例とし、未登録の安定値をSchemaと意味検査の両方で `invalid_message` として拒否する。交渉回帰ではjoin-proposal入口、双方の同じ未知値の提示、版・profile・view・limit違反との優先順と拒否時の非変更を確認する。登録済み必須機能のpeer不対応と未知の必須実験値は従来どおり `unsupported_capability`、片側だけの任意実験値は無視し、交渉済み拡張Schemaの検査も維持する。registry・Schema・実装の登録済み安定値の一致をrelease検査で確認する。
 
+### 生成理由・取消し・役・mode・期限の回帰
+
 V430–V434は、規範本文から再点検した生成理由・取消し・役・mode・期限の境界を検査する。
 
 - V430: 新snapshotの生成にはresume/gap回復または観戦初期化の根拠を必要とする。V428/V429の時計正例にも実際のgap要求を含める。受信者が区別できない保持済みsnapshotの再送は引き続き許可する
@@ -130,6 +220,8 @@ V430–V434は、規範本文から再点検した生成理由・取消し・役
 - V432: 三家和では可視の全手牌が完成形であるだけでなく、有効なロンの役条件も満たす。リーチ・河底等で確定する役は許可し、非公開部分や拡張役の所有者に属する判定を推測しない
 - V433: 観戦/replayからのactionは、終局後や同じtransportの旧sessionでもfatalなmode違反となる。旧play sessionの正常な後着actionの破棄とは区別する
 - V434: 飽和したbacklogが未配送のままなら60,000msちょうどと超過後をともに失効とする。59,999msは許可する
+
+### 採点状態・リーチ履歴・hashの回帰
 
 N42–N44と対応正例は、槓の採点投影で宣言牌と成立牌を一致させ、第一巡ロンの席順・live wall残数を照合し、通常流局fixtureの評価seat 0が成立リーチなら門前・聴牌・供託を要求する。第一自摸時の未成立暗槓への国士槍槓、他seatのノーテン、暗槓を持つ門前聴牌を正例として維持する。
 
@@ -143,57 +235,17 @@ snapshotでも、doubleとippatsuがともにtrueなら成立した鳴きはな�
 
 artifact検査の回帰では、namespaced注釈内のmessage形object・wire文字列、およびSchemaのconst/default/exampleをhashから消さないことを検査する。主負例と `negative_variants` のtraceは同じ意味検査へ通し、正しいtraceをmessage Schemaの形違反だけで負例と数えない。V331の追加trace負例も実際の遷移検査を通る。
 
-### 規範起点の反復レビュー範囲
-
-既存試験の再実行に加え、次の本文領域をSchema・registry・検査実装・fixture・有限モデルの担当範囲へ対応付け、独立した生成ケースと修正後レビューで照合する。
-
-| 本文領域 | 照合した規範と追加探索 | 残る境界 |
-|---|---|---|
-| §1–6、§14、§16、§19–20 | 完全一致の交渉、閉じた識別子、JSON/UTF-8と分割frame、hash identityと不透明データ、拡張Schema分離、manifest | 相互運用・完全な拡張意味検査は別実装・所有者の試験を必要とする |
-| §3、§5、§6、§12–13、Appendix A | 初期化、連続prefix、byte再送、fatal優先、snapshot生成/復旧権限、mode、終了後再利用、原子的拒否 | 単一peerのcaptureにない別sessionの秘密選択や外部記録の由来は補わない |
-| §7、§10、§11 | 牌在庫、合法候補、リーチ/槓/振聴、局進行、採点投影、役/符/精算、public/full/座席投影 | 非公開手牌の成立を必要条件の検査だけで証明しない |
-| §8–9、§13、§15、Appendix A | 全3seatの優先順位、期限前後、固定時計、再送、取消し、全DETACHED組合せ、資源境界 | ホスト全体のschedulerと実ネットワークの進行性は実運用検査を必要とする |
-| §17–18 | 適合項目、秘密情報を含まない投影、tokenと信頼されたtransportの境界 | 実サービスの認可・TLS・乱数強度・秘密を含む任意注釈は、このfixtureだけでは証明しない |
-| 有限モデルと上記本文 | ACK生成のseat昇順prefix、全6安全性、13時間的性質、具体runと複数seedの到達性 | モデル間の合成証明やPython実装へのrefinement証明ではない |
-
-変更のたびに最小再現、正しい隣接例、回帰、別seed/別視点の再探索を行う。完了判定はこの範囲の検査成功と未解決の確証ある指摘がないことであり、未知の欠陥が存在しない保証ではない。
-
-## 検証の範囲
-
-- 標準ライブラリの validator は、この版で使用する JSON Schema assertion の部分集合を実装する。未対応 keyword と nested `$id` は拒否する。Nix の検査では固定した JSON Schema 実装によるメタ Schema と正例の検査も行う。
-- game_contractは完全な1判断局面の候補生成、精算済み条件からの次局、受信者が観測できるevent状態を検査する。和了では役IDの重複・排他、複合役満の両立、門前／副露、適用ルール、公開されたリーチ・和了原因と20符・25符の例外条件との整合を検査してから、符・飜・役満による金額、本場・供託・責任払いを含む差額を照合する。和了牌・可視手牌・公開副露の牌種条件、字牌面子の残り枠、公開面子で確定する役の欠落と符の下限も検査する。他家の非公開手牌やホストの牌山順列は復元しない。これらの必要条件の通過だけで非公開部分の役・符の成立を証明したとは扱わず、完全な判定にはホストの完全情報と採点fixtureが必要である。
-- event 投影の fixture は event payload と前後状態を検査する。envelope、request、ACK の配送と時計は wire trace、request contract、形式モデルで扱い、Receiver で観測可能な部分を接続する。
-- 6つの形式モデルは、それぞれの有限境界と環境仮定の下で性質を検査する。牌の全組合せ、任意の拡張・ネットワーク、認証サービス、実装コードとの refinement 証明、モデル間の合成証明は対象外である。
-
-## 境界条件の検査
-
-| 対象 | 主な検査 |
-|---|---|
-| 交渉と識別子 | version/profile/hash の組、mode/view の拒否理由、文字列全体の制約、session ごとの拡張Schema |
-| JSON と方向 | 不正JSON、frame、未交渉の kind、送信方向。同じ seq や置換済み範囲でも必要な構造検査を行う |
-| 要求とACK | 全3人の選択、期限ちょうどの既定選択、選択元と計時の固定、優先結果、不採用・見送り・取消しと結果eventの対応 |
-| 再接続とsnapshot | 不変の再送範囲、範囲内のsnapshot、未使用seq、終端要求を復活させないこと、transaction途中の置換拒否、連続prefixの状態照合、残時間・選択・ACKの時計の単調性 |
-| 牌と公開履歴 | 河と副露の一致、赤五を含む加槓、槓宣言牌の在庫、リーチ成立、複合打牌、槓ドラ公開時点 |
-| 局進行 | 通常・途中流局、次局、延長の場風循環、配牌回数、局内・局間・終局での復元 |
-| 採点と精算 | 全和了fixture、複数ロンの共有局面、役・符・本場・供託・責任払い、表裏表示牌を含む物理牌在庫 |
-| 原子性 | 不正入力の拒否で既存状態を部分更新しないこと、失敗した再開でtokenを消費しないこと |
-| hash | identity hashだけを正規化し、同じ文字列を持つ注釈・配列・nested member・wireの他のbyteを保持すること |
-
-公式ベクトルの `schema_negative: true` は、独立した JSON Schema 検査でも拒否すべき入力を指定する。残りの意味的な不正入力は、状態検査や採点検査で拒否を確認する。完結した wire trace では、見送りや不採用の ACK に対応する結果も検査する。
-
-検査の成功は各検査層の範囲内の結果である。適合表明は [仕様書第17節](../docs/yamai-protocol.md#17-適合性) に従い、独立実装間の相互運用性は別途検証する。
-
-## 資源・transport境界の追加検査
+### 資源・transport境界の追加検査
 
 `python3 scripts/test_resource_contract.py` は有限予算のちょうどの上限と超過、別IDの後着attempt、無応答の重複input、累積replayの消費と原子性を検査する。counterはsessionが所有し、queue排出やsnapshot、再接続で新しいSessionBudgetを生成してはならない。参考値はサービス設定の出発点であり、wireの受信上限の追加ではない。
 
 `test_session_contract.py` は送信圧迫状態の微量drain、予約された結果の配送期限、およびWebSocketからJSONLへの復旧時に元payloadを変更せずsnapshotまたは拒否へfallbackする境界を検査する。replay_plan traceの省略可能なtarget_transportはwebsocket（既定）またはjsonlを指定する。`snapshot=True` は、呼出し側が交渉と内容を検証したsnapshotを提供できることを表し、helper自体によるsnapshot生成・妥当性証明ではない。
 
-## Fatal終了seatの継続
+### Fatal終了seatの継続
 
 §8.1.2のDETACHEDは新しいwire messageではなく、host内部のseat制御状態である。request_contractとdetached_contractの回帰は、閉鎖前の選択保存、元deadlineでのdefault、以後の単独/全3member判断、通常のbank消費、閉鎖sessionのwire停止と再開/途中交代の拒否を検査する。通常の通信断はDETACHEDにせず再配送履歴を保持する。閉鎖sessionの資源予算を内部game進行へ再利用しないが、game全体の資源枯渇やhost停止を解決するものではない。
 
-## 復旧・局結果の対照回帰
+### 復旧・局結果の対照回帰
 
 resumeのcaptureでは、元のrequest発行・選択と、同じledgerを再配送した時刻を区別する。過去のaccepted/defaulted ACKや診断を再送するために、新しい接続で元のactionを再入力してはならない。OPEN requestへ再開後に入力する場合も元の時計を使い、再配送でG/T/Bを付与し直さない。交渉順序とreplay範囲の完了前に送られたactionも別途検査する。
 
@@ -217,26 +269,25 @@ request IDの回帰は、自分宛ての要求とgroup descriptorで観測した
 
 局結果の回帰では、最終通常自摸のsnapshotが海底資格を保持すること、同じリーチ宣言打牌へのpenaltyで供託を控除しないこと、全手牌が可視の国士無双に必要な13種が揃うことを検査する。最終嶺上、リーチ成立後の次手番のpenalty、非公開手牌が残るviewは合法な対照例として区別する。これらは観測可能な必要条件の検査であり、受信者による非公開手牌の復元を要求しない。
 
-## 公開履歴から確定するsnapshotと三家和の必要条件
+### 公開履歴から確定するsnapshotと三家和の必要条件
 
 追加回帰では、無副露のsnapshotについて河枚数と親からの手番順を照合する。初回の子自摸、未成立暗槓、複数巡、resolvingを区別し、鳴きによる手番飛ばしへ通常巡の式を適用しない。四家立直・四風連打が採用されていれば必須流局後の局内snapshotを拒否し、4人目の反応待ちとルール無効時の継続は許可する。成立済みリーチの宣言牌より後の河は自摸切りを保持し、宣言牌自体の手出しは許可する。拒否時には受信位置・ledger・対局状態を保持する。
 
 三家和では、打牌に対する可視手牌が和了形を成すという必要条件を既存の待ち計算で検査する。public・full・座席replayを比較し、非公開手牌は推測しない。これは完全な役・フリテン・選択履歴の証明ではなく、それらには既存の採点fixtureとrequest lifecycle検査が必要である。暗槓の国士無双専用条件も維持する。
 
-## 単一判断と通常接続のsnapshot時計
+### 単一判断と通常接続のsnapshot時計
 
 V426–V427はrequest単独の検査でも、同時に存在する判断を単独turn 1個または完全な3人reaction group 1個に限定し、request IDを重複させないことを確認する。group descriptorの3seatから原因actorを確定できるため、chi・pon・daiminkanのtargetはそのactorと一致し、chiは直前seatからだけ許可する。descriptorの配列順やsessionごとの原因seqの違いは保持し、公開されていない原因牌は推測しない。
 
 V428–V429は通常接続、およびresume完了後に新しく発行したrequestのsnapshotを補完する。captureで元の開始時刻を観測したrequestは、残期間・group時計・固定済みselectionがcaptureより未来の時点を表してはならない。明示選択には自seatの入力、defaultには元のdeadline到達またはdefault policyに従う不正入力を必要とする。開始前にbufferした入力を早く固定することも拒否する。入力より前に固定されキューで待っていたOPEN snapshot、正規のtimeout、履歴snapshotの再配送、閉鎖済みgroupの残期間0は正常な対照として維持する。
 
-## 反復・差分検査とfixtureのwire生成
+### 反復・差分検査とfixtureのwire生成
 
-今回の追加探索では、固定vectorに加え、Schemaの型・数値境界・入れ子条件を独立したDraft 2020-12実装と比較し、厳密小数を有理数oracleと照合した。transportはUTF-8・CRLF・複数messageの分割位置を変えて検査する。採点は合法手牌の生成、牌順・牌色・席の対称変換と待ち集合の一致を検査し、要求契約は時計境界の前後、要求・候補順、席回転を独立oracleと照合する。形式モデルの新seed探索はwitness到達を別途確認し、TLCの有限全探索と区別する。乱数検査の成功は未探索入力の正しさやモデルと実装間のrefinement証明を意味しない。
+反復レビューの追加探索では、固定vectorに加え、Schemaの型・数値境界・入れ子条件を独立したDraft 2020-12実装と比較し、厳密小数を有理数oracleと照合した。transportはUTF-8・CRLF・複数messageの分割位置を変えて検査する。採点は合法手牌の生成、牌順・牌色・席の対称変換と待ち集合の一致を検査し、要求契約は時計境界の前後、要求・候補順、席回転を独立oracleと照合する。形式モデルの新seed探索はwitness到達を別途確認し、TLCの有限全探索と区別する。乱数検査の成功は未探索入力の正しさやモデルと実装間のrefinement証明を意味しない。
 
 receiverおよび同一transport再利用のfixtureは、`message`からwireを生成する経路でも、JSON readerが保持した有限小数と巨大な負指数を丸めずに送る。receiver fixtureでは、小数の拡張注釈を含む同じ入力について、明示的な`raw`と`message`のどちらでも受信契約を検査できる。生成器は通常のJSON値のmember順・byte表現を維持し、明示された`raw`やledgerのwireを作り直さない。回帰では入れ子値、低いDecimal精度、3つのseedでの数値roundtrip、非有限値・不正なobject名・surrogateの拒否を確認する。これはcapture fixtureの検査経路の修正であり、wire上の数値規範やJCS profile hashの入力範囲を変更しない。
 
-
-## 復旧・取消し・公開bonusの追加境界
+### 復旧・取消し・公開bonusの追加境界
 
 compactionで元のevent ledgerを省略した再開captureでも、検証済みsnapshotの `last_event_seq` / `last_event` をpending requestの原因として保持する。後続eventへ進んだ後のlifecycle照合にもその権威を用い、元ledgerまたは以前のsnapshotとの矛盾、他seatの候補と原因牌の不一致を拒否する。lifecycle注釈を追加した正常captureを、古いledger entryがないという理由だけで失敗させない。注釈を追加しても必要なACK・結果の省略は許可しない。
 

@@ -2,6 +2,8 @@
 
 本書は、`yamai-1.0-draft.1` を構成する文書、Schema、registry、テストベクトルと検査実装の関係を定義する。通信・対局・採点の規範は [YAMAI 仕様書](yamai-protocol.md) に従う。
 
+[仕様案内](README.md) / [規範本文](yamai-protocol.md) / [検証ガイド](../verification/README.md)
+
 ## 版と適用範囲
 
 | 識別子 | 値 | 固定する対象 |
@@ -15,7 +17,7 @@
 
 `profile_hash` の確定値は [release manifest](../release-manifest.json) と [protocol registry](../registry/protocol/1.0-draft.1/registry.json) に記録する。Protocol Version、profile 名、revision、hash の組を交渉で検査し、値を個別に照合しただけで対応する組とみなしてはならない。
 
-release manifest の `published` は `false` であり、本成果物は draft 1 である。公開された組を取得する場合は manifest の `required_git_tag` に従い、全成果物を同じ commit と tag から取得する。
+release manifest の `published` は `false` であり、本成果物は draft 1 である。開発中の draft を比較・検査するときは対象 commit を記録する。`required_git_tag` は公開時に必要となる tag 名を示し、tag や release が既に公開済みであることの証明ではない。公開された組を取得する場合は、全成果物をその同じ commit と tag から取得する。
 
 ## 文書と検査の責務
 
@@ -32,6 +34,38 @@ release manifest の `published` は `false` であり、本成果物は draft 1
 | HTML | Markdown・MDXから生成する閲覧用文書。認証の実装計画・レビューは参考文書であり、規範本文を追加しない |
 
 Schema は JSON の重複キー、frame 境界、全状態遷移、実時間、点数保存などを単独では保証しない。採点 CLI と artifact validator は同じ `scoring_reference.py` を使い、二つの独立した採点実装として数えない。
+
+## 文書の原本と生成物
+
+Git 管理する Markdown を編集し、HTML は [render_docs.py](../scripts/render_docs.py) で再生成する。生成 HTML を直接編集しても原本には反映されない。MDX と HTML は [.gitignore](../.gitignore) により Git 管理対象外で、release manifest にも含めない。
+
+| 原本 | 生成先 | 位置づけ |
+|---|---|---|
+| [docs/README.md](README.md) | `docs/index.html` | 仕様案内・閲覧の入口 |
+| [docs/yamai-protocol.md](yamai-protocol.md) | `docs/yamai-protocol.html` | 規範本文の閲覧用 |
+| [docs/artifacts.md](artifacts.md) | `docs/artifacts.html` | 成果物の関係と更新手順 |
+| [verification/README.md](../verification/README.md) | `verification/index.html` | 検証ガイド |
+| [verification/quint/README.md](../verification/quint/README.md) | `verification/quint/index.html` | 有限モデルの説明 |
+| ローカルにある `docs/auth-implementation-plan.mdx` | `docs/auth-implementation-plan.html` | 任意の認証実装計画。規範本文ではない |
+| ローカルにある `docs/spec-review.mdx` | `docs/spec-review.html` | 任意のレビュー。規範本文ではない |
+
+リポジトリのルートで、Python 3、Node.js、npm を使用して実行する。既定では mdxr `0.2.0` を npm 経由で呼び出すため、未取得ならパッケージの取得が必要になる。
+
+```sh
+python3 scripts/render_docs.py
+```
+
+同じ版の mdxr をローカルに用意している場合は `python3 scripts/render_docs.py --mdxr /path/to/mdxr` も使用できる。生成後は `docs/index.html` を開く。文書間のリンクは生成先に合わせて変換し、Schema・registry・script へのリンクは元ファイルを参照するため、HTML だけを別ディレクトリへ移すと相対リンクが失われる。
+
+## 変更時の確認手順
+
+1. 規範の変更か、説明・導線の整理かを区別する。規範の意味は [仕様書](yamai-protocol.md) を基準とし、参考文書だけで変更しない。
+2. 対象の Markdown と関連する Schema・registry・vector・検査を照合する。規範の節名や anchor は参照元があるため、変更が必要ならリンクも点検する。
+3. [profile hash の7入力](#profile-hash)を変えた場合は、正規化規則と対応する hash を照合する。Markdown や HTML のみの変更を理由に hash を作り直さない。
+4. [検証ガイド](../verification/README.md#実行方法)に従って、成果物検査と変更箇所に対応する回帰・独立検査を実行する。実行した対象 commit、環境、成功・失敗・未実行の範囲を区別して記録する。
+5. HTML を再生成し、原本と生成物の両方でリンク・コード例・表を確認する。文書を追加・移動した場合は renderer の対応表と manifest の対象も点検する。
+
+文書整理だけでは protocol の版、profile revision、公開状態は変えない。公開・適合表明の条件は[規範本文第16–17節](yamai-protocol.md#16-成果物と版の一致)と本書の[検証と適合表明](#検証と適合表明)に従う。
 
 ## 配置と参照
 
