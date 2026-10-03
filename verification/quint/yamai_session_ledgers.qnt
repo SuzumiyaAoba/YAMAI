@@ -131,4 +131,12 @@ module yamai_session_ledgers {
     .then(all { assert(s.game == Ended), assert(s.pendingStale), assert(s.headA == 7), s' = s })
     .then(flushLateAttempt)
     .then(all { assert(s.game == Ended), assert(s.stale), assert(s.headA == 8), assert(protocol_invariant), s' = s })
+  run cancellationPrecedesPenaltyTest = init.then(startGame).then(firstKyoku)
+    .then(issueGroup).then(rejectAttempt).then(penalty.fail())
+  run cancellationLeavesIndependentHeadsTest = init.then(startGame).then(firstKyoku)
+    .then(issueGroup).then(rejectAttempt).then(cancelGroup)
+    .then(all {assert(s.headA == 5), assert(s.headB == 4),
+      assert(s.requestA == Cancelled), assert(s.requestB == Cancelled), assert(protocol_invariant), s' = s})
+    .then(penalty).then(resumeAtHead).then(staleAttempt).then(endGame)
+    .then(all {assert(s.headA == 8), assert(s.headB == 6), assert(protocol_invariant), s' = s})
 }

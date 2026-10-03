@@ -17,7 +17,7 @@ from typing import Any
 
 from scoring_reference import (
     Meld, ORPHANS, TILES, ScoringError, hand_parts, inventory,
-    score_hand, shapes, tile_index, waits, pao_assignments,
+    score_hand, shapes, tile_index, dora_tile, waits, pao_assignments,
     basic_points, normal_payments, settle_win, validate_win_declarations,
     YAKU_MIN_TRIPLETS, DRAGONS, WINDS, TERMINALS, allowed_yaku_tiles, minimum_yaku_sequences,
 )
@@ -508,6 +508,57 @@ def check_hora_visible_tiles(win: dict, kyoku: dict) -> None:
                     "fu is below the amount required by public melds and win method")
 
 
+def check_hora_bonuses(wins: list[dict], kyoku: dict, rules: dict) -> None:
+    """Bound individual and joint bonuses without inventing hidden tiles."""
+    ura = next((win["ura_dora_markers"] for win in wins if win["ura_dora_markers"]), [])
+    known = [*known_round_tiles(kyoku), *ura]
+    if wins[0]["actor"] == wins[0]["target"] and "tiles" not in kyoku["hands"][wins[0]["actor"]]:
+        known.append(wins[0]["pai"])
+    known_counts = Counter(tile_index(tile) for tile in known)
+    remaining_red = sum(rules["red_fives"].values()) - sum(tile.endswith("r") for tile in known)
+    entries = []
+    for win in wins:
+        if any(yaku["unit"] == "yakuman" for yaku in win["yakus"]):
+            continue  # True yakuman ignores all bonuses, including disclosed reds.
+        actor = win["actor"]
+        tsumo = actor == win["target"]
+        hand = kyoku["hands"][actor]
+        own = [*hand.get("tiles", []),
+               *(tile for meld in scoring_melds(kyoku["melds"][actor]) for tile in meld["tiles"])]
+        if not tsumo or "tiles" not in hand:
+            own.append(win["pai"])
+        hidden = hand.get("count", 0) - int(tsumo and "tiles" not in hand)
+        entries.append((win, own, hidden))
+    for name, markers in (("akadora", []), ("dora", kyoku["dora_markers"]), ("uradora", ura)):
+        eligible = [entry for entry in entries if name != "uradora" or entry[0]["ura_dora_markers"]]
+        weights = Counter(dora_tile(marker) for marker in markers)
+        for group in [[entry] for entry in eligible] + ([eligible] if len(eligible) > 1 else []):
+            # Each ron winner counts the shared winning tile as a bonus, but
+            # the physical inventory above contains that tile only once.
+            own = [tile for _, tiles, _ in group for tile in tiles]
+            hidden = sum(count for _, _, count in group)
+            if name == "akadora":
+                minimum = sum(tile.endswith("r") for tile in own)
+                maximum = minimum + min(hidden, remaining_red)
+            else:
+                minimum = sum(weights[tile_index(tile)] for tile in own)
+                maximum, remaining = minimum, hidden
+                # Duplicate indicators multiply hits. Allocate each unknown
+                # slot the highest still-available weight; this is only an
+                # upper bound and does not reconstruct a winning hand.
+                for tile, weight in sorted(weights.items(), key=lambda item: -item[1]):
+                    count = min(remaining, 4 - known_counts[tile])
+                    maximum += count * weight
+                    remaining -= count
+            claimed = sum(bonus["han"] for win, _, _ in group
+                          for bonus in win["bonuses"] if bonus["id"] == name)
+            label = "red" if name == "akadora" else name
+            require(minimum <= claimed <= maximum,
+                    f"{label} bonus differs from disclosed tiles or the remaining physical "
+                    + ("red-five stock" if name == "akadora" else "tile stock")
+                    + (" across multiple winners" if len(group) > 1 else ""))
+
+
 def riichi_ankan(hand: dict, drawn: str, rules: dict) -> bool:
     """The draw is in hand. Every interpretation must preserve the triplet."""
     base = tile_index(drawn)
@@ -595,6 +646,8 @@ def legal_actions(position: dict, rules: dict) -> list[dict]:
     own_quads = sum(m["kind"] in {"ankan", "daiminkan", "kakan"} for m in melds)
     require(p["kan_counts"][seat] == own_quads and sum(p["kan_counts"]) <= 4, "kan count differs from committed melds")
     require(not p["reach_accepted"] or all(m["kind"] == "ankan" for m in melds), "open hand accepted riichi")
+    require(not p["reach_accepted"] or bool(waits(before, rules)),
+            "accepted riichi decision hand is not tenpai before its draw")
     actions: list[dict] = []
     def add(kind: str, **fields: Any) -> None:
         actions.append({"type": kind, "actor": seat, **fields})
@@ -824,14 +877,22 @@ def validate_snapshot_state(snapshot: dict, rules: dict | None = None) -> None:
                         or sum(1 + (m["type"] == "kakan") for m in committed) >= 2,
                         "first-discard ordinary riichi without ippatsu needs two committed calls")
                 hand = kyoku["hands"][a]
-                if (rules is not None and "tiles" in hand
-                        and len(hand["tiles"]) + 3 * len(kyoku["melds"][a]) == 13):
-                    # Accepted riichi preserves a waiting thirteen-tile
-                    # shape. Do not infer the earlier draw from fourteen
-                    # tiles in an active turn or pending kan declaration.
-                    require(bool(waits({"concealed_tiles": hand["tiles"],
-                                        "melds": scoring_melds(kyoku["melds"][a])}, rules)),
-                            "snapshot accepted riichi hand is not tenpai")
+                if rules is not None and "tiles" in hand:
+                    waiting = hand["tiles"].copy()
+                    cause = kyoku["turn"]["last_event"]
+                    # A disclosed current draw identifies exactly the tile
+                    # to remove. A completed winning draw is allowed, but
+                    # its preceding thirteen-tile hand still had to wait.
+                    # Pending declarations do not disclose the earlier draw;
+                    # their separate riichi-ankan check handles that case.
+                    if (cause_type == "tsumo" and cause["actor"] == a
+                            and cause["pai"] is not None):
+                        require(cause["pai"] in waiting, "snapshot draw is absent from the visible hand")
+                        waiting.remove(cause["pai"])
+                    if len(waiting) + 3 * len(kyoku["melds"][a]) == 13:
+                        require(bool(waits({"concealed_tiles": waiting,
+                                            "melds": scoring_melds(kyoku["melds"][a])}, rules)),
+                                "snapshot accepted riichi hand is not tenpai")
         cause = kyoku["turn"]["last_event"]
         # The turn actor and projected state follow the committed cause:
         # a round start fixes the dealer and a fresh board, while a
@@ -1363,6 +1424,7 @@ class EventState:
                 if cause["type"] == "tsumo" and "tiles" not in r["hands"][cause["actor"]]:
                     known.append(result["wins"][0]["pai"])
                 inventory([*known, *(ura[0] if ura else [])], self.rules)
+                check_hora_bonuses(result["wins"], r, self.rules)
                 check_hora_payments(result["wins"], r, self.rules)
             elif result["type"] == "penalty":
                 require(self.rules["invalid_action_policy"] == "chombo", "penalty is disabled")

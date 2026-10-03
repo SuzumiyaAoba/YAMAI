@@ -320,6 +320,9 @@ module yamai_protocol_extended {
   // SnapshotPending additionally records the exact pending member/action
   // maps in the snapshot_saved_* fields above.
   val resume_pending_invariant: bool = and {
+    // Once a transport has resumed, request admission cannot erase its sync
+    // phase. Fatal closure is the only path that abandons recovery entirely.
+    state.resumed and not(state.fatal) implies state.resume_phase != NoResume,
     state.resume_phase == SnapshotPending implies state.snapshot_preserved_pending,
     state.snapshot_preserved_pending implies state.snapshot_seq > 0,
     state.snapshot_preserved_pending implies state.backlog_pending,
@@ -781,7 +784,9 @@ module yamai_protocol_extended {
       deadline: MAX_TIMEOUT,
       next_request_id: state.next_request_id + 1,
       seq_reservation_end: state.host_seq + SINGLE_RESERVATION,
-      resume_phase: NoResume,
+      // Admission may race with a resumed transport before welcome freezes
+      // its replay range. Preserve that recovery barrier until replay/snapshot
+      // completion; a new request cannot turn ResumeReady into live delivery.
       snapshot_preserved_pending: false,
       backlog_pending: if (backlog_capture_active) true else state.backlog_pending,
       backlog_from_seq: if (backlog_capture_active) backlog_next_from_seq else state.backlog_from_seq,
@@ -822,7 +827,9 @@ module yamai_protocol_extended {
       deadline: MAX_TIMEOUT,
       next_request_id: state.next_request_id + 2,
       seq_reservation_end: state.host_seq + GROUP_RESERVATION,
-      resume_phase: NoResume,
+      // Admission may race with a resumed transport before welcome freezes
+      // its replay range. Preserve that recovery barrier until replay/snapshot
+      // completion; a new request cannot turn ResumeReady into live delivery.
       snapshot_preserved_pending: false,
       backlog_pending: if (backlog_capture_active) true else state.backlog_pending,
       backlog_from_seq: if (backlog_capture_active) backlog_next_from_seq else state.backlog_from_seq,
@@ -1262,4 +1269,31 @@ module yamai_protocol_extended {
   run reversedAckOrderFailsTest = init.then(send_hello).then(send_join_good).then(send_welcome).then(open_decision_group)
     .then(submit_group_one_call).then(submit_group_two_pass).then(decide_group)
     .then(ack_group_two.fail())
+  run singleAdmissionKeepsResumeBarrierTest = init.then(send_hello).then(send_join_good).then(send_welcome)
+    .then(disconnect).then(resume).then(open_single_request)
+    .then(all {assert(state.resume_phase == ResumeReady), assert(state.applied_seq == 0),
+      assert(protocol_invariant), state' = state})
+    .then(deliver_backlog.fail())
+  run groupAdmissionKeepsResumeBarrierTest = init.then(send_hello).then(send_join_good).then(send_welcome)
+    .then(disconnect).then(resume).then(open_decision_group)
+    .then(all {assert(state.resume_phase == ResumeReady), assert(state.applied_seq == 0),
+      assert(protocol_invariant), state' = state})
+    .then(deliver_backlog.fail())
+  run admittedRequestWaitsForReplayTest = init.then(send_hello).then(send_join_good).then(send_welcome)
+    .then(disconnect).then(resume).then(open_single_request).then(begin_resume_replay)
+    .then(submit_single_discard.fail())
+  run admittedGroupResumesNormallyTest = init.then(send_hello).then(send_join_good).then(send_welcome)
+    .then(disconnect).then(resume).then(open_decision_group).then(begin_resume_replay)
+    .then(all {assert(state.replay_from_seq == 1), assert(state.replay_to_seq == 2), state' = state})
+    .then(finish_resume_replay).then(submit_group_one_call).then(submit_group_two_pass)
+    .then(decide_group).then(ack_group_one).then(ack_group_two).then(resolve_group)
+    .then(all {assert(state.resume_phase == ResumeComplete), assert(state.applied_seq == state.host_seq),
+      assert(protocol_invariant), state' = state})
+  run expiredRequestBlocksResumeFrontierTest = init.then(send_hello).then(send_join_good).then(send_welcome)
+    .then(open_single_request).then(disconnect).then(tick).then(tick).then(resume)
+    .then(begin_resume_replay.fail())
+  run selectedGroupBlocksResumeFrontierTest = init.then(send_hello).then(send_join_good).then(send_welcome)
+    .then(open_decision_group).then(submit_group_one_call).then(submit_group_two_pass)
+    .then(disconnect).then(resume).then(decide_group).then(ack_group_one)
+    .then(begin_resume_replay.fail())
 }

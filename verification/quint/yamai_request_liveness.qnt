@@ -277,4 +277,18 @@ module yamai_request_liveness {
   run skippedAckOrderFailsTest = init_with(Multiple, 2).then(open_decision_group)
     .then(submit(1, Pass)).then(submit(2, Pass)).then(submit(3, Pass)).then(decide)
     .then(ack_member(1)).then(ack_member(3).fail())
+  run delayedDefaultKeepsDeadlineTest = init_with(Multiple, 2).then(open_decision_group)
+    .then(submit(3, Hora)).then(tick).then(tick).then(default_member(1)).then(default_member(2))
+    .then(all {assert(state.elapsed == 2), assert(state.selected_at.get(1) == 1),
+      assert(state.selected_at.get(3) == 0), assert(protocol_invariant), state' = state})
+    .then(decide).then(ack_member(1)).then(ack_member(2)).then(ack_member(3)).then(resolve_group)
+    .then(all {assert(state.published == Set(3)), assert(state.statuses.get(1) == Defaulted),
+      assert(state.statuses.get(3) == Accepted), assert(protocol_invariant), state' = state})
+  run exactIndividualDeadlineRejectsActionTest = init_with(Multiple, 2).then(open_decision_group)
+    .then(tick).then(submit(1, Hora).fail())
+  run headBumpPriorityDiffersFromAckOrderTest = init_with(HeadBump, 2).then(open_decision_group)
+    .then(submit(3, Hora)).then(submit(2, Hora)).then(submit(1, Pass)).then(decide)
+    .then(ack_member(1)).then(ack_member(2)).then(ack_member(3)).then(resolve_group)
+    .then(all {assert(state.published == Set(2)), assert(state.statuses.get(1) == Passed),
+      assert(state.statuses.get(3) == Superseded), assert(protocol_invariant), state' = state})
 }

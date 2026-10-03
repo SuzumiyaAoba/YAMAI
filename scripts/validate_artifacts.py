@@ -2077,6 +2077,8 @@ def semantic_ledger_trace(trace: Mapping[str, Any], expected_hash: str) -> None:
     hello = join = receiver = join_at = None
     now, seen = -1, set()
     starts, selections = {}, {}
+    chombo_rejections = {}
+    chombo_transaction = None
     resumed_requests, retained_states, checked_retained = set(), {}, set()
     replay_through, resume_at = 0, None
     diagnostic_obligations, captured_diagnostics = [], []
@@ -2091,6 +2093,22 @@ def semantic_ledger_trace(trace: Mapping[str, Any], expected_hash: str) -> None:
     snapshot_resume_authority = False
     emitted_through = 0
     gap_replays: list[dict] = []
+    event_causes: dict[int, dict] = {}
+
+    def retain_event_cause(seq: int, cause: Mapping[str, Any]) -> None:
+        # Compaction can remove the original event's ledger entry. A validated
+        # snapshot restores its payload and actual session sequence, not the
+        # snapshot's own sequence. Keep that authority for later lifecycle
+        # checks even after subsequent events replace the current turn.
+        if seq in ledger:
+            recorded = ledger[seq]["message"]
+            _require(recorded["kind"] == "event"
+                     and canonical_action(recorded["event"]) == canonical_action(cause),
+                     "invalid_message", "snapshot cause differs from the captured ledger event")
+        _require(seq not in event_causes
+                 or canonical_action(event_causes[seq]) == canonical_action(cause),
+                 "invalid_message", "captured event cause changed at the same sequence")
+        event_causes[seq] = deepcopy(cause)
 
     def restore_request(request: Mapping[str, Any]) -> None:
         rid = request["request_id"]
@@ -2238,6 +2256,7 @@ def semantic_ledger_trace(trace: Mapping[str, Any], expected_hash: str) -> None:
                             selections[rid] = (request["default_action_id"], "default", elapsed)
                         elif receiver.welcome["rules"]["invalid_action_policy"] == "chombo":
                             selections[rid] = (request["default_action_id"], "cancelled", elapsed)
+                            chombo_rejections[rid] = (msg["action_id"], elapsed)
                         elif "decision_group_id" not in request:
                             diagnostic_obligations.append({"request_id": rid, "action_id": msg["action_id"],
                                                            "index": capture_index, "rejected": True,
@@ -2259,6 +2278,9 @@ def semantic_ledger_trace(trace: Mapping[str, Any], expected_hash: str) -> None:
                              recovery["through"] for recovery in gap_replays),
                              "invalid_message", "recovery snapshot does not cover the requested host history")
                 terminalizing = kind == "ack" and msg["request_id"] in receiver.active_requests and msg["status"] != "rejected"
+                if not duplicate and chombo_transaction is not None and not (kind == "error" and msg.get("severity") == "fatal"):
+                    _require((step["transaction_id"], step["operation_id"]) == chombo_transaction,
+                             "invalid_message", "chombo rejection, cancellation and penalty belong to different transactions")
                 if not duplicate and pending_transaction is not None and not (kind == "error" and msg.get("severity") == "fatal"):
                     _require(kind == "event" and (step["transaction_id"], step["operation_id"]) == pending_transaction, "invalid_message", "terminal ACK and result events belong to different transactions")
                 if kind == "request" and not duplicate:
@@ -2277,6 +2299,9 @@ def semantic_ledger_trace(trace: Mapping[str, Any], expected_hash: str) -> None:
                              "invalid_message", "resumed OPEN ACK lacks original request state")
                     if historical and rid in retained_states:
                         selected = retained_states[rid]["selection"]
+                        _require(msg["status"] != "rejected" or selected is None
+                                 or receiver.welcome["rules"]["invalid_action_policy"] != "chombo",
+                                 "invalid_message", "historical chombo rejection contradicts a retained selection")
                         _require(msg["elapsed_ms"] <= resume_at - starts[rid]
                                  and (msg["status"] != "rejected" or selected is None or msg["elapsed_ms"] <= selected["elapsed_ms"]),
                                  "invalid_message", "historical ACK clock exceeds retained checkpoint")
@@ -2296,6 +2321,22 @@ def semantic_ledger_trace(trace: Mapping[str, Any], expected_hash: str) -> None:
                         selected = selections[rid]
                         _require(msg["status"] != "rejected" or selected[1] == "cancelled",
                                  "invalid_message", "rejected ACK follows a fixed selection")
+                    if (not historical and msg["status"] == "rejected"
+                            and receiver.welcome["rules"]["invalid_action_policy"] == "chombo"):
+                        if rid not in chombo_rejections and rid in starts:
+                            request = receiver.requests[rid]
+                            deadline = receiver.welcome["rules"]["time_control"]["grace_ms"] + request["timeout_ms"] + request["time_bank_ms"]
+                            choices = {candidate["action_id"] for candidate in request["legal_actions"]}
+                            for _, aid, at_ms in lifecycle_ingress.get(rid, []):
+                                elapsed = max(0, at_ms - starts[rid])
+                                # Timeout or the first valid choice closes this
+                                # seat's window before any later invalid input.
+                                if elapsed >= deadline or aid in choices:
+                                    break
+                                chombo_rejections[rid] = (aid, elapsed)
+                                break
+                        _require((msg["action_id"], msg["elapsed_ms"]) == chombo_rejections.get(rid),
+                                 "invalid_message", "chombo rejected ACK differs from the captured invalid attempt")
                     if not historical and rid in selections and msg["status"] != "rejected":
                         selected = selections[rid]
                         _require((msg["action_id"], msg["elapsed_ms"]) == (selected[0], selected[2])
@@ -2331,6 +2372,13 @@ def semantic_ledger_trace(trace: Mapping[str, Any], expected_hash: str) -> None:
                             _require(msg["elapsed_ms"] == selection[2], "invalid_message", "captured selection elapsed time differs")
                 outcome = receiver.receive(raw)
                 _require(outcome in {"applied", "duplicate"}, "invalid_message", "capture contains an unapplied host message")
+                if outcome == "applied":
+                    if kind == "event":
+                        retain_event_cause(seq, msg["event"])
+                    elif kind == "snapshot" and msg["state"]["kyoku"] is not None:
+                        turn = msg["state"]["kyoku"]["turn"]
+                        if turn["last_event_seq"] is not None:
+                            retain_event_cause(turn["last_event_seq"], turn["last_event"])
                 if kind == "snapshot" and not duplicate and not historical:
                     gap_replays.clear()
                 else:
@@ -2442,6 +2490,11 @@ def semantic_ledger_trace(trace: Mapping[str, Any], expected_hash: str) -> None:
                                 _require("original_status" not in msg, "invalid_message",
                                          "conflict claims a terminal status before terminalization")
                         captured_diagnostics.append((capture_index, msg))
+                    if (kind == "ack" and msg["status"] == "rejected"
+                            and receiver.welcome["rules"]["invalid_action_policy"] == "chombo"):
+                        chombo_transaction = (step["transaction_id"], step["operation_id"])
+                    if kind == "event" and msg["event"]["type"] == "end_kyoku":
+                        chombo_transaction = None
                     if terminalizing:
                         pending_transaction = (step["transaction_id"], step["operation_id"])
                     elif kind == "event" and msg["event"]["type"] in {"dahai", "tsumo", "end_kyoku", "end_game"}:
@@ -2551,7 +2604,8 @@ def semantic_ledger_trace(trace: Mapping[str, Any], expected_hash: str) -> None:
                 if rid in lifecycle_ready:
                     ready = [(max(a[0], b[0]), max(a[1], b[1])) for a, b in zip(ready, lifecycle_ready[rid])]
                 lifecycle_ready[rid] = ready
-                cause = ledger[request["caused_by_seq"]]["message"]["event"]
+                cause = event_causes.get(request["caused_by_seq"])
+                _require(cause is not None, "invalid_message", "lifecycle lacks a captured or restored cause event")
                 for member in lifecycle["requests"]:
                     _check_decision_cause(member, cause)
         if lifecycle_outputs:

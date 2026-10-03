@@ -106,6 +106,10 @@ def validate_win_declarations(win: dict, rules: dict | None = None, *, closed: b
     for field, key in (("yakus", "id"), ("bonuses", "id"), ("pao", "yaku_id")):
         ids = [item[key] for item in win[field]]
         require(ids == sorted(set(ids)), "invalid_message", f"{field} IDs must be sorted and unique")
+    if rules is not None:
+        red_bonus = next((bonus["han"] for bonus in win["bonuses"] if bonus["id"] == "akadora"), 0)
+        require(red_bonus <= sum(rules["red_fives"].values()), "invalid_message",
+                "red bonus exceeds the configured physical red-five stock")
     ids = {item["id"] for item in win["yakus"]}
     for left, right in (("riichi", "double_riichi"), ("iipeikou", "ryanpeikou"),
                         ("honitsu", "chinitsu"), ("chanta", "junchan"),
@@ -217,6 +221,11 @@ def validate_score_bounds(rules: dict[str, Any]) -> None:
 def tile_index(tile: str) -> int:
     require(tile in TILES or tile in ("5mr", "5pr", "5sr"), "invalid_hand", "unknown tile")
     return TILES.index(tile[:-1] if tile.endswith("r") else tile)
+
+
+def dora_tile(marker: str) -> int:
+    tile = tile_index(marker)
+    return (tile // 9) * 9 + (tile + 1) % 9 if tile < 27 else 27 + (tile - 26) % 4 if tile < 31 else 31 + (tile - 30) % 3
 
 
 def inventory(tiles: list[str], rules: dict[str, Any]) -> None:
@@ -714,11 +723,8 @@ def score_hand(data: dict[str, Any], state: dict[str, Any], rules: dict[str, Any
             if not yakuman and not normal:
                 continue
             bonus: dict[str, int] = {}
-            def next_tile(marker: str) -> int:
-                t = tile_index(marker)
-                return (t // 9)*9 + (t + 1) % 9 if t < 27 else 27+(t-27+1)%4 if t < 31 else 31+(t-31+1)%3
             for name,markers in (("dora",data["dora_markers"]),("uradora",data["ura_dora_markers"])):
-                n = sum(all_counts[next_tile(marker)] for marker in markers)
+                n = sum(all_counts[dora_tile(marker)] for marker in markers)
                 if n:
                     bonus[name] = n
             reds = sum(t.endswith("r") for t in [*physical,data["winning_tile"]])

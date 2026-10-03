@@ -6,7 +6,7 @@ from pathlib import Path
 import unittest
 
 from scoring_reference import TILES, ScoringError, calculate_fixture, score_hand, waits, validate_score_bounds, validate_win_declarations
-from game_contract import GameError, check_hora_yaku_context
+from game_contract import GameError, check_hora_yaku_context, check_hora_bonuses
 
 
 class ScoringInvariants(unittest.TestCase):
@@ -26,6 +26,96 @@ class ScoringInvariants(unittest.TestCase):
             'melds': [{'kind':'pon','open':True,'source':0,'tiles':['E']*3}],
         }
         self.assertEqual(waits(blocked, self.rules), set())
+
+    def test_red_bonus_declaration_respects_configured_stock(self):
+        for configured in (0, 1, 3, 12):
+            rules = deepcopy(self.rules)
+            rules['red_fives'] = dict(zip('mps', {0: (0, 0, 0), 1: (1, 0, 0),
+                                                  3: (1, 1, 1), 12: (4, 4, 4)}[configured]))
+            for claimed in (0, configured, configured + 1):
+                win = deepcopy(self.fixtures['yaku_menzen_tsumo']['expected']['wins'][0])
+                win['bonuses'] = [dict(id='akadora', han=claimed)] if claimed else []
+                with self.subTest(configured=configured, claimed=claimed):
+                    if claimed > configured:
+                        with self.assertRaisesRegex(ScoringError, 'configured physical red-five stock'):
+                            validate_win_declarations(win, rules)
+                    else:
+                        validate_win_declarations(win, rules)
+
+    def test_red_bonus_counts_disclosed_winning_tile_once_and_ignores_yakuman(self):
+        for tsumo in (False, True):
+            for visible in (False, True):
+                win = dict(actor=1, target=1 if tsumo else 0, pai='5mr',
+                           yakus=[dict(id='tanyao', unit='han', value=1)],
+                           bonuses=[dict(id='akadora', han=1)], ura_dora_markers=[])
+                concealed = ['2m', '3m', '4m', '3m', '4m', '4p', '5p', '6p',
+                             '6p', '7p', '8p', '5m', '5m']
+                hands = [{'count': 13} for _ in range(4)]
+                hands[1] = ({'tiles': concealed + (['5mr'] if tsumo else [])} if visible
+                            else {'count': 14 if tsumo else 13})
+                rivers = [[] for _ in range(4)]
+                if not tsumo:
+                    rivers[0] = [dict(pai='5mr', called_by=None)]
+                kyoku = dict(hands=hands, melds=[[] for _ in range(4)], rivers=rivers,
+                             pending_kan=None, dora_markers=['5pr'])
+                # The two other red fives are indicators.
+                win['ura_dora_markers'] = ['5sr']
+                with self.subTest(tsumo=tsumo, visible=visible):
+                    # The disclosed 5pr indicator also reveals two 6p.
+                    if visible:
+                        win['bonuses'].append(dict(id='dora', han=2))
+                    check_hora_bonuses([win], kyoku, self.rules)
+                    for claimed in (0, 2):
+                        bad = deepcopy(win)
+                        bad['bonuses'] = [dict(id='akadora', han=claimed)] if claimed else []
+                        with self.assertRaisesRegex(GameError, 'red bonus differs'):
+                            check_hora_bonuses([bad], kyoku, self.rules)
+                    # The same physical red tiles never add bonus to a
+                    # true yakuman; this helper must not demand akadora.
+                    win.update(yakus=[dict(id='suuankou', unit='yakuman', value=1)], bonuses=[])
+                    check_hora_bonuses([win], kyoku, self.rules)
+
+    def test_indicator_bonus_bounds_multiply_indicators_and_share_ron_inventory(self):
+        def context(tile, markers):
+            return dict(hands=[{'count': 13} for _ in range(4)], melds=[[] for _ in range(4)],
+                        rivers=[[dict(pai=tile, called_by=None)], [], [], []],
+                        pending_kan=None, dora_markers=markers)
+
+        def winner(actor, tile, name, claimed, ura=()):
+            return dict(actor=actor, target=0, pai=tile,
+                        yakus=[dict(id='tanyao', unit='han', value=1)],
+                        bonuses=[dict(id=name, han=claimed)], ura_dora_markers=list(ura))
+
+        for name in ('dora', 'uradora'):
+            for shared in (False, True):
+                tile = '2m' if shared else '6s'
+                markers = ['1m', '1m']
+                kyoku = context(tile, markers if name == 'dora' else ['9p'])
+                ura = markers if name == 'uradora' else []
+                # Two copies of the indicator multiply every 2m by two.
+                # Pool capacity is 8; a shared 2m ron adds two more virtual
+                # bonus hits, while still consuming just one physical tile.
+                legal = (4, 6) if shared else (4, 4)
+                for claims in (legal, (6, 6)):
+                    wins = [winner(actor, tile, name, claimed, ura)
+                            for actor, claimed in zip((1, 2), claims)]
+                    with self.subTest(name=name, shared=shared, claims=claims):
+                        for win in wins:
+                            check_hora_bonuses([win], kyoku, self.rules)
+                        if claims == legal:
+                            check_hora_bonuses(wins, kyoku, self.rules)
+                        else:
+                            with self.assertRaisesRegex(GameError, name + ' bonus.*across multiple winners'):
+                                check_hora_bonuses(wins, kyoku, self.rules)
+        # A non-riichi winner gets no ura bonus, but ura exposed by the other
+        # winner still consumes red stock in both winners' visible inventory.
+        kyoku = context('6s', ['9p'])
+        first = winner(1, '6s', 'uradora', 1, ['5mr'])
+        second = winner(2, '6s', 'akadora', 2)
+        check_hora_bonuses([first, second], kyoku, self.rules)
+        second['bonuses'][0]['han'] = 3
+        with self.assertRaisesRegex(GameError, 'red bonus differs'):
+            check_hora_bonuses([first, second], kyoku, self.rules)
 
     def test_ron_completed_triplet_preserves_menzen_but_not_suuankou(self):
         f = deepcopy(self.fixtures['yaku_menzen_tsumo'])

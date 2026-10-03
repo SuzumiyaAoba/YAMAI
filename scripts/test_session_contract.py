@@ -3359,6 +3359,98 @@ class LedgerResumeCaptureTests(_LedgerTraceFixture):
                 with self.assertRaises(v.ArtifactError):
                     self.check_ledger(trace)
 
+    def cause_authority_trace(self, *, group=False, compact=None):
+        if group:
+            source = deepcopy(self.vectors['V267_session_three_member_group_is_atomic']['positive']['trace'])
+            trace = self.resume_trace(source, through=5, offset=5, keep_actions=True, compact=False)
+            self.retain(trace)
+            for step in trace['messages'][3:]:
+                message = step['message']
+                step['at_ms'] = (8 if message['kind'] == 'action' else
+                                 9 if message['kind'] == 'ack' else
+                                 10 if message.get('event', {}).get('type') == 'end_kyoku' else 7)
+            helper = LedgerLiveSnapshotClockTests()
+            helper.schemas, helper.digest, helper.vectors = self.schemas, self.digest, self.vectors
+            snapshot = helper.live_snapshot(group=True, at_ms=8, remaining=2,
+                                            group_remaining=2)['messages'][-1]
+        else:
+            trace = self.original_clock_trace()
+            request = {k: deepcopy(value) for k, value in trace['messages'][6]['message'].items()
+                       if k not in ('yamai', 'kind', 'session_id', 'game_id', 'seq')}
+            rules = trace['messages'][2]['message']['rules']
+            lifecycle = {'trace_type': 'request_lifecycle', 'grace_ms': rules['time_control']['grace_ms'],
+                         'invalid_action_policy': rules['invalid_action_policy'], 'ron_policy': rules['ron_policy'],
+                         'requests': [request], 'steps': [
+                             {'op': 'submit', 'at_us': 10812000, 'request_id': 'r1', 'action_id': 'a1'},
+                             {'op': 'resolve', 'at_us': 10812000}]}
+            lifecycle['expected'] = v.evaluate_request_contract(lifecycle)[-1]
+            trace['request_lifecycles'] = [lifecycle]
+            message = deepcopy(self.vectors['V18_snapshot_state']['positive'])
+            message['state']['pending_requests'][0]['remaining_ms'] = 10999
+            snapshot = {'at_ms': 10008, 'direction': 'out', 'client_id': 'peer',
+                        'transaction_id': 'snapshot', 'operation_id': 'snapshot', 'message': message}
+        if compact is None:
+            return trace
+        index = next(i for i, step in enumerate(trace['messages']) if step['message']['kind'] == 'action')
+        trace['messages'].insert(index, snapshot)
+        for step in trace['messages'][index + 1:]:
+            if 'seq' in step['message']:
+                step['message']['seq'] += 1
+        if compact:
+            del trace['messages'][3:index]
+        return trace
+
+    def test_lifecycle_cause_survives_compacted_snapshot_and_later_events(self):
+        for group in (False, True):
+            for compact in (None, False, True):
+                with self.subTest(group=group, compact=compact):
+                    # All captures finish the decision and advance beyond its
+                    # cause. The compact version has no original cause wire.
+                    self.check_ledger(self.cause_authority_trace(group=group, compact=compact))
+
+    def test_snapshot_lifecycle_rejects_mismatched_cause_identity(self):
+        for group in (False, True):
+            for compact in (False, True):
+                for mismatch in ('request_sequence', 'snapshot_sequence', 'snapshot_payload'):
+                    with self.subTest(group=group, compact=compact, mismatch=mismatch):
+                        trace = self.cause_authority_trace(group=group, compact=compact)
+                        snapshot = next(s['message'] for s in trace['messages'] if s['message']['kind'] == 'snapshot')
+                        turn = snapshot['state']['kyoku']['turn']
+                        if mismatch == 'request_sequence':
+                            trace['request_lifecycles'][0]['requests'][0]['caused_by_seq'] += 1
+                        elif mismatch == 'snapshot_sequence':
+                            turn['last_event_seq'] -= 1
+                        else:
+                            turn['last_event']['actor'] = 2
+                        with self.assertRaises(v.ArtifactError):
+                            self.check_ledger(trace)
+
+    def test_restored_lifecycle_cause_checks_other_group_members(self):
+        for compact in (None, False, True):
+            with self.subTest(compact=compact):
+                trace = self.cause_authority_trace(group=True, compact=compact)
+                lifecycle = trace['request_lifecycles'][0]
+                # This unselected candidate belongs to another session, so
+                # only the complete lifecycle can bind it to the restored 1p.
+                lifecycle['requests'][1]['legal_actions'].append({
+                    'action_id': 'wrong-kan', 'action': {
+                        'type': 'daiminkan', 'actor': 2, 'target': 0,
+                        'pai': '2p', 'consumed': ['2p', '2p', '2p']}})
+                lifecycle['expected'] = v.evaluate_request_contract(lifecycle)[-1]
+                with self.assertRaisesRegex(v.ArtifactError, 'call differs from its cause discard'):
+                    self.check_ledger(trace)
+
+    def test_restored_lifecycle_still_requires_its_captured_outputs(self):
+        for group in (False, True):
+            for compact in (None, False, True):
+                with self.subTest(group=group, compact=compact):
+                    trace = self.cause_authority_trace(group=group, compact=compact)
+                    index = next(i for i, step in enumerate(trace['messages']) if step['message']['kind'] == 'ack')
+                    trace['messages'] = trace['messages'][:index]
+                    trace['allow_open_requests'] = True
+                    with self.assertRaisesRegex(v.ArtifactError, 'capture omits lifecycle output'):
+                        self.check_ledger(trace)
+
     def test_new_live_acks_still_require_captured_user_or_original_timeout(self):
         trace = self.live_trace()
         trace['messages'] = [s for s in trace['messages'] if s['message']['kind'] != 'action']
@@ -3440,8 +3532,8 @@ class LedgerResumeCaptureTests(_LedgerTraceFixture):
             seq = message['seq']
             trace['messages'].append({'at_ms': seq + 3 if seq < 5 else 820 + seq - 5,
                                       'direction': 'out', 'client_id': 'peer', 'message': message,
-                                      'transaction_id': 'tx_' + str(seq) if seq < 6 else 'cancel_tx',
-                                      'operation_id': 'op_' + str(seq) if seq < 6 else 'cancel_op'})
+                                      'transaction_id': 'tx_' + str(seq) if seq < 5 else 'cancel_tx',
+                                      'operation_id': 'op_' + str(seq) if seq < 5 else 'cancel_op'})
         return trace
 
     def test_chombo_history_and_new_invalid_input_preserve_original_clock(self):
@@ -3453,7 +3545,7 @@ class LedgerResumeCaptureTests(_LedgerTraceFixture):
 
         original = self.cancellation_trace()
         invalid = deepcopy(self.live_trace()['messages'][7])
-        invalid['message']['action_id'] = 'bad'
+        invalid['message']['action_id'] = 'invalid-choice'
         original['messages'].insert(7, invalid)
         trace = self.resume_trace(original, through=4, offset=10000, compact=False, keep_actions=True)
         self.retain(trace)
@@ -3464,6 +3556,63 @@ class LedgerResumeCaptureTests(_LedgerTraceFixture):
         stale = next(s['message'] for s in trace['messages'] if s['message'].get('status') == 'stale')
         stale['elapsed_ms'] -= 1
         with self.assertRaises(v.ArtifactError):
+            self.check_ledger(trace)
+
+    def test_chombo_capture_binds_rejection_to_its_input_and_transaction(self):
+        original = self.cancellation_trace()
+        invalid = deepcopy(self.live_trace()['messages'][7])
+        invalid['message']['action_id'] = 'invalid-choice'
+        original['messages'].insert(7, invalid)
+        for resumed in (False, True):
+            for boundary in ('valid', 'wrong_id', 'missing_input', 'split_rejection_tx',
+                             'split_rejection_operation', 'split_penalty_tx'):
+                with self.subTest(resumed=resumed, boundary=boundary):
+                    trace = deepcopy(original)
+                    if resumed:
+                        trace = self.resume_trace(trace, through=4, offset=10000,
+                                                  compact=False, keep_actions=True)
+                        self.retain(trace)
+                        for step in trace['messages']:
+                            if step['message']['kind'] == 'ack':
+                                step['message'].update(elapsed_ms=10812, time_bank_ms=10188)
+                    rejected = next(step for step in trace['messages']
+                                    if step['message'].get('status') == 'rejected')
+                    if boundary == 'wrong_id':
+                        rejected['message']['action_id'] = 'different-invalid-choice'
+                    elif boundary == 'missing_input':
+                        trace['messages'] = [step for step in trace['messages']
+                                             if step['message']['kind'] != 'action']
+                    elif boundary == 'split_rejection_tx':
+                        rejected['transaction_id'] = 'separate_rejection'
+                    elif boundary == 'split_rejection_operation':
+                        rejected['operation_id'] = 'separate_rejection'
+                    elif boundary == 'split_penalty_tx':
+                        trace['messages'][-1]['transaction_id'] = 'separate_penalty'
+                    if boundary == 'valid':
+                        self.check_ledger(trace)
+                    else:
+                        with self.assertRaisesRegex(v.ArtifactError,
+                                'captured invalid attempt|different transactions'):
+                            self.check_ledger(trace)
+
+    def test_replayed_chombo_rejection_keeps_transaction_without_new_input(self):
+        original = self.resume_trace(self.cancellation_trace(), through=7)
+        self.check_ledger(original)
+        rejected = next(step for step in original['messages']
+                        if step['message'].get('status') == 'rejected')
+        rejected['transaction_id'] = 'separate_historical_rejection'
+        with self.assertRaisesRegex(v.ArtifactError, 'different transactions'):
+            self.check_ledger(original)
+
+    def test_historical_offender_rejection_cannot_retain_a_user_selection(self):
+        trace = self.resume_trace(self.cancellation_trace(), through=7)
+        self.check_ledger(trace)
+        stale = next(step['message'] for step in trace['messages']
+                     if step['message'].get('status') == 'stale')
+        self.retain(trace, {'action_id': stale['action_id'], 'source': 'user',
+                            'elapsed_ms': stale['elapsed_ms'],
+                            'time_bank_ms': stale['time_bank_ms']})
+        with self.assertRaisesRegex(v.ArtifactError, 'historical chombo rejection'):
             self.check_ledger(trace)
 
     def test_negotiation_hello_and_join_cannot_overwrite_prior_steps(self):

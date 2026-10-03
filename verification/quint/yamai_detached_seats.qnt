@@ -255,4 +255,11 @@ module yamai_detached_seats {
     .then(all {assert(state.prepared != current_members), state' = state}).then(prepare(1)).then(start)
     .then(all {assert(state.deadline.get(1) == 3), assert(state.ledger.get(1) == 0),
       assert(state.internal_prepared.contains(1)), assert(protocol_invariant), state' = state})
+  run exactDeadlineCannotAcceptBeforeDetachTest = init.then(prepare_group).then(tick).then(tick).then(tick)
+    .then(submit(1, Call).fail())
+  run defaultedBeforeCloseKeepsBankTest = init.then(prepare_group).then(tick).then(tick).then(tick)
+    .then(default_member(1)).then(close_seat).then(default_member(2)).then(default_member(3)).then(resolve)
+    .then(all {assert(state.closed_bank == 0), assert(state.seat1_results.get(1) == Pass),
+      assert(state.closed_selected_at == 3), assert(state.defaulted_decisions.contains(1)),
+      assert(protocol_invariant), state' = state})
 }

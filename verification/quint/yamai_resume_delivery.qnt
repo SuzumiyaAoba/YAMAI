@@ -334,4 +334,24 @@ module yamai_resume_delivery {
   run offlineProgressTest = init_with(false).then(open_request).then(disconnect)
     .then(tick).then(tick).then(default_action).then(decide).then(ack_action).then(resolve_group)
     .then(all {assert(state.applied_seq == 0), assert(state.host_seq == 3), assert(witness_disconnect_resolve), assert(protocol_invariant), state' = state})
+  run interruptedSnapshotReplaysHistoricalStateTest = init_with(false).then(open_request).then(emit_notice)
+    .then(detect_gap).then(emit_snapshot).then(disconnect).then(tick).then(tick)
+    .then(default_action).then(decide).then(ack_action).then(resolve_group).then(resume).then(begin_replay)
+    .then(replay_next).then(replay_next).then(replay_next)
+    .then(all {assert(state.peer_phase == PeerOpen), assert(state.phase == Resolved),
+      assert(state.sync == Replaying), assert(state.replay_cursor == 4), assert(protocol_invariant), state' = state})
+    .then(replay_next).then(replay_next).then(finish_replay)
+    .then(all {assert(state.peer_phase == PeerResolved), assert(state.peer_choice == DefaultChoice),
+      assert(not(backlog_pending)), assert(protocol_invariant), state' = state})
+  run maximumHistoryStillTerminalizesTest = init_with(false).then(open_request).then(emit_notice).then(emit_notice)
+    .then(detect_gap).then(emit_snapshot).then(tick).then(tick).then(default_action).then(decide)
+    .then(ack_action).then(resolve_group).then(deliver_snapshot).then(deliver_next).then(deliver_next)
+    .then(all {assert(state.host_seq == MAX_SEQ), assert(state.peer_phase == PeerResolved),
+      assert(not(backlog_pending)), assert(protocol_invariant), state' = state})
+  run selectedChoiceSurvivesOfflineTimeoutTest = init_with(true).then(open_request).then(deliver_next)
+    .then(submit_action).then(disconnect).then(tick).then(tick).then(finish_others)
+    .then(decide).then(ack_action).then(resolve_group).then(resume).then(begin_replay)
+    .then(replay_next).then(replay_next).then(finish_replay)
+    .then(all {assert(state.choice == UserChoice), assert(state.peer_choice == UserChoice),
+      assert(not(state.defaulted_while_disconnected)), assert(protocol_invariant), state' = state})
 }

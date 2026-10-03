@@ -92,6 +92,13 @@ Nix環境のquint wrapperは、verify/compileごとに未使用のloopback port�
 
 ## DETACHED seatの有限検査
 
-`yamai_detached_seats` は、準備前・OPEN・SELECTEDでのfatal閉鎖を扱い、閉鎖時の選択/時計/ledgerを保存する。次の反応groupと自摸番の2判断が通常期限のdefaultで解決されることを安全性・時間的性質・10個の具体的runで確認する。prepare/start/tick/default/resolve/next_decisionが弱公平に進むことと、存続sessionに必要な出力容量があることを前提とする。game-scoped bankだけをモデル化し、kyoku補充や全閉鎖seat集合はPython契約の独立検査で補う。
+`yamai_detached_seats` は、準備前・OPEN・SELECTEDでのfatal閉鎖を扱い、閉鎖時の選択/時計/ledgerを保存する。次の反応groupと自摸番の2判断が通常期限のdefaultで解決されることを安全性・時間的性質・12個の具体的runで確認する。prepare/start/tick/default/resolve/next_decisionが弱公平に進むことと、存続sessionに必要な出力容量があることを前提とする。game-scoped bankだけをモデル化し、kyoku補充や全閉鎖seat集合はPython契約の独立検査で補う。
 
 固定seed20261001、70step、1,000sampleのRust実行で5witness全ての到達を要求する。TLCによる有限到達グラフ全体の安全性/temporal検査とは別の到達性確認である。実装全体のrefinementや暗号学的token管理を証明するものではない。
+
+
+## 新しい要求と再開同期の境界
+
+extendedモデルは、再接続後かつ再送範囲の固定前に単独要求または反応groupを発行しても、`ResumeReady` を保持する。要求発行で `NoResume` へ戻してはならず、replayまたはsnapshotによる同期が完了するまでplayer入力を適用しない。再送範囲を固定した後の正常な解決、途中切断からの再開、snapshotによる代替も具体的runで確認する。これは第13.2節との形式モデルの整合修正であり、Python receiverや実運用hostで同じ不具合を再現したという意味ではない。
+
+追加runは期限ちょうどの既定選択、遅れて処理したdefaultの固定時計、切断中の既存選択の保持、予約容量のちょうどの上限、snapshot再配送中の切断、取消しACKの順序、default後のfatal終了を区別する。公開モデルの有限境界は変更していない。別の境界値やseedによる追加シミュレーションは、その境界・sample数を明示した別の証拠として扱い、TLCの到達グラフ全体の証明範囲へ加算しない。
